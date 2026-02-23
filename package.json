@@ -8,7 +8,7 @@
     "dev:rpc-proxy": "node scripts/dev-rpc-proxy.mjs",
     "build": "vite build",
     "preview": "node node_modules/vite/bin/vite.js preview",
-    "deploy": "wrangler deploy",
+    "deploy": "vite build && wrangler deploy",
     "typegen": "WRANGLER_LOG_PATH=.wrangler/logs wrangler types",
     "typegen:check": "WRANGLER_LOG_PATH=.wrangler/logs wrangler types --check",
     "typecheck:app": "tsc --noEmit -p tsconfig.json",
