@@ -45,7 +45,7 @@ TOTAL=0
 
 usage() {
   cat <<'USAGE_EOF'
-Usage: stellar-asteroids-contract/scripts/deploy-and-test.sh [options]
+Usage: kalien-contract/scripts/deploy-and-test.sh [options]
 
 Options:
   --deploy-mode <mode>  fresh|reuse (default: fresh)

@@ -1,4 +1,4 @@
-# _helpers.sh — Shared helper library for stellar-asteroids-contract scripts.
+# _helpers.sh — Shared helper library for kalien-contract scripts.
 # Source this file — do not execute directly.
 #
 # Provides:

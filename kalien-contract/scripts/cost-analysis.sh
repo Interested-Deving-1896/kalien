@@ -35,7 +35,7 @@ STATE_FILE="$CONTRACT_DIR/.cost-analysis-state.env"
 
 usage() {
   cat <<'USAGE_EOF'
-Usage: stellar-asteroids-contract/scripts/cost-analysis.sh [options]
+Usage: kalien-contract/scripts/cost-analysis.sh [options]
 
 Options:
   --deploy-mode <mode>  fresh|reuse (default: fresh)

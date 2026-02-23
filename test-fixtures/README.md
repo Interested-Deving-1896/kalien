@@ -50,7 +50,7 @@ If you consider replacing `test-real-game.tape`, treat it as a breaking fixture 
    - `bun run verify-tape <candidate.tape>`
 2. Replace `test-real-game.tape`.
 3. Regenerate non-zero Groth16 fixtures:
-   - `bash stellar-asteroids-contract/scripts/regenerate-proofs.sh https://risc0-kalien.stellar.buzz`
+   - `bash kalien-contract/scripts/regenerate-proofs.sh https://risc0-kalien.stellar.buzz`
 4. Update score expectations in tests and scripts (for example `32860` references).
 5. Re-run contract and gateway test suites.
 

@@ -37,7 +37,7 @@ TOTAL=0
 # ---------------------------------------------------------------------------
 usage() {
   cat <<'USAGE_EOF'
-Usage: stellar-asteroids-contract/scripts/regenerate-proofs.sh [prover-url]
+Usage: kalien-contract/scripts/regenerate-proofs.sh [prover-url]
 
 Defaults:
   prover-url  http://127.0.0.1:8080
