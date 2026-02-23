@@ -5,16 +5,16 @@ set -euo pipefail
 # This is destructive by design: jobs DB, result artifacts, and logs are removed.
 #
 # Defaults:
-#   DATA_DIR=/var/lib/stellar-zk/prover
-#   SUPERVISOR_PROGRAM=risc0-asteroids-api
+#   DATA_DIR=/var/lib/kalien/prover
+#   SUPERVISOR_PROGRAM=kalien-api
 #
 # Usage:
 #   sudo bash deploy/reset-prover-state.sh
-#   sudo DATA_DIR=/custom/path SUPERVISOR_PROGRAM=risc0-asteroids-api bash deploy/reset-prover-state.sh
+#   sudo DATA_DIR=/custom/path SUPERVISOR_PROGRAM=kalien-api bash deploy/reset-prover-state.sh
 #   sudo bash deploy/reset-prover-state.sh --yes
 
-DATA_DIR="${DATA_DIR:-/var/lib/stellar-zk/prover}"
-SUPERVISOR_PROGRAM="${SUPERVISOR_PROGRAM:-risc0-asteroids-api}"
+DATA_DIR="${DATA_DIR:-/var/lib/kalien/prover}"
+SUPERVISOR_PROGRAM="${SUPERVISOR_PROGRAM:-kalien-api}"
 FORCE_YES=0
 SUPERVISOR_WAS_RUNNING=0
 
@@ -23,8 +23,8 @@ usage() {
 Usage: deploy/reset-prover-state.sh [--yes]
 
 Environment overrides:
-  DATA_DIR            Default: /var/lib/stellar-zk/prover
-  SUPERVISOR_PROGRAM  Default: risc0-asteroids-api
+  DATA_DIR            Default: /var/lib/kalien/prover
+  SUPERVISOR_PROGRAM  Default: kalien-api
 
 What gets deleted:
   - jobs.db, jobs.db-wal, jobs.db-shm

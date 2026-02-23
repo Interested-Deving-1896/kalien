@@ -137,7 +137,7 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
 
     return c.json({
       success: true,
-      service: "stellar-zk-proof-gateway",
+      service: "kalien-proof-gateway",
       mode: "single-active-job",
       expected: {
         rules_digest_hex: `0x${(EXPECTED_RULES_DIGEST >>> 0).toString(16).padStart(8, "0")}`,

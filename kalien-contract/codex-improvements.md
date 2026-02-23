@@ -6,10 +6,10 @@ Scope: Stellar Asteroids contract, RISC0 verifier stack, proof/test scripts, and
 ## Baseline Audit Outcome
 
 What passed:
-- `stellar-asteroids-contract`: `cargo test --workspace --all-targets` (15/15 tests passed).
-- Testnet end-to-end integration: `stellar-asteroids-contract/scripts/deploy-and-test.sh --proof-mode all` (24/24 checks passed).
+- `kalien-contract`: `cargo test --workspace --all-targets` (15/15 tests passed).
+- Testnet end-to-end integration: `kalien-contract/scripts/deploy-and-test.sh --proof-mode all` (24/24 checks passed).
 - Real tape replay checks: `scripts/verify-tape.ts` for `test-short`, `test-medium`, `test-real-game` all passed.
-- Verifier core: `cargo +1.93.0 test --workspace --all-targets --no-default-features` in `risc0-asteroids-verifier` passed.
+- Verifier core: `cargo +1.93.0 test --workspace --all-targets --no-default-features` in `kalien-verifier` passed.
 - Live prover (Vast.ai URL): successful proving for short/medium/real tapes and full benchmark matrix.
 - Live API stress test: `scripts/stress-test-api.sh https://risc0-kalien.stellar.buzz --delay 1` passed (40/40).
 - Fresh non-fixture E2E proved + settled on testnet:
@@ -33,8 +33,8 @@ What failed or needs hardening:
 
 1. Fix router verify arg name in proof scripts.
 - Files:
-  - `stellar-asteroids-contract/scripts/verify-proofs.sh`
-  - `stellar-asteroids-contract/scripts/regenerate-proofs.sh`
+  - `kalien-contract/scripts/verify-proofs.sh`
+  - `kalien-contract/scripts/regenerate-proofs.sh`
 - Problem:
   - Uses `verify --journal_digest ...` but current CLI expects `verify --journal ...`.
   - Verified by failure output and manual corrected invocation success.
@@ -71,7 +71,7 @@ What failed or needs hardening:
 ### P1: Mainnet Contract Safety Hardening
 
 4. Add TTL extension strategy for instance + persistent keys.
-- File: `stellar-asteroids-contract/contracts/asteroids_score/src/lib.rs`
+- File: `kalien-contract/contracts/asteroids_score/src/lib.rs`
 - Problem:
   - Contract writes instance/persistent storage but never extends TTL.
 - Change:
@@ -91,7 +91,7 @@ What failed or needs hardening:
 ### P1: Prover Deployment Hardening
 
 6. Pin full prover toolchain versions in `VASTAI`.
-- File: `risc0-asteroids-verifier/VASTAI`
+- File: `kalien-verifier/VASTAI`
 - Problem:
   - `rzup install` is unpinned and can drift.
 - Change:
@@ -122,9 +122,9 @@ What failed or needs hardening:
 9. Make lint/format/clippy green (or codify intentional exceptions).
 - Rust:
   - Fix clippy warnings seen with `-D warnings`:
-    - `stellar-asteroids-contract/contracts/asteroids_score/src/test.rs` loop style,
-    - `risc0-asteroids-verifier/host/src/lib.rs` `manual_is_multiple_of`,
-    - `risc0-asteroids-verifier/api-server/src/main.rs` `wrong_self_convention`.
+    - `kalien-contract/contracts/asteroids_score/src/test.rs` loop style,
+    - `kalien-verifier/host/src/lib.rs` `manual_is_multiple_of`,
+    - `kalien-verifier/api-server/src/main.rs` `wrong_self_convention`.
   - Ensure rustfmt clean for both Rust workspaces.
 - TS/Worker:
   - Resolve current `bun run check` warnings and `worker/constants.ts` format issue.
@@ -135,12 +135,12 @@ What failed or needs hardening:
 ## Suggested Verification Matrix After Fixes
 
 Run all of the following on every release candidate:
-- Contract unit tests: `cd stellar-asteroids-contract && cargo test --workspace --all-targets`
+- Contract unit tests: `cd kalien-contract && cargo test --workspace --all-targets`
 - Contract integration/testnet:
   - `./scripts/verify-proofs.sh`
   - `./scripts/deploy-and-test.sh --proof-mode all`
 - Verifier:
-  - `cd risc0-asteroids-verifier && cargo +1.93.0 test --workspace --all-targets --no-default-features`
+  - `cd kalien-verifier && cargo +1.93.0 test --workspace --all-targets --no-default-features`
 - Live prover:
   - `bash scripts/bench-segment-sweep.sh <prover-url> --receipts composite --seg-floor 19 --seg-ceiling 21 --tapes short,medium,real`
   - `bash scripts/stress-test-api.sh <prover-url> --delay 1`

@@ -1,7 +1,7 @@
 # Leaderboard Work Reconstruction (Feb 2026)
 
 ## Purpose
-This document reconstructs the leaderboard-related work done in `stellar-zk` during February 2026, using:
+This document reconstructs the leaderboard-related work done in `kalien` during February 2026, using:
 - Codex session metadata and user prompts preserved under `~/.codex/sessions` and `~/.codex/archived_sessions`
 - Git commit history in this repository
 - Current repository state on branch `autopilot`
@@ -134,7 +134,7 @@ When continuing from here, verify these before coding:
 
 ## Relevant Paths Touched by This Workstream
 Representative files from high-signal commits:
-- `stellar-asteroids-contract/contracts/asteroids_score/src/lib.rs`
+- `kalien-contract/contracts/asteroids_score/src/lib.rs`
 - `worker/durable/coordinator.ts`
 - `worker/claim/relay.ts`
 - `worker/prover/client.ts`
@@ -143,7 +143,7 @@ Representative files from high-signal commits:
 - `src/components/AsteroidsCanvas.tsx`
 - `docs/games/asteroids/10-PROOF-GATEWAY-SPEC.md`
 - `docs/games/asteroids/11-CLIENT-INTEGRATION-SPEC.md`
-- `risc0-asteroids-verifier/api-server/src/store/mod.rs`
+- `kalien-verifier/api-server/src/store/mod.rs`
 
 ## Notes
 - This reconstruction intentionally uses both user-intent logs and git history because commit messages alone do not capture all requested product scope.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERIFIER_DIR="$ROOT_DIR/risc0-asteroids-verifier"
+VERIFIER_DIR="$ROOT_DIR/kalien-verifier"
 SHORT_TAPE="$ROOT_DIR/test-fixtures/test-short.tape"
 MEDIUM_TAPE="$ROOT_DIR/test-fixtures/test-medium.tape"
 DEFAULT_THRESHOLDS_FILE="$VERIFIER_DIR/benchmarks/thresholds.env"
@@ -24,7 +24,7 @@ Local policy is enforced: CPU-only host build and dev-mode proving only.
 
 Options:
   --out-dir <path>         Write artifacts to this directory.
-                           Default: risc0-asteroids-verifier/benchmarks/runs/<utc-timestamp>
+                           Default: kalien-verifier/benchmarks/runs/<utc-timestamp>
   --threshold-mode <mode>  off|check (default: off).
                            off = report metrics only
                            check = enforce regression thresholds

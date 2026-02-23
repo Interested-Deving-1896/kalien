@@ -8,20 +8,20 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 ## Verified Against Code
 - Tape format and constants:
   - `src/game/tape.ts`
-  - `risc0-asteroids-verifier/asteroids-core/src/tape.rs`
-  - `risc0-asteroids-verifier/asteroids-core/src/constants.rs`
+  - `kalien-verifier/asteroids-core/src/tape.rs`
+  - `kalien-verifier/asteroids-core/src/constants.rs`
 - Gameplay rules/math:
   - `src/game/AsteroidsGame.ts`
   - `src/game/constants.ts`
-  - `risc0-asteroids-verifier/asteroids-core/src/sim/mod.rs`
-  - `risc0-asteroids-verifier/asteroids-core/src/sim/game.rs`
+  - `kalien-verifier/asteroids-core/src/sim/mod.rs`
+  - `kalien-verifier/asteroids-core/src/sim/game.rs`
 - Proof gateway + prover contract:
   - `worker/api/routes.ts`
   - `worker/prover/client.ts`
-  - `risc0-asteroids-verifier/api-server/src/config.rs`
-  - `risc0-asteroids-verifier/api-server/src/types.rs`
+  - `kalien-verifier/api-server/src/config.rs`
+  - `kalien-verifier/api-server/src/types.rs`
 - On-chain score settlement:
-  - `stellar-asteroids-contract/contracts/asteroids_score/src/lib.rs`
+  - `kalien-contract/contracts/asteroids_score/src/lib.rs`
 
 ## Parity Checks
 1. Tape contract

@@ -7,7 +7,7 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 ## Table of Contents
 
 1. [Current Timeout Inventory](#current-timeout-inventory)
-   - [Prover API Server](#prover-api-server-risc0-asteroids-verifier)
+   - [Prover API Server](#prover-api-server-kalien-verifier)
    - [Cloudflare Worker Gateway](#cloudflare-worker-gateway)
    - [Benchmark Timing Gates](#benchmark-timing-gates)
 2. [Proposed Changes](#proposed-changes)
@@ -21,7 +21,7 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 
 ## Current Timeout Inventory
 
-### Prover API Server (`risc0-asteroids-verifier/`)
+### Prover API Server (`kalien-verifier/`)
 
 | Setting | Current Value | Env Var | File | Purpose |
 |---------|--------------|---------|------|---------|
@@ -257,7 +257,7 @@ TIMED_OUT_PROOF_KILL_SECS=60
 Restart via supervisord:
 
 ```bash
-supervisorctl restart risc0-asteroids-api
+supervisorctl restart kalien-api
 ```
 
 **Why prover first:** The worker gateway can tolerate a tighter prover timeout. If the prover times out at 10 minutes while the worker still has looser settings, the worker simply observes `proof_timeout` and fails the job — no breakage. The reverse (worker first) risks the worker failing jobs while the prover is still willing to run much longer proofs, which is harmless but wastes prover capacity.
@@ -302,7 +302,7 @@ npx wrangler deploy
 
 3. **Check logs for sweep behavior** — the sweep should now reap running jobs older than 600 s:
    ```bash
-   tail -n 200 /var/lib/stellar-zk/prover/api-server.log | rg sweep
+   tail -n 200 /var/lib/kalien/prover/api-server.log | rg sweep
    ```
 
 ### After worker deploy

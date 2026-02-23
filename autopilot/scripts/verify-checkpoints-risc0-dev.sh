@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 AUTOPILOT_DIR="$ROOT_DIR/autopilot"
 MAX_FRAMES="${1:-60000}"
-VERIFIER_DIR="$ROOT_DIR/risc0-asteroids-verifier"
+VERIFIER_DIR="$ROOT_DIR/kalien-verifier"
 for tape in "$AUTOPILOT_DIR"/checkpoints/*.tape; do
   echo "==> verifying $tape"
   (

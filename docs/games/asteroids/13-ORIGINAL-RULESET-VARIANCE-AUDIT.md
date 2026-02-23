@@ -33,10 +33,10 @@ Still intentionally divergent from original:
   - `src/game/AsteroidsGame.ts`
   - `src/game/constants.ts`
   - `src/game/tape.ts`
-  - `risc0-asteroids-verifier/asteroids-core/src/sim/mod.rs`
-  - `risc0-asteroids-verifier/asteroids-core/src/sim/game.rs`
-  - `risc0-asteroids-verifier/asteroids-core/src/constants.rs`
-  - `risc0-asteroids-verifier/asteroids-core/src/tape.rs`
+  - `kalien-verifier/asteroids-core/src/sim/mod.rs`
+  - `kalien-verifier/asteroids-core/src/sim/game.rs`
+  - `kalien-verifier/asteroids-core/src/constants.rs`
+  - `kalien-verifier/asteroids-core/src/tape.rs`
 - Existing project spec reviewed:
   - `docs/games/asteroids/01-GAME-SPEC.md`
 - Original arcade baseline used for comparison:
@@ -48,7 +48,7 @@ No deterministic gameplay-rule drift was found between TS and zk for the audited
 Verification run results:
 - `bun run scripts/verify-tape.ts test-fixtures/test-short.tape`: passed
 - `bun run scripts/verify-tape.ts test-fixtures/test-medium.tape`: passed
-- `cargo test -p asteroids-verifier-core --manifest-path risc0-asteroids-verifier/Cargo.toml`: all tests passed, including TS checkpoint parity fixtures
+- `cargo test -p asteroids-verifier-core --manifest-path kalien-verifier/Cargo.toml`: all tests passed, including TS checkpoint parity fixtures
 
 Interpretation:
 - Core deterministic simulation ordering, scoring, wave progression, entity caps/limits as currently defined, and replay verification are aligned between TS and zk.
@@ -62,9 +62,9 @@ Legend:
 
 | ID | Area | Current TS/zk Ruleset | Original Arcade Behavior | Variance | Severity | Confidence | Recommended Alignment Action |
 |---|---|---|---|---|---|---|---|
-| V-01 | Control surface | Input model is 4 bits: left/right/thrust/fire (`src/game/tape.ts:15`, `risc0-asteroids-verifier/asteroids-core/src/tape.rs:38`). No hyperspace action in sim. | Dedicated hyperspace control exists (`SWHYPER`), with explicit hyperspace state machine. | Hyperspace is removed entirely. | Critical | High | Add optional hyperspace bit + deterministic hyperspace logic path (including failure rules). |
+| V-01 | Control surface | Input model is 4 bits: left/right/thrust/fire (`src/game/tape.ts:15`, `kalien-verifier/asteroids-core/src/tape.rs:38`). No hyperspace action in sim. | Dedicated hyperspace control exists (`SWHYPER`), with explicit hyperspace state machine. | Hyperspace is removed entirely. | Critical | High | Add optional hyperspace bit + deterministic hyperspace logic path (including failure rules). |
 | V-02 | Hyperspace behavior | N/A (omitted). Spec explicitly says omitted (`docs/games/asteroids/01-GAME-SPEC.md:58`). | Hyperspace has random failure and asteroid-density failure checks; safe return checks are part of flow. | Major gameplay escape/risk mechanic absent. | Critical | High | Implement rev-targeted hyperspace algorithm and expose as mode flag (`classic` vs `zk-short`). |
-| V-03 | Wave large-asteroid cap | `4,6,8,10` in waves `1..4`, then ramps to `16` (`src/game/AsteroidsGame.ts`, `risc0-asteroids-verifier/asteroids-core/src/sim/mod.rs`). | Wave starts at 4, increases by 2, max 11 (`AstPerWave` path in disassembly). | Difficulty ramp still exceeds original after wave 5. | High | High | Change cap to 11 in classic mode. |
+| V-03 | Wave large-asteroid cap | `4,6,8,10` in waves `1..4`, then ramps to `16` (`src/game/AsteroidsGame.ts`, `kalien-verifier/asteroids-core/src/sim/mod.rs`). | Wave starts at 4, increases by 2, max 11 (`AstPerWave` path in disassembly). | Difficulty ramp still exceeds original after wave 5. | High | High | Change cap to 11 in classic mode. |
 | V-04 | Session-pressure policy | Design targets 2-5 minute runs with anti-lurk pressure (`docs/games/asteroids/01-GAME-SPEC.md:40`). | Original supports marathon play and historically allowed lurking strategy in earlier ROM behavior. | System is tuned for short-run proving, not arcade endurance. | High | High | Keep as intentional in zk mode; add true-classic mode profile. |
 | V-05 | Anti-lurk system | Explicit anti-lurk timers and forced spawn-pressure (`LURK_*`, `src/game/constants.ts:67`, saucer logic `src/game/AsteroidsGame.ts:992`; mirrored in Rust). | No equivalent explicit 6s anti-lurk timer in original core logic. | Current ruleset deliberately penalizes stalling far more aggressively. | High | High | Gate anti-lurk under non-classic mode flag. |
 | V-06 | Concurrent saucers | Max saucers by wave: `1` (`wave<4`), `2` (`wave<7`), `3` (`wave>=7`) in TS + zk. | Original runtime model is single active saucer status slot. | Multi-saucer concurrency is non-original and materially harder. | High | High | Cap to 1 in classic mode. |
