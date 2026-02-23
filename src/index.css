@@ -1,12 +1,57 @@
-:root {
-  --font-body: "Monaspace Krypton", "SFMono-Regular", "Consolas", monospace;
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: #04070b;
+  --color-foreground: #d4f7ea;
+  --color-card: rgba(12, 22, 30, 0.7);
+  --color-card-foreground: #d9f4ff;
+  --color-popover: #0c161e;
+  --color-popover-foreground: #d4f7ea;
+  --color-primary: #66c7ff;
+  --color-primary-foreground: #04070b;
+  --color-secondary: #90f6c8;
+  --color-secondary-foreground: #04070b;
+  --color-muted: rgba(157, 176, 201, 0.14);
+  --color-muted-foreground: #9db0c9;
+  --color-accent: rgba(20, 92, 136, 0.36);
+  --color-accent-foreground: #dff4ff;
+  --color-destructive: #ff9a9a;
+  --color-destructive-foreground: #04070b;
+  --color-warning: #ffd79f;
+  --color-warning-foreground: #04070b;
+  --color-border: rgba(123, 179, 255, 0.25);
+  --color-input: rgba(108, 159, 230, 0.4);
+  --color-ring: rgba(102, 199, 255, 0.5);
+  --color-chart-1: #66c7ff;
+  --color-chart-2: #90f6c8;
+  --color-chart-3: #ffd79f;
+  --color-chart-4: #ff9a9a;
+  --color-chart-5: #9db0c9;
+
+  --color-sidebar-background: #04070b;
+  --color-sidebar-foreground: #d4f7ea;
+  --color-sidebar-primary: #66c7ff;
+  --color-sidebar-primary-foreground: #04070b;
+  --color-sidebar-accent: rgba(20, 92, 136, 0.36);
+  --color-sidebar-accent-foreground: #dff4ff;
+  --color-sidebar-border: rgba(123, 179, 255, 0.25);
+  --color-sidebar-ring: rgba(102, 199, 255, 0.5);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --font-sans: "Monaspace Krypton", "SFMono-Regular", "Consolas", monospace;
   --font-display: "Monaspace Neon", "Monaspace Krypton", "SFMono-Regular", "Consolas", monospace;
-  font-family: var(--font-body);
-  line-height: 1.4;
-  font-weight: 400;
-  color: #d4f7ea;
-  background: #04070b;
 }
+
+/* ---------------------------------------------------------------------------
+   Base / reset
+--------------------------------------------------------------------------- */
 
 * {
   box-sizing: border-box;
@@ -16,18 +61,93 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  font-family: var(--font-body);
-  font-feature-settings:
-    "liga" 1,
-    "calt" 1;
+  font-family: var(--font-sans);
+  font-feature-settings: "liga" 1, "calt" 1;
   text-rendering: optimizeLegibility;
   background:
     radial-gradient(circle at 18% 16%, rgba(76, 175, 255, 0.2), transparent 45%),
     radial-gradient(circle at 84% 80%, rgba(84, 255, 188, 0.16), transparent 40%),
     linear-gradient(160deg, #050a11 0%, #04070b 45%, #0b131d 100%);
-  color: #d4f7ea;
+  color: var(--color-foreground);
+  line-height: 1.4;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* ---------------------------------------------------------------------------
+   Leaderboard decorative glow (kept here as pseudo-elements aren't easy in TW)
+--------------------------------------------------------------------------- */
+
+.leaderboard-glow {
+  position: relative;
+  isolation: isolate;
+}
+
+.leaderboard-glow::before,
+.leaderboard-glow::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(40px);
+}
+
+.leaderboard-glow::before {
+  width: min(42vw, 520px);
+  height: min(42vw, 520px);
+  top: -12%;
+  right: -16%;
+  background: rgba(58, 146, 255, 0.23);
+}
+
+.leaderboard-glow::after {
+  width: min(36vw, 420px);
+  height: min(36vw, 420px);
+  left: -14%;
+  bottom: 6%;
+  background: rgba(65, 255, 189, 0.12);
+}
+
+/* Table mobile scroll-hint gradient */
+.table-scroll-hint {
+  position: relative;
+}
+
+.table-scroll-hint::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 40px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(6, 14, 24, 0.85));
+  border-radius: 0 10px 10px 0;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+@media (max-width: 760px) {
+  .table-scroll-hint::after {
+    opacity: 1;
+  }
+}
+
+/* Leaderboard rise animation */
+@keyframes leaderboard-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: leaderboard-rise 300ms ease-out both;
 }

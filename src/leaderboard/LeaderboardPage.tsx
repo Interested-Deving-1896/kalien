@@ -11,7 +11,19 @@ import {
   updateLeaderboardProfile,
 } from "./api";
 import { formatUtcDateTime, timeAgo } from "../time";
-import "./LeaderboardPage.css";
+import { cn } from "@/lib/utils";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/ui/status-badge";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
 
 const AUTO_REFRESH_MS = 60_000;
 
@@ -64,21 +76,30 @@ function windowSubtitle(window: LeaderboardWindow): string {
   return "All-time history";
 }
 
-function claimStatusClass(status: ClaimStatus): string {
-  return `leaderboard-status leaderboard-status--${status}`;
+function claimStatusBadgeVariant(
+  status: ClaimStatus,
+): "success" | "error" | "info" {
+  switch (status) {
+    case "succeeded":
+      return "success";
+    case "failed":
+      return "error";
+    default:
+      return "info";
+  }
 }
 
 function rankClass(rank: number): string {
   if (rank === 1) {
-    return "leaderboard-rank leaderboard-rank--top1";
+    return "font-display tracking-wider font-bold text-[#ffe08f]";
   }
   if (rank === 2) {
-    return "leaderboard-rank leaderboard-rank--top2";
+    return "font-display tracking-wider font-bold text-[#d8ecff]";
   }
   if (rank === 3) {
-    return "leaderboard-rank leaderboard-rank--top3";
+    return "font-display tracking-wider font-bold text-[#ffcda2]";
   }
-  return "leaderboard-rank";
+  return "font-display tracking-wider";
 }
 
 function formatMetric(value: number | null | undefined): string {
@@ -115,65 +136,28 @@ function RelativeTime({ value }: { value: string | null | undefined }) {
   return <span title={formatUtcDateTime(value)}>{timeAgo(value)}</span>;
 }
 
-function SkeletonRows({ count }: { count: number }) {
+function SkeletonCell({ wide }: { wide?: boolean }) {
   return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <tr key={i} className="leaderboard-skeleton-row">
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell leaderboard-skeleton-cell--wide" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell leaderboard-skeleton-cell--wide" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-        </tr>
-      ))}
-    </>
+    <span
+      className={cn(
+        "block h-3.5 rounded bg-primary/20 animate-pulse",
+        wide ? "w-28" : "w-14",
+      )}
+    />
   );
 }
 
-function PlayerSkeletonRows({ count }: { count: number }) {
+function SkeletonRows({ count, cols }: { count: number; cols: number }) {
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
-        <tr key={i} className="leaderboard-skeleton-row">
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell leaderboard-skeleton-cell--wide" />
-          </td>
-          <td>
-            <span className="leaderboard-skeleton-cell" />
-          </td>
-        </tr>
+        <TableRow key={i}>
+          {Array.from({ length: cols }, (__, j) => (
+            <TableCell key={j}>
+              <SkeletonCell wide={j === 1 || j === cols - 2} />
+            </TableCell>
+          ))}
+        </TableRow>
       ))}
     </>
   );
@@ -200,8 +184,10 @@ export function LeaderboardPage() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSavedAt, setProfileSavedAt] = useState<string | null>(null);
+  const [runsOffset, setRunsOffset] = useState(0);
+  const [runsLimit] = useState(25);
+  const [runsLoading, setRunsLoading] = useState(false);
 
-  // Track last refresh time for relative display
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
 
   const fetchLeaderboardRef = useRef<(() => void) | undefined>(undefined);
@@ -250,7 +236,6 @@ export function LeaderboardPage() {
 
   fetchLeaderboardRef.current = () => fetchLeaderboard(true);
 
-  // Initial + parameter-change fetch
   useEffect(() => {
     if (playerAddress) {
       return;
@@ -293,7 +278,6 @@ export function LeaderboardPage() {
     };
   }, [findAddress, limit, offset, playerAddress, windowKey]);
 
-  // Auto-refresh every 60s (silent background refresh)
   useEffect(() => {
     if (playerAddress) {
       return;
@@ -312,20 +296,30 @@ export function LeaderboardPage() {
     }
 
     let cancelled = false;
-    setPlayerLoading(true);
-    setPlayerError(null);
-    setProfileSaveError(null);
-    setProfileSavedAt(null);
+    const isPageChange = playerData !== null;
+    if (isPageChange) {
+      setRunsLoading(true);
+    } else {
+      setPlayerLoading(true);
+      setPlayerError(null);
+      setProfileSaveError(null);
+      setProfileSavedAt(null);
+    }
 
     void (async () => {
       try {
-        const response = await getLeaderboardPlayer(playerAddress);
+        const response = await getLeaderboardPlayer(playerAddress, {
+          runsLimit: runsLimit,
+          runsOffset: runsOffset,
+        });
         if (cancelled) {
           return;
         }
         setPlayerData(response);
-        setProfileUsername(response.player.profile?.username ?? "");
-        setProfileLinkUrl(response.player.profile?.linkUrl ?? "");
+        if (!isPageChange) {
+          setProfileUsername(response.player.profile?.username ?? "");
+          setProfileLinkUrl(response.player.profile?.linkUrl ?? "");
+        }
       } catch (reason) {
         if (cancelled) {
           return;
@@ -338,6 +332,7 @@ export function LeaderboardPage() {
       } finally {
         if (!cancelled) {
           setPlayerLoading(false);
+          setRunsLoading(false);
         }
       }
     })();
@@ -345,7 +340,8 @@ export function LeaderboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [playerAddress]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- playerData excluded to avoid loop
+  }, [playerAddress, runsOffset, runsLimit]);
 
   const applyFindMe = useCallback(() => {
     const next = toNullableTrimmed(searchInput);
@@ -381,20 +377,13 @@ export function LeaderboardPage() {
       const walletModule = await import("../wallet/smartAccount");
       const walletSession =
         await walletModule.resolveSmartWalletSessionForClaimant(claimantAddress);
-      if (!walletSession.credentialPublicKey) {
-        throw new Error("missing passkey public key in wallet session");
-      }
       const updated = await updateLeaderboardProfile(
         claimantAddress,
         {
           username: toNullableTrimmed(profileUsername),
           linkUrl: toNullableTrimmed(profileLinkUrl),
         },
-        {
-          credentialId: walletSession.credentialId,
-          credentialPublicKey: walletSession.credentialPublicKey,
-          credentialTransports: walletSession.credentialTransports,
-        },
+        walletSession.credentialId,
       );
 
       setPlayerData((current) => {
@@ -424,102 +413,121 @@ export function LeaderboardPage() {
   const supportsPlayerProfileAuth =
     playerData !== null && isSmartAccountContractAddress(playerData.player.claimant_address);
 
+  /* ─── Player Profile View ─── */
   if (playerAddress) {
     return (
-      <main className="leaderboard-shell">
-        <header className="leaderboard-header leaderboard-surface leaderboard-surface--hero">
+      <main className="leaderboard-glow mx-auto grid min-h-screen max-w-[1240px] gap-4 p-[clamp(1rem,3vw,2rem)]">
+        {/* Hero Header */}
+        <header className="animate-rise flex flex-col items-start justify-between gap-3 rounded-xl border border-[rgba(122,185,255,0.34)] bg-[radial-gradient(circle_at_110%_0%,rgba(102,231,196,0.12),transparent_40%),linear-gradient(160deg,rgba(7,14,25,0.8),rgba(5,11,20,0.95))] p-[clamp(0.95rem,2.6vw,1.2rem)] shadow-[0_22px_70px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.07)] sm:flex-row">
           <div>
-            <h1>Player</h1>
-            <p>Profile, rankings, and recent proved runs.</p>
+            <h1 className="m-0 font-display text-[clamp(1.75rem,4.2vw,2.4rem)] tracking-[0.09em] uppercase [text-shadow:0_0_16px_rgba(79,196,255,0.26)]">
+              Player
+            </h1>
+            <p className="m-0 mt-1 text-[rgba(205,238,226,0.92)]">
+              Profile, rankings, and recent proved runs.
+            </p>
           </div>
-          <a className="leaderboard-navlink" href="/leaderboard">
+          <a
+            className="font-display text-sm uppercase tracking-wider text-[#9de0ff] no-underline hover:underline"
+            href="/leaderboard"
+          >
             Back To Leaderboard
           </a>
         </header>
 
         {playerLoading ? (
-          <section className="leaderboard-card">
-            <div className="leaderboard-table-wrap">
-              <table className="leaderboard-table" aria-label="Loading player data">
-                <tbody>
-                  <PlayerSkeletonRows count={3} />
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <Card>
+            <Table aria-label="Loading player data">
+              <TableBody>
+                <SkeletonRows count={3} cols={6} />
+              </TableBody>
+            </Table>
+          </Card>
         ) : null}
-        {playerError ? <p className="leaderboard-error">{playerError}</p> : null}
+        {playerError ? <p className="m-0 text-[#ffabab]">{playerError}</p> : null}
 
         {playerData ? (
           <>
-            <section className="leaderboard-card">
-              <h2>
+            {/* Player Info Card */}
+            <Card>
+              <h2 className="m-0 font-display tracking-[0.055em] uppercase">
                 {playerData.player.profile?.username ??
                   abbreviateAddress(playerData.player.claimant_address)}
               </h2>
-              <p>
+              <p className="m-0">
                 <strong>Address:</strong>{" "}
-                <code className="leaderboard-address">{playerData.player.claimant_address}</code>
+                <code className="break-all text-[rgba(190,216,249,0.92)]">
+                  {playerData.player.claimant_address}
+                </code>
               </p>
               {playerData.player.profile?.linkUrl &&
               isSafeUrl(playerData.player.profile.linkUrl) ? (
-                <p>
+                <p className="m-0">
                   <strong>Link:</strong>{" "}
                   <a href={playerData.player.profile.linkUrl} target="_blank" rel="noreferrer">
                     {playerData.player.profile.linkUrl}
                   </a>
                 </p>
               ) : null}
-              <dl className="leaderboard-grid">
-                <div>
-                  <dt>Total Runs</dt>
-                  <dd>{playerData.player.stats.total_runs.toLocaleString()}</dd>
-                </div>
-                <div>
-                  <dt>Best Score</dt>
-                  <dd>{playerData.player.stats.best_score.toLocaleString()}</dd>
-                </div>
-                <div>
-                  <dt>Total Minted</dt>
-                  <dd>{formatMetric(playerData.player.stats.total_minted)}</dd>
-                </div>
-                <div>
-                  <dt>Last Played</dt>
-                  <dd>
+              <dl className="m-0 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  ["Total Runs", playerData.player.stats.total_runs.toLocaleString()],
+                  ["Best Score", playerData.player.stats.best_score.toLocaleString()],
+                  ["Total Minted", formatMetric(playerData.player.stats.total_minted)],
+                ].map(([label, val]) => (
+                  <div
+                    key={label}
+                    className="rounded-lg border border-[rgba(108,159,230,0.24)] bg-[rgba(12,22,39,0.62)] px-2 py-2"
+                  >
+                    <dt className="m-0 text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]">
+                      {label}
+                    </dt>
+                    <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">{val}</dd>
+                  </div>
+                ))}
+                <div className="rounded-lg border border-[rgba(108,159,230,0.24)] bg-[rgba(12,22,39,0.62)] px-2 py-2">
+                  <dt className="m-0 text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]">
+                    Last Played
+                  </dt>
+                  <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">
                     <RelativeTime value={playerData.player.stats.last_played_at} />
                   </dd>
                 </div>
               </dl>
-              <p className="leaderboard-note">
+              <p className="m-0 text-[rgba(186,210,241,0.92)]">
                 Leaderboard rank uses each claimant's single best proved run in the selected window;
                 this page also shows your full recent run history and total minted.
               </p>
-              <dl className="leaderboard-grid">
-                <div>
-                  <dt>10m Rank</dt>
-                  <dd>{playerData.player.ranks.ten_min ?? "n/a"}</dd>
-                </div>
-                <div>
-                  <dt>24h Rank</dt>
-                  <dd>{playerData.player.ranks.day ?? "n/a"}</dd>
-                </div>
-                <div>
-                  <dt>All-Time Rank</dt>
-                  <dd>{playerData.player.ranks.all ?? "n/a"}</dd>
-                </div>
+              <dl className="m-0 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {[
+                  ["10m Rank", playerData.player.ranks.ten_min ?? "n/a"],
+                  ["24h Rank", playerData.player.ranks.day ?? "n/a"],
+                  ["All-Time Rank", playerData.player.ranks.all ?? "n/a"],
+                ].map(([label, val]) => (
+                  <div
+                    key={label}
+                    className="rounded-lg border border-[rgba(108,159,230,0.24)] bg-[rgba(12,22,39,0.62)] px-2 py-2"
+                  >
+                    <dt className="m-0 text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]">
+                      {label}
+                    </dt>
+                    <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">{val}</dd>
+                  </div>
+                ))}
               </dl>
-            </section>
+            </Card>
 
+            {/* Edit Profile */}
             {supportsPlayerProfileAuth ? (
-              <section className="leaderboard-card">
-                <h3>Edit Profile</h3>
-                <p className="leaderboard-note">
+              <Card>
+                <h3 className="m-0 font-display tracking-[0.055em] uppercase">Edit Profile</h3>
+                <p className="m-0 text-[rgba(186,210,241,0.92)]">
                   Saving requires a passkey prompt for the claimant wallet tied to this address.
                 </p>
-                <div className="leaderboard-form-grid">
-                  <label>
+                <div className="grid gap-2.5">
+                  <label className="grid gap-1.5 text-xs uppercase tracking-[0.04em]">
                     Username
-                    <input
+                    <Input
                       type="text"
                       value={profileUsername}
                       onChange={(event) => setProfileUsername(event.target.value)}
@@ -527,9 +535,9 @@ export function LeaderboardPage() {
                       maxLength={32}
                     />
                   </label>
-                  <label>
+                  <label className="grid gap-1.5 text-xs uppercase tracking-[0.04em]">
                     Link URL
-                    <input
+                    <Input
                       type="url"
                       value={profileLinkUrl}
                       onChange={(event) => setProfileLinkUrl(event.target.value)}
@@ -538,76 +546,118 @@ export function LeaderboardPage() {
                     />
                   </label>
                 </div>
-                <div className="leaderboard-actions">
-                  <button type="button" onClick={saveProfile} disabled={savingProfile}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={saveProfile} disabled={savingProfile}>
                     {savingProfile ? "Saving..." : "Save Profile"}
-                  </button>
+                  </Button>
                   {profileSavedAt ? (
-                    <span className="leaderboard-note">
+                    <span className="text-sm text-[rgba(186,210,241,0.92)]">
                       Saved <RelativeTime value={profileSavedAt} />
                     </span>
                   ) : null}
                 </div>
-                {profileSaveError ? <p className="leaderboard-error">{profileSaveError}</p> : null}
-              </section>
+                {profileSaveError ? (
+                  <p className="m-0 text-[#ffabab]">{profileSaveError}</p>
+                ) : null}
+              </Card>
             ) : (
-              <section className="leaderboard-card">
-                <h3>Edit Profile</h3>
-                <p className="leaderboard-note">
+              <Card>
+                <h3 className="m-0 font-display tracking-[0.055em] uppercase">Edit Profile</h3>
+                <p className="m-0 text-[rgba(186,210,241,0.92)]">
                   Profile edits are available only for smart-account claimant contract addresses.
                 </p>
-              </section>
+              </Card>
             )}
 
-            <section className="leaderboard-card">
-              <h3>Recent Runs</h3>
-              <p className="leaderboard-note">
+            {/* Recent Runs */}
+            <Card>
+              <h3 className="m-0 font-display tracking-[0.055em] uppercase">Recent Runs</h3>
+              <p className="m-0 text-[rgba(186,210,241,0.92)]">
                 Recent runs includes every proved submission for this claimant (not just the best
                 run).
               </p>
-              {playerData.player.recent_runs.length === 0 ? (
-                <p className="leaderboard-note">No proved runs yet.</p>
+              {playerData.player.recent_runs.length === 0 && runsOffset === 0 ? (
+                <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs yet.</p>
               ) : (
-                <div className="leaderboard-table-wrap">
-                  <table className="leaderboard-table" aria-label="Recent proved runs">
-                    <thead>
-                      <tr>
-                        <th scope="col">Score</th>
-                        <th scope="col">Frames</th>
-                        <th scope="col">Minted (this run)</th>
-                        <th scope="col">Seed</th>
-                        <th scope="col">Completed</th>
-                        <th scope="col">Claim</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                <>
+                  <Table aria-label="Recent proved runs">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead scope="col">Score</TableHead>
+                        <TableHead scope="col">Frames</TableHead>
+                        <TableHead scope="col">Minted (this run)</TableHead>
+                        <TableHead scope="col">Seed</TableHead>
+                        <TableHead scope="col">Completed</TableHead>
+                        <TableHead scope="col">Claim</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {playerData.player.recent_runs.map((run) => (
-                        <tr key={run.jobId}>
-                          <td className="leaderboard-cell--num">{run.score.toLocaleString()}</td>
-                          <td className="leaderboard-cell--num">{formatMetric(run.frameCount)}</td>
-                          <td className="leaderboard-cell--num">{formatMetric(run.mintedDelta)}</td>
-                          <td className="leaderboard-cell--mono">{formatHex32(run.seed)}</td>
-                          <td>
+                        <TableRow key={run.jobId}>
+                          <TableCell className="text-right tabular-nums">
+                            {run.score.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMetric(run.frameCount)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMetric(run.mintedDelta)}
+                          </TableCell>
+                          <TableCell className="font-display tracking-[0.04em]">
+                            {formatHex32(run.seed)}
+                          </TableCell>
+                          <TableCell>
                             <RelativeTime value={run.completedAt} />
-                          </td>
-                          <td>
-                            <span className={claimStatusClass(run.claimStatus)}>
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge variant={claimStatusBadgeVariant(run.claimStatus)}>
                               {run.claimStatus}
-                            </span>
-                          </td>
-                        </tr>
+                            </StatusBadge>
+                          </TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </TableBody>
+                  </Table>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => setRunsOffset((c) => Math.max(0, c - runsLimit))}
+                      disabled={runsOffset === 0 || runsLoading}
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-sm text-[rgba(186,210,241,0.92)]">
+                      {runsOffset + 1}-
+                      {Math.min(
+                        runsOffset + playerData.player.recent_runs.length,
+                        playerData.player.runs_pagination.total,
+                      )}{" "}
+                      of {playerData.player.runs_pagination.total}
+                    </span>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (playerData.player.runs_pagination.next_offset !== null) {
+                          setRunsOffset(playerData.player.runs_pagination.next_offset);
+                        }
+                      }}
+                      disabled={
+                        playerData.player.runs_pagination.next_offset === null || runsLoading
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </>
               )}
-            </section>
+            </Card>
           </>
         ) : null}
       </main>
     );
   }
 
+  /* ─── Leaderboard List View ─── */
   const showingStart = leaderboard
     ? Math.min(leaderboard.pagination.total, leaderboard.pagination.offset + 1)
     : 0;
@@ -629,262 +679,304 @@ export function LeaderboardPage() {
     (leaderboard.ingestion?.total_events ?? 0) === 0;
 
   return (
-    <main className="leaderboard-shell">
-      <header className="leaderboard-header leaderboard-surface leaderboard-surface--hero">
+    <main className="leaderboard-glow mx-auto grid min-h-screen max-w-[1240px] gap-4 p-[clamp(1rem,3vw,2rem)]">
+      {/* Hero Header */}
+      <header className="animate-rise flex flex-col items-start justify-between gap-3 rounded-xl border border-[rgba(122,185,255,0.34)] bg-[radial-gradient(circle_at_110%_0%,rgba(102,231,196,0.12),transparent_40%),linear-gradient(160deg,rgba(7,14,25,0.8),rgba(5,11,20,0.95))] p-[clamp(0.95rem,2.6vw,1.2rem)] shadow-[0_22px_70px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.07)] sm:flex-row">
         <div>
-          <h1>Leaderboard</h1>
-          <p>Rolling 10m, 24h, and all-time rankings from proved runs.</p>
-          <p className="leaderboard-note">
+          <h1 className="m-0 font-display text-[clamp(1.75rem,4.2vw,2.4rem)] tracking-[0.09em] uppercase [text-shadow:0_0_16px_rgba(79,196,255,0.26)]">
+            Leaderboard
+          </h1>
+          <p className="m-0 mt-1 text-[rgba(205,238,226,0.92)]">
+            Rolling 10m, 24h, and all-time rankings from proved runs.
+          </p>
+          <p className="m-0 mt-1 text-sm text-[rgba(186,210,241,0.92)]">
             {leaderboard
               ? `${windowSubtitle(leaderboard.window)} window`
               : "Loading current ranking window"}
           </p>
         </div>
-        <div className="leaderboard-header-actions">
+        <div className="grid justify-items-end gap-2">
           {leaderboard?.ingestion?.last_synced_at ? (
-            <span
-              className="leaderboard-sync-pill"
+            <StatusBadge
+              variant="success"
               title={formatUtcDateTime(leaderboard.ingestion.last_synced_at)}
             >
               Synced <RelativeTime value={leaderboard.ingestion.last_synced_at} />
-            </span>
+            </StatusBadge>
           ) : (
-            <span className="leaderboard-sync-pill leaderboard-sync-pill--muted">
-              Sync in progress
-            </span>
+            <StatusBadge variant="muted">Sync in progress</StatusBadge>
           )}
-          <div className="leaderboard-header-links">
-            <button
-              type="button"
-              className="leaderboard-refresh-btn"
-              onClick={() => fetchLeaderboard(false)}
-              disabled={loading}
-              title={lastRefreshAt ? `Last refreshed ${timeAgo(lastRefreshAt)}` : "Refresh"}
-            >
-              Refresh
-            </button>
-            <a className="leaderboard-navlink" href="/">
-              Back To Game
-            </a>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => fetchLeaderboard(false)}
+            disabled={loading}
+            title={lastRefreshAt ? `Last refreshed ${timeAgo(lastRefreshAt)}` : "Refresh"}
+          >
+            Refresh
+          </Button>
         </div>
       </header>
 
-      <section className="leaderboard-controls leaderboard-surface">
-        <div className="leaderboard-controls-copy">
-          <h2>Filters</h2>
-          <p>Switch horizon or lookup a claimant contract address.</p>
+      {/* Filters */}
+      <Card className="animate-rise">
+        <div className="grid gap-1">
+          <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase">Filters</h2>
+          <p className="m-0 text-sm text-[rgba(176,202,237,0.92)]">
+            Switch horizon or lookup a claimant contract address.
+          </p>
         </div>
-        <div className="leaderboard-window-buttons" role="group" aria-label="Time window selector">
+        <div
+          className="inline-flex w-fit flex-wrap gap-1.5 rounded-xl border border-[rgba(99,156,226,0.37)] bg-[rgba(11,20,34,0.7)] p-1"
+          role="group"
+          aria-label="Time window selector"
+        >
           {(["10m", "day", "all"] as LeaderboardWindow[]).map((w) => (
-            <button
+            <Button
               key={w}
-              type="button"
+              variant={w === windowKey ? "active" : "space"}
+              size="sm"
               onClick={() => {
                 setWindowKey(w);
                 setOffset(0);
               }}
-              className={w === windowKey ? "active" : ""}
               aria-pressed={w === windowKey}
             >
               {windowLabel(w)}
-            </button>
+            </Button>
           ))}
         </div>
 
         <form
-          className="leaderboard-find-me"
+          className="flex flex-col gap-2 sm:flex-row"
           onSubmit={(event) => {
             event.preventDefault();
             applyFindMe();
           }}
         >
-          <input
+          <Input
             type="text"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder="Find address (G... or C...)"
             aria-label="Search for a player address"
+            className="flex-1 sm:min-w-[260px]"
           />
-          <button type="submit">Find Me</button>
-          <button type="button" onClick={clearFindMe} disabled={!findAddress}>
+          <Button type="submit" size="sm">
+            Find Me
+          </Button>
+          <Button size="sm" onClick={clearFindMe} disabled={!findAddress}>
             Clear
-          </button>
+          </Button>
         </form>
-      </section>
+      </Card>
 
-      {error ? <p className="leaderboard-error">{error}</p> : null}
+      {error ? <p className="m-0 text-[#ffabab]">{error}</p> : null}
 
+      {/* Loading skeleton */}
       {loading && !leaderboard ? (
-        <section className="leaderboard-card leaderboard-surface">
-          <h2 className="leaderboard-section-title">Rankings</h2>
-          <div className="leaderboard-table-wrap">
-            <table className="leaderboard-table" aria-label="Loading leaderboard rankings">
-              <thead>
-                <tr>
-                  <th scope="col">Rank</th>
-                  <th scope="col">Player</th>
-                  <th scope="col">Score</th>
-                  <th scope="col">Frames</th>
-                  <th scope="col">Minted (this run)</th>
-                  <th scope="col">Seed</th>
-                  <th scope="col">Completed</th>
-                  <th scope="col">Claim</th>
-                </tr>
-              </thead>
-              <tbody>
-                <SkeletonRows count={5} />
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <Card className="animate-rise">
+          <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase text-[rgba(176,219,255,0.95)]">
+            Rankings
+          </h2>
+          <Table aria-label="Loading leaderboard rankings">
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col">Rank</TableHead>
+                <TableHead scope="col">Player</TableHead>
+                <TableHead scope="col">Score</TableHead>
+                <TableHead scope="col">Frames</TableHead>
+                <TableHead scope="col">Minted (this run)</TableHead>
+                <TableHead scope="col">Seed</TableHead>
+                <TableHead scope="col">Completed</TableHead>
+                <TableHead scope="col">Claim</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <SkeletonRows count={5} cols={8} />
+            </TableBody>
+          </Table>
+        </Card>
       ) : null}
 
       {leaderboard ? (
         <>
-          <section className="leaderboard-card leaderboard-surface">
-            <div className="leaderboard-summary-line">
-              <p>
+          {/* Summary + KPIs */}
+          <Card className="animate-rise">
+            <div className="flex flex-wrap gap-1 gap-x-4">
+              <p className="m-0">
                 <strong>Window:</strong> {windowLabel(leaderboard.window)}
-                {" · "}
+                {" \u00b7 "}
                 <strong>Updated:</strong> <RelativeTime value={leaderboard.generated_at} />
               </p>
-              <p>
+              <p className="m-0">
                 <strong>Showing:</strong> {showingStart}-{showingEnd} of{" "}
                 {leaderboard.pagination.total.toLocaleString()} players
               </p>
             </div>
 
-            <dl className="leaderboard-kpi-grid">
-              <div>
-                <dt>Tracked Players</dt>
-                <dd>{leaderboard.pagination.total.toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Top Score</dt>
-                <dd>{topEntry ? topEntry.score.toLocaleString() : "n/a"}</dd>
-              </div>
-              <div>
-                <dt>Event Rows</dt>
-                <dd>{leaderboard.ingestion?.total_events?.toLocaleString() ?? "n/a"}</dd>
-              </div>
-              <div>
-                <dt>Highest Ledger</dt>
-                <dd>{leaderboard.ingestion?.highest_ledger?.toLocaleString() ?? "n/a"}</dd>
-              </div>
+            <dl className="m-0 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                ["Tracked Players", leaderboard.pagination.total.toLocaleString()],
+                ["Top Score", topEntry ? topEntry.score.toLocaleString() : "n/a"],
+                [
+                  "Event Rows",
+                  leaderboard.ingestion?.total_events?.toLocaleString() ?? "n/a",
+                ],
+                [
+                  "Highest Ledger",
+                  leaderboard.ingestion?.highest_ledger?.toLocaleString() ?? "n/a",
+                ],
+              ].map(([label, val]) => (
+                <div
+                  key={label}
+                  className="rounded-lg border border-[rgba(108,159,230,0.24)] bg-[rgba(12,22,39,0.62)] px-2 py-2"
+                >
+                  <dt className="m-0 text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]">
+                    {label}
+                  </dt>
+                  <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">{val}</dd>
+                </div>
+              ))}
             </dl>
 
             {leaderboard.me ? (
-              <p>
+              <p className="m-0">
                 <strong>Your Rank:</strong> #{leaderboard.me.rank} (
                 {leaderboard.me.score.toLocaleString()} pts)
               </p>
             ) : findAddress ? (
-              <p className="leaderboard-note">Address not ranked in this window.</p>
+              <p className="m-0 text-[rgba(186,210,241,0.92)]">
+                Address not ranked in this window.
+              </p>
             ) : null}
 
             {hasHistoricalData ? (
-              <div className="leaderboard-empty-window-hint">
-                <p className="leaderboard-note">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-2.5">
+                <p className="m-0 text-[rgba(186,210,241,0.92)]">
                   No proved runs landed in this short window. Historical rankings still exist.
                 </p>
-                <button
-                  type="button"
+                <Button
+                  size="sm"
                   onClick={() => {
                     setWindowKey("all");
                     setOffset(0);
                   }}
                 >
                   Show All-Time
-                </button>
+                </Button>
               </div>
             ) : null}
-          </section>
+          </Card>
 
-          <section className="leaderboard-card leaderboard-surface">
-            <h2 className="leaderboard-section-title">Rankings</h2>
-            <p className="leaderboard-note">
+          {/* Rankings Table */}
+          <Card className="animate-rise">
+            <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase text-[rgba(176,219,255,0.95)]">
+              Rankings
+            </h2>
+            <p className="m-0 text-[rgba(186,210,241,0.92)]">
               Rankings show one row per claimant (their best proved run in this window). Minted is
               the token delta minted for that specific submission.
             </p>
             {isEmptyAllTime ? (
-              <div className="leaderboard-empty-cta">
-                <p>No proved runs yet.</p>
-                <p>Play the game and prove your score to appear here.</p>
-                <a className="leaderboard-cta-link" href="/">
-                  Play Now
-                </a>
+              <div className="grid justify-items-center gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-6 text-center">
+                <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs yet.</p>
+                <p className="m-0 text-[rgba(186,210,241,0.92)]">
+                  Play the game and prove your score to appear here.
+                </p>
+                <Button variant="active" asChild>
+                  <a href="/" className="no-underline">
+                    Play Now
+                  </a>
+                </Button>
               </div>
             ) : leaderboard.entries.length === 0 ? (
-              <p className="leaderboard-note">No proved runs in this window yet.</p>
+              <p className="m-0 text-[rgba(186,210,241,0.92)]">
+                No proved runs in this window yet.
+              </p>
             ) : (
-              <div className="leaderboard-table-wrap">
-                <table className="leaderboard-table" aria-label="Leaderboard rankings">
-                  <thead>
-                    <tr>
-                      <th scope="col">Rank</th>
-                      <th scope="col">Player</th>
-                      <th scope="col">Score</th>
-                      <th scope="col">Frames</th>
-                      <th scope="col">Minted (this run)</th>
-                      <th scope="col">Seed</th>
-                      <th scope="col">Completed</th>
-                      <th scope="col">Claim</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leaderboard.entries.map((entry) => (
-                      <tr
-                        key={entry.jobId}
-                        className={
-                          leaderboard.me?.claimantAddress === entry.claimantAddress
-                            ? "leaderboard-row--me"
-                            : ""
-                        }
-                      >
-                        <td className={rankClass(entry.rank)}>#{entry.rank}</td>
-                        <td>
-                          <div className="leaderboard-player-cell">
-                            <a href={`/leaderboard/${entry.claimantAddress}`}>
-                              {displayName(entry)}
+              <Table aria-label="Leaderboard rankings">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Rank</TableHead>
+                    <TableHead scope="col">Player</TableHead>
+                    <TableHead scope="col">Score</TableHead>
+                    <TableHead scope="col">Frames</TableHead>
+                    <TableHead scope="col">Minted (this run)</TableHead>
+                    <TableHead scope="col">Seed</TableHead>
+                    <TableHead scope="col">Completed</TableHead>
+                    <TableHead scope="col">Claim</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {leaderboard.entries.map((entry) => (
+                    <TableRow
+                      key={entry.jobId}
+                      className={
+                        leaderboard.me?.claimantAddress === entry.claimantAddress
+                          ? "!bg-[rgba(16,67,84,0.34)]"
+                          : ""
+                      }
+                    >
+                      <TableCell className={rankClass(entry.rank)}>#{entry.rank}</TableCell>
+                      <TableCell>
+                        <div className="grid gap-1">
+                          <a
+                            href={`/leaderboard/${entry.claimantAddress}`}
+                            className="text-[#9ce8ff] no-underline hover:underline"
+                          >
+                            {displayName(entry)}
+                          </a>
+                          <code className="text-[rgba(190,216,249,0.92)]">
+                            {abbreviateAddress(entry.claimantAddress)}
+                          </code>
+                          {entry.profile?.linkUrl && isSafeUrl(entry.profile.linkUrl) ? (
+                            <a
+                              href={entry.profile.linkUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[#9ce8ff] no-underline hover:underline"
+                            >
+                              Link
                             </a>
-                            <code>{abbreviateAddress(entry.claimantAddress)}</code>
-                            {entry.profile?.linkUrl && isSafeUrl(entry.profile.linkUrl) ? (
-                              <a href={entry.profile.linkUrl} target="_blank" rel="noreferrer">
-                                Link
-                              </a>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="leaderboard-cell--num">{entry.score.toLocaleString()}</td>
-                        <td className="leaderboard-cell--num">{formatMetric(entry.frameCount)}</td>
-                        <td className="leaderboard-cell--num">{formatMetric(entry.mintedDelta)}</td>
-                        <td className="leaderboard-cell--mono">{formatHex32(entry.seed)}</td>
-                        <td>
-                          <RelativeTime value={entry.completedAt} />
-                        </td>
-                        <td>
-                          <span className={claimStatusClass(entry.claimStatus)}>
-                            {entry.claimStatus}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {entry.score.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMetric(entry.frameCount)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMetric(entry.mintedDelta)}
+                      </TableCell>
+                      <TableCell className="font-display tracking-[0.04em]">
+                        {formatHex32(entry.seed)}
+                      </TableCell>
+                      <TableCell>
+                        <RelativeTime value={entry.completedAt} />
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge variant={claimStatusBadgeVariant(entry.claimStatus)}>
+                          {entry.claimStatus}
+                        </StatusBadge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
 
-            <div className="leaderboard-actions">
-              <button
-                type="button"
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
                 onClick={() => setOffset((current) => Math.max(0, current - limit))}
                 disabled={leaderboard.pagination.offset === 0 || loading}
               >
                 Previous
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                size="sm"
                 onClick={() => {
                   if (leaderboard.pagination.next_offset !== null) {
                     setOffset(leaderboard.pagination.next_offset);
@@ -893,9 +985,9 @@ export function LeaderboardPage() {
                 disabled={leaderboard.pagination.next_offset === null || loading}
               >
                 Next
-              </button>
+              </Button>
             </div>
-          </section>
+          </Card>
         </>
       ) : null}
     </main>

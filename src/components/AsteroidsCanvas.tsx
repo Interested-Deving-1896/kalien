@@ -64,5 +64,10 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
     };
   }, []);
 
-  return <canvas ref={canvasRef} className="asteroids-canvas" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className="block w-full aspect-[4/3] rounded-md outline-none touch-manipulation bg-[#05080d]"
+    />
+  );
 }

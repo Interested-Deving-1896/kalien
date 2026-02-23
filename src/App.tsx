@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { SiteHeader } from "./components/SiteHeader";
 import { AsteroidsCanvas, type CompletedGameRun } from "./components/AsteroidsCanvas";
 import {
   cancelProofJob,
@@ -35,8 +36,17 @@ import {
   PROOF_STATUS_POLL_INTERVAL_MS,
   TESTNET_NETWORK_PASSPHRASE,
 } from "./consts";
-import "./App.css";
 import { formatUtcDateTime } from "./time";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/ui/status-badge";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 function formatHex32(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
@@ -93,8 +103,24 @@ function statusLabel(status: ProofJobStatus): string {
   }
 }
 
-function statusClassName(status: ProofJobStatus | "idle"): string {
-  return `status-chip status-chip--${status}`;
+function proofStatusBadgeVariant(
+  status: ProofJobStatus | "idle",
+): "idle" | "info" | "success" | "error" {
+  switch (status) {
+    case "idle":
+      return "idle";
+    case "queued":
+    case "dispatching":
+    case "retrying":
+    case "prover_running":
+      return "info";
+    case "succeeded":
+      return "success";
+    case "failed":
+      return "error";
+    default:
+      return "idle";
+  }
 }
 
 function claimStatusLabel(
@@ -141,12 +167,14 @@ function walletActionLabel(action: WalletAction, connected: boolean): string {
   }
 }
 
-function walletChipClassName(action: WalletAction, connected: boolean): string {
+function walletBadgeVariant(
+  action: WalletAction,
+  connected: boolean,
+): "idle" | "info" | "success" {
   if (action !== "idle") {
-    return "wallet-chip wallet-chip--busy";
+    return "info";
   }
-
-  return connected ? "wallet-chip wallet-chip--connected" : "wallet-chip wallet-chip--disconnected";
+  return connected ? "success" : "idle";
 }
 
 function relayerModeLabel(mode: SmartAccountRelayerMode): string {
@@ -643,229 +671,388 @@ function GameApp() {
   const currentStatus: ProofJobStatus | "idle" = proofJob ? proofJob.status : "idle";
   const currentStatusLabel = proofJob ? statusLabel(proofJob.status) : "Not Submitted";
   const proverHealthStatus = gatewayHealth?.prover.status ?? "degraded";
-  const proverHealthClassName =
-    proverHealthStatus === "compatible"
-      ? "gateway-health gateway-health--ok"
-      : "gateway-health gateway-health--warn";
   const walletStatusText = walletActionLabel(walletAction, walletConnected);
-  const walletStatusClassName = walletChipClassName(walletAction, walletConnected);
   const balanceLabel =
     tokenBalance === null
-      ? "—"
+      ? "\u2014"
       : `${formatWholeNumber(tokenBalance)} score token${tokenBalance === 1n ? "" : "s"}`;
 
   return (
-    <main className="app-shell">
-      <section className="headline">
-        <h1>Asteroids Clone</h1>
-        <p>
-          Deterministic tape capture wired to a Cloudflare proof gateway. Game-over runs can be
-          submitted and processed through a single-flight queue into the VAST prover API.
-        </p>
-      </section>
-
-      <section className="game-panel" aria-label="Asteroids game panel">
+    <main className="mx-auto grid min-h-screen max-w-[1240px] grid-rows-[1fr_auto_auto] gap-4 p-[clamp(1rem,3vw,2rem)]">
+      {/* Game Canvas */}
+      <section
+        className="grid place-items-center rounded-xl border border-[rgba(166,255,228,0.25)] bg-[linear-gradient(180deg,rgba(12,22,30,0.7),rgba(5,12,18,0.9))] p-[clamp(0.5rem,1.5vw,0.8rem)] shadow-[0_24px_80px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.08)]"
+        aria-label="Asteroids game panel"
+      >
         <AsteroidsCanvas onGameOver={handleGameOver} />
       </section>
 
-      <section className="proof-panel" aria-live="polite">
-        <div className="proof-panel__header">
-          <h2>Proof Queue</h2>
-          <span className={statusClassName(currentStatus)}>{currentStatusLabel}</span>
-        </div>
+      {/* Proof Panel */}
+      <Card aria-live="polite">
+        <CardHeader>
+          <CardTitle>Proof Queue</CardTitle>
+          <StatusBadge variant={proofStatusBadgeVariant(currentStatus)}>
+            {currentStatusLabel}
+          </StatusBadge>
+        </CardHeader>
 
-        <p className="proof-panel__intro">
+        <p className="m-0 opacity-85">
           The queue is intentionally single-active-job to match prover single-flight behavior.
         </p>
-        <div className={proverHealthClassName}>
-          <p>
-            <strong>Gateway Health:</strong>{" "}
-            {gatewayHealth ? (
-              gatewayHealth.prover.status === "compatible" ? (
-                <>compatible</>
-              ) : (
-                <>degraded</>
-              )
-            ) : (
-              "loading"
-            )}
-          </p>
-          {gatewayHealth?.prover.status === "compatible" ? (
-            <>
-              <p>
-                <strong>Rules:</strong> {gatewayHealth.prover.ruleset} /{" "}
-                {gatewayHealth.prover.rules_digest_hex.toUpperCase()}
-              </p>
-              <p>
-                <strong>Prover Image:</strong>{" "}
-                <code>{abbreviateHex(gatewayHealth.prover.image_id)}</code>
-                {gatewayHealth.expected.image_id ? " (pinned)" : ""}
-              </p>
-            </>
-          ) : null}
-          {gatewayHealth?.prover.status === "degraded" ? (
-            <p className="proof-warning">
-              <strong>Health Error:</strong> {gatewayHealth.prover.error}
-            </p>
-          ) : null}
-          {gatewayHealthError ? (
-            <p className="proof-warning">
-              <strong>Health Polling:</strong> {gatewayHealthError}
-            </p>
-          ) : null}
-        </div>
 
-        {latestRun ? (
-          <dl className="proof-meta-grid">
-            <div>
-              <dt>Score</dt>
-              <dd>{latestRun.record.finalScore.toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt>Frames</dt>
-              <dd>{latestRun.frameCount.toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt>Seed</dt>
-              <dd>{formatHex32(latestRun.record.seed)}</dd>
-            </div>
-            <div>
-              <dt>Final RNG</dt>
-              <dd>{formatHex32(latestRun.record.finalRngState)}</dd>
-            </div>
-            <div>
-              <dt>Tape Bytes</dt>
-              <dd>
-                {(TAPE_HEADER_SIZE + latestRun.frameCount + TAPE_FOOTER_SIZE).toLocaleString()}
-              </dd>
-            </div>
-            <div>
-              <dt>Captured</dt>
-              <dd>{formatUtcDateTime(latestRun.endedAtMs)}</dd>
-            </div>
-          </dl>
-        ) : (
-          <p className="proof-placeholder">Finish a run to capture a replay tape for proving.</p>
-        )}
-        {latestRun && latestRun.record.finalScore <= 0 ? (
-          <p className="proof-warning">
-            Zero-score runs are not accepted for proving or token minting.
-          </p>
-        ) : null}
-        {latestRun && !walletConnected ? (
-          <p className="proof-warning">Connect a smart wallet before submitting a proof.</p>
-        ) : null}
-        <div className="wallet-panel">
-          <div className="wallet-panel__header">
-            <div className="wallet-panel__copy">
-              <h3>Smart Wallet</h3>
-              <p>Proof claims are relayed on-chain to the connected smart-account address.</p>
-            </div>
-            <span className={walletStatusClassName}>{walletStatusText}</span>
-          </div>
-
-          {!walletConnected ? (
-            <div className="wallet-panel__actions">
-              <input
-                type="text"
-                placeholder="Username for passkey (optional)"
-                value={walletUserName}
-                onChange={(event) => setWalletUserName(event.target.value)}
-                disabled={walletBusy}
-              />
-              <button type="button" onClick={createWallet} disabled={walletBusy}>
-                {walletAction === "creating" ? "Creating Wallet..." : "Create Wallet"}
-              </button>
-              <button type="button" onClick={connectWallet} disabled={walletBusy}>
-                {walletAction === "connecting" || walletAction === "restoring"
-                  ? "Connecting..."
-                  : "Connect Wallet"}
-              </button>
-            </div>
-          ) : (
-            <div className="wallet-panel__actions">
-              <button type="button" onClick={disconnectWallet} disabled={walletBusy}>
-                {walletAction === "disconnecting" ? "Disconnecting..." : "Disconnect Wallet"}
-              </button>
-            </div>
-          )}
-
-          <div className="claimant-field">
-            <label htmlFor="claimant-address">Claimant Address</label>
-            <input
-              id="claimant-address"
-              type="text"
-              placeholder="Connect wallet to set claimant address"
-              readOnly
-              spellCheck={false}
-              value={claimantAddress}
-            />
-          </div>
-
-          <div className="wallet-balance">
-            <div className="wallet-balance__header">
-              <p>
-                <strong>Won Balance:</strong> {balanceLabel}
-              </p>
-              <button
-                type="button"
-                onClick={() => void refreshBalance()}
-                disabled={!walletConnected || isRefreshingBalance}
+        <Accordion
+          type="multiple"
+          defaultValue={["gateway-health", "game-run", "job-details"]}
+        >
+          {/* Gateway Health */}
+          <AccordionItem value="gateway-health">
+            <AccordionTrigger>Gateway Health</AccordionTrigger>
+            <AccordionContent>
+              <div
+                className={`grid gap-1 rounded-lg border p-2.5 ${
+                  proverHealthStatus === "compatible"
+                    ? "border-[rgba(122,231,174,0.35)] bg-[rgba(10,36,29,0.45)]"
+                    : "border-[rgba(255,165,129,0.35)] bg-[rgba(42,22,15,0.42)]"
+                }`}
               >
-                {isRefreshingBalance ? "Refreshing..." : "Refresh Balance"}
-              </button>
-            </div>
-            {tokenContractId ? (
-              <p className="wallet-balance__contract">
-                <strong>Token Contract:</strong> <code>{abbreviateHex(tokenContractId, 10)}</code>
-              </p>
-            ) : null}
-            {tokenBalanceError ? (
-              <p className="proof-warning">
-                <strong>Balance:</strong> {tokenBalanceError}
-              </p>
-            ) : null}
-          </div>
+                <p className="m-0 text-sm leading-snug">
+                  <strong>Gateway Health:</strong>{" "}
+                  {gatewayHealth ? (
+                    gatewayHealth.prover.status === "compatible" ? (
+                      <>compatible</>
+                    ) : (
+                      <>degraded</>
+                    )
+                  ) : (
+                    "loading"
+                  )}
+                </p>
+                {gatewayHealth?.prover.status === "compatible" ? (
+                  <>
+                    <p className="m-0 text-sm leading-snug">
+                      <strong>Rules:</strong> {gatewayHealth.prover.ruleset} /{" "}
+                      {gatewayHealth.prover.rules_digest_hex.toUpperCase()}
+                    </p>
+                    <p className="m-0 text-sm leading-snug">
+                      <strong>Prover Image:</strong>{" "}
+                      <code>{abbreviateHex(gatewayHealth.prover.image_id)}</code>
+                      {gatewayHealth.expected.image_id ? " (pinned)" : ""}
+                    </p>
+                  </>
+                ) : null}
+                {gatewayHealth?.prover.status === "degraded" ? (
+                  <p className="m-0 text-sm text-warning">
+                    <strong>Health Error:</strong> {gatewayHealth.prover.error}
+                  </p>
+                ) : null}
+                {gatewayHealthError ? (
+                  <p className="m-0 text-sm text-warning">
+                    <strong>Health Polling:</strong> {gatewayHealthError}
+                  </p>
+                ) : null}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <div className="wallet-panel__meta">
-            <span>
-              <strong>Network:</strong> {walletConfig.networkPassphrase}
-            </span>
-            <span>
-              <strong>Relayer:</strong> {relayerModeLabel(walletRelayerMode)}
-            </span>
-          </div>
+          {/* Game Run Metadata */}
+          <AccordionItem value="game-run">
+            <AccordionTrigger>Game Run</AccordionTrigger>
+            <AccordionContent>
+              {latestRun ? (
+                <div className="grid gap-2">
+                  <dl className="m-0 grid grid-cols-2 gap-2 p-0 sm:grid-cols-3 lg:grid-cols-6">
+                    {[
+                      ["Score", latestRun.record.finalScore.toLocaleString()],
+                      ["Frames", latestRun.frameCount.toLocaleString()],
+                      ["Seed", formatHex32(latestRun.record.seed)],
+                      ["Final RNG", formatHex32(latestRun.record.finalRngState)],
+                      [
+                        "Tape Bytes",
+                        (
+                          TAPE_HEADER_SIZE +
+                          latestRun.frameCount +
+                          TAPE_FOOTER_SIZE
+                        ).toLocaleString(),
+                      ],
+                      ["Captured", formatUtcDateTime(latestRun.endedAtMs)],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="rounded-lg border border-[rgba(108,159,230,0.24)] bg-[rgba(13,22,40,0.5)] px-2 py-1.5"
+                      >
+                        <dt className="m-0 text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]">
+                          {label}
+                        </dt>
+                        <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">
+                          {value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {latestRun.record.finalScore <= 0 ? (
+                    <p className="m-0 text-sm text-warning">
+                      Zero-score runs are not accepted for proving or token minting.
+                    </p>
+                  ) : null}
+                  {!walletConnected ? (
+                    <p className="m-0 text-sm text-warning">
+                      Connect a smart wallet before submitting a proof.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="m-0 text-[rgba(171,196,232,0.88)]">
+                  Finish a run to capture a replay tape for proving.
+                </p>
+              )}
+            </AccordionContent>
+          </AccordionItem>
 
-          {walletSession ? (
-            <p className="wallet-panel__credential">
-              <strong>Credential:</strong>{" "}
-              <code>{abbreviateHex(walletSession.credentialId, 10)}</code>
-            </p>
+          {/* Smart Wallet */}
+          <AccordionItem value="smart-wallet">
+            <AccordionTrigger>Smart Wallet</AccordionTrigger>
+            <AccordionContent>
+              <div className="grid gap-2.5 rounded-lg border border-[rgba(108,159,230,0.28)] bg-[rgba(9,18,33,0.6)] p-2.5">
+                <div className="flex flex-col items-start justify-between gap-2.5 sm:flex-row">
+                  <div className="grid gap-1">
+                    <h3 className="m-0 font-display text-sm tracking-[0.04em] uppercase">
+                      Smart Wallet
+                    </h3>
+                    <p className="m-0 text-sm text-[rgba(181,208,241,0.92)]">
+                      Proof claims are relayed on-chain to the connected smart-account address.
+                    </p>
+                  </div>
+                  <StatusBadge variant={walletBadgeVariant(walletAction, walletConnected)}>
+                    {walletStatusText}
+                  </StatusBadge>
+                </div>
+
+                {!walletConnected ? (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <Input
+                      type="text"
+                      placeholder="Username for passkey (optional)"
+                      value={walletUserName}
+                      onChange={(event) => setWalletUserName(event.target.value)}
+                      disabled={walletBusy}
+                      className="flex-1 sm:min-w-[220px]"
+                    />
+                    <Button onClick={createWallet} disabled={walletBusy} size="sm">
+                      {walletAction === "creating" ? "Creating Wallet..." : "Create Wallet"}
+                    </Button>
+                    <Button onClick={connectWallet} disabled={walletBusy} size="sm">
+                      {walletAction === "connecting" || walletAction === "restoring"
+                        ? "Connecting..."
+                        : "Connect Wallet"}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                    <Button onClick={disconnectWallet} disabled={walletBusy} size="sm">
+                      {walletAction === "disconnecting" ? "Disconnecting..." : "Disconnect Wallet"}
+                    </Button>
+                  </div>
+                )}
+
+                <div className="grid gap-1.5">
+                  <label
+                    htmlFor="claimant-address"
+                    className="text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]"
+                  >
+                    Claimant Address
+                  </label>
+                  <Input
+                    id="claimant-address"
+                    type="text"
+                    placeholder="Connect wallet to set claimant address"
+                    readOnly
+                    spellCheck={false}
+                    value={claimantAddress}
+                  />
+                </div>
+
+                <div className="grid gap-1.5 rounded-lg border border-[rgba(108,159,230,0.3)] bg-[rgba(12,26,45,0.5)] p-2.5">
+                  <div className="flex flex-col items-stretch justify-between gap-2 sm:flex-row sm:items-center">
+                    <p className="m-0 text-sm">
+                      <strong>Won Balance:</strong> {balanceLabel}
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={() => void refreshBalance()}
+                      disabled={!walletConnected || isRefreshingBalance}
+                    >
+                      {isRefreshingBalance ? "Refreshing..." : "Refresh Balance"}
+                    </Button>
+                  </div>
+                  {tokenContractId ? (
+                    <p className="m-0 text-sm text-[rgba(171,196,232,0.9)]">
+                      <strong>Token Contract:</strong>{" "}
+                      <code>{abbreviateHex(tokenContractId, 10)}</code>
+                    </p>
+                  ) : null}
+                  {tokenBalanceError ? (
+                    <p className="m-0 text-sm text-warning">
+                      <strong>Balance:</strong> {tokenBalanceError}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-1 text-sm text-[rgba(171,196,232,0.9)]">
+                  <span>
+                    <strong>Network:</strong> {walletConfig.networkPassphrase}
+                  </span>
+                  <span>
+                    <strong>Relayer:</strong> {relayerModeLabel(walletRelayerMode)}
+                  </span>
+                </div>
+
+                {walletSession ? (
+                  <p className="m-0 text-sm text-[rgba(171,196,232,0.9)]">
+                    <strong>Credential:</strong>{" "}
+                    <code className="text-card-foreground">
+                      {abbreviateHex(walletSession.credentialId, 10)}
+                    </code>
+                  </p>
+                ) : null}
+                {walletError ? (
+                  <p className="m-0 text-sm text-warning">
+                    <strong>Wallet:</strong> {walletError}
+                  </p>
+                ) : null}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
+          {/* Job Details */}
+          {proofJob ? (
+            <AccordionItem value="job-details">
+              <AccordionTrigger>Job Details</AccordionTrigger>
+              <AccordionContent>
+                <div className="grid gap-1.5 rounded-lg border border-[rgba(104,161,237,0.28)] bg-[rgba(9,18,33,0.7)] p-2.5">
+                  <p className="m-0 text-sm leading-relaxed">
+                    <strong>Job ID:</strong> <code className="break-all">{proofJob.jobId}</code>
+                  </p>
+                  <p className="m-0 text-sm leading-relaxed">
+                    <strong>Created:</strong> {formatUtcDateTime(proofJob.createdAt)}
+                  </p>
+                  <p className="m-0 text-sm leading-relaxed">
+                    <strong>Updated:</strong> {formatUtcDateTime(proofJob.updatedAt)}
+                  </p>
+                  {proofJob.completedAt ? (
+                    <p className="m-0 text-sm leading-relaxed">
+                      <strong>Completed:</strong> {formatUtcDateTime(proofJob.completedAt)}
+                    </p>
+                  ) : null}
+                  <p className="m-0 text-sm leading-relaxed">
+                    <strong>Queue Attempts:</strong> {proofJob.queue.attempts}
+                    {proofBusy ? (
+                      <Button
+                        variant="destructive-outline"
+                        size="xs"
+                        className="ml-2"
+                        onClick={cancelActiveJob}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </p>
+                  {proofJob.queue.lastError ? (
+                    <p className="m-0 text-sm text-warning">
+                      <strong>Last Retry Reason:</strong> {proofJob.queue.lastError}
+                    </p>
+                  ) : null}
+                  {proofJob.result?.summary ? (
+                    <div className="mt-1 grid gap-1 border-t border-[rgba(97,167,132,0.4)] pt-2">
+                      <p className="m-0 text-sm">
+                        <strong>Proof Time:</strong>{" "}
+                        {formatDuration(proofJob.result.summary.elapsedMs)}
+                      </p>
+                      <p className="m-0 text-sm">
+                        <strong>Receipt:</strong>{" "}
+                        {proofJob.result.summary.producedReceiptKind ??
+                          proofJob.result.summary.requestedReceiptKind}
+                      </p>
+                      <p className="m-0 text-sm">
+                        <strong>Verified Score:</strong>{" "}
+                        {proofJob.result.summary.journal.final_score.toLocaleString()}
+                      </p>
+                      <p className="m-0 text-sm">
+                        <strong>Verified Frames:</strong>{" "}
+                        {proofJob.result.summary.journal.frame_count.toLocaleString()}
+                      </p>
+                      <p className="m-0 text-sm">
+                        <strong>Segments:</strong>{" "}
+                        {proofJob.result.summary.stats.segments.toLocaleString()}
+                      </p>
+                      <p className="m-0 text-sm">
+                        <strong>Claim:</strong> {claimStatusLabel(proofJob.claim.status)}
+                      </p>
+                      {proofJob.claim.txHash ? (
+                        <p className="m-0 text-sm">
+                          <strong>Tx Hash:</strong> <code>{proofJob.claim.txHash}</code>
+                        </p>
+                      ) : null}
+                      <p className="m-0 text-sm">
+                        <strong>Manual Submit:</strong>{" "}
+                        {manualClaimStatus === "idle"
+                          ? "not submitted"
+                          : manualClaimStatus === "submitting"
+                            ? "submitting"
+                            : manualClaimStatus}
+                      </p>
+                      <p className="m-0 text-sm">
+                        <strong>Manual Path:</strong> Relayer (Fee Sponsored)
+                      </p>
+                      {manualClaimTxHash ? (
+                        <p className="m-0 text-sm">
+                          <strong>Manual Tx:</strong> <code>{manualClaimTxHash}</code>
+                        </p>
+                      ) : null}
+                      {manualClaimError ? (
+                        <p className="m-0 text-sm text-warning">
+                          <strong>Manual Claim:</strong> {manualClaimError}
+                        </p>
+                      ) : null}
+                      {!scoreContractId ? (
+                        <p className="m-0 text-sm text-warning">
+                          <strong>Manual Claim:</strong> set VITE_SCORE_CONTRACT_ID in frontend env
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {proofJob.claim.lastError ? (
+                    <p className="m-0 text-sm text-warning">
+                      <strong>Auto Claim:</strong> {proofJob.claim.lastError}
+                    </p>
+                  ) : null}
+                  {proofJob.error ? (
+                    <p className="m-0 text-sm text-[#ffabab]">
+                      <strong>Failure:</strong> {proofJob.error}
+                    </p>
+                  ) : null}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
           ) : null}
-          {walletError ? (
-            <p className="proof-warning">
-              <strong>Wallet:</strong> {walletError}
-            </p>
-          ) : null}
-        </div>
+        </Accordion>
 
-        <div className="proof-actions">
-          <button type="button" onClick={loadTapeFile} disabled={proofBusy}>
+        {/* Proof Actions (always visible, not in accordion) */}
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <Button onClick={loadTapeFile} disabled={proofBusy}>
             Load Tape
-          </button>
-          <button type="button" onClick={submitLatestRun} disabled={!canSubmit}>
+          </Button>
+          <Button onClick={submitLatestRun} disabled={!canSubmit}>
             {isSubmitting ? "Submitting Tape..." : "Submit For Proof"}
-          </button>
+          </Button>
           {hasProofResult ? (
-            <button type="button" onClick={submitProvenScoreOnChain} disabled={!canSubmitOnChain}>
+            <Button onClick={submitProvenScoreOnChain} disabled={!canSubmitOnChain}>
               {manualClaimStatus === "submitting"
                 ? "Submitting On-chain..."
                 : "Submit Proven Score On-chain"}
-            </button>
+            </Button>
           ) : null}
           {proofJob?.result ? (
-            <button
-              type="button"
+            <Button
               onClick={async () => {
                 const res = await fetch(`/api/proofs/jobs/${proofJob.jobId}/result`);
                 const blob = new Blob([await res.text()], { type: "application/json" });
@@ -875,118 +1062,23 @@ function GameApp() {
               }}
             >
               Open Raw Proof JSON
-            </button>
+            </Button>
           ) : null}
         </div>
 
-        {proofJob ? (
-          <div className="proof-job-box">
-            <p>
-              <strong>Job ID:</strong> <code>{proofJob.jobId}</code>
-            </p>
-            <p>
-              <strong>Created:</strong> {formatUtcDateTime(proofJob.createdAt)}
-            </p>
-            <p>
-              <strong>Updated:</strong> {formatUtcDateTime(proofJob.updatedAt)}
-            </p>
-            {proofJob.completedAt ? (
-              <p>
-                <strong>Completed:</strong> {formatUtcDateTime(proofJob.completedAt)}
-              </p>
-            ) : null}
-            <p>
-              <strong>Queue Attempts:</strong> {proofJob.queue.attempts}
-              {proofBusy ? (
-                <button type="button" className="cancel-job-btn" onClick={cancelActiveJob}>
-                  Cancel
-                </button>
-              ) : null}
-            </p>
-            {proofJob.queue.lastError ? (
-              <p className="proof-warning">
-                <strong>Last Retry Reason:</strong> {proofJob.queue.lastError}
-              </p>
-            ) : null}
-            {proofJob.result?.summary ? (
-              <div className="proof-result-box">
-                <p>
-                  <strong>Proof Time:</strong> {formatDuration(proofJob.result.summary.elapsedMs)}
-                </p>
-                <p>
-                  <strong>Receipt:</strong>{" "}
-                  {proofJob.result.summary.producedReceiptKind ??
-                    proofJob.result.summary.requestedReceiptKind}
-                </p>
-                <p>
-                  <strong>Verified Score:</strong>{" "}
-                  {proofJob.result.summary.journal.final_score.toLocaleString()}
-                </p>
-                <p>
-                  <strong>Verified Frames:</strong>{" "}
-                  {proofJob.result.summary.journal.frame_count.toLocaleString()}
-                </p>
-                <p>
-                  <strong>Segments:</strong>{" "}
-                  {proofJob.result.summary.stats.segments.toLocaleString()}
-                </p>
-                <p>
-                  <strong>Claim:</strong> {claimStatusLabel(proofJob.claim.status)}
-                </p>
-                {proofJob.claim.txHash ? (
-                  <p>
-                    <strong>Tx Hash:</strong> <code>{proofJob.claim.txHash}</code>
-                  </p>
-                ) : null}
-                <p>
-                  <strong>Manual Submit:</strong>{" "}
-                  {manualClaimStatus === "idle"
-                    ? "not submitted"
-                    : manualClaimStatus === "submitting"
-                      ? "submitting"
-                      : manualClaimStatus}
-                </p>
-                <p>
-                  <strong>Manual Path:</strong> Relayer (Fee Sponsored)
-                </p>
-                {manualClaimTxHash ? (
-                  <p>
-                    <strong>Manual Tx:</strong> <code>{manualClaimTxHash}</code>
-                  </p>
-                ) : null}
-                {manualClaimError ? (
-                  <p className="proof-warning">
-                    <strong>Manual Claim:</strong> {manualClaimError}
-                  </p>
-                ) : null}
-                {!scoreContractId ? (
-                  <p className="proof-warning">
-                    <strong>Manual Claim:</strong> set VITE_SCORE_CONTRACT_ID in frontend env
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {proofJob.claim.lastError ? (
-              <p className="proof-warning">
-                <strong>Auto Claim:</strong> {proofJob.claim.lastError}
-              </p>
-            ) : null}
-            {proofJob.error ? (
-              <p className="proof-error-inline">
-                <strong>Failure:</strong> {proofJob.error}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        {proofError ? <p className="m-0 text-sm text-[#ffabab]">{proofError}</p> : null}
+      </Card>
 
-        {proofError ? <p className="proof-error">{proofError}</p> : null}
-      </section>
-
-      <section className="footnote">
+      {/* Controls Footnote */}
+      <section className="text-center text-sm leading-relaxed opacity-85">
         <p>
-          Controls: <strong>Arrow Keys</strong> move and turn, <strong>Space</strong> fires,
-          <strong> P</strong> pauses, <strong>R</strong> restarts, <strong>D</strong> saves a tape,
-          <strong> Esc</strong> returns to menu.
+          Controls: <strong className="font-display font-semibold text-[#d6fff0]">Arrow Keys</strong>{" "}
+          move and turn, <strong className="font-display font-semibold text-[#d6fff0]">Space</strong>{" "}
+          fires,
+          <strong className="font-display font-semibold text-[#d6fff0]"> P</strong> pauses,{" "}
+          <strong className="font-display font-semibold text-[#d6fff0]">R</strong> restarts,{" "}
+          <strong className="font-display font-semibold text-[#d6fff0]">D</strong> saves a tape,
+          <strong className="font-display font-semibold text-[#d6fff0]"> Esc</strong> returns to menu.
         </p>
       </section>
     </main>
@@ -994,15 +1086,18 @@ function GameApp() {
 }
 
 function App() {
-  if (window.location.pathname.startsWith("/leaderboard")) {
-    return (
-      <Suspense>
-        <LazyLeaderboardPage />
-      </Suspense>
-    );
-  }
-
-  return <GameApp />;
+  return (
+    <>
+      <SiteHeader />
+      {window.location.pathname.startsWith("/leaderboard") ? (
+        <Suspense>
+          <LazyLeaderboardPage />
+        </Suspense>
+      ) : (
+        <GameApp />
+      )}
+    </>
+  );
 }
 
 export default App;
