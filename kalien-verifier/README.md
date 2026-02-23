@@ -50,22 +50,22 @@ The `VASTAI` script installs all dependencies (system packages, Rust, RISC Zero 
 
 ```bash
 # From the Vast.ai instance (as root):
-curl -sSf https://raw.githubusercontent.com/kalepail/stellar-zk-claude/main/risc0-asteroids-verifier/VASTAI | bash
+curl -sSf https://raw.githubusercontent.com/kalepail/kalien/main/kalien-verifier/VASTAI | bash
 ```
 
 Or if you prefer to clone first (note: set `WORKDIR` to match your clone path):
 
 ```bash
-git clone https://github.com/kalepail/stellar-zk-claude.git /workspace/stellar-zk-claude
-WORKDIR=/workspace/stellar-zk-claude bash /workspace/stellar-zk-claude/risc0-asteroids-verifier/VASTAI
+git clone https://github.com/kalepail/kalien.git /workspace/kalien
+WORKDIR=/workspace/kalien bash /workspace/kalien/kalien-verifier/VASTAI
 ```
 
 **Environment variables for the setup script:**
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `REPO_URL` | `https://github.com/kalepail/stellar-zk-claude.git` | Git remote |
-| `WORKDIR` | `/workspace/stellar-zk` | Clone destination |
+| `REPO_URL` | `https://github.com/kalepail/kalien.git` | Git remote |
+| `WORKDIR` | `/workspace/kalien` | Clone destination |
 | `GIT_REF` | `main` | Branch, tag, or commit to checkout |
 | `RUST_TOOLCHAIN_VERSION` | `1.93.0` | Rust version to install |
 | `INSTALL_CLOUDFLARED` | `0` | Set to `1` to install Cloudflare Tunnel |
@@ -75,7 +75,7 @@ WORKDIR=/workspace/stellar-zk-claude bash /workspace/stellar-zk-claude/risc0-ast
 SSH into your instance and build (replace the path with your actual `WORKDIR`):
 
 ```bash
-cd <WORKDIR>/risc0-asteroids-verifier
+cd <WORKDIR>/kalien-verifier
 
 # CPU-default build (local/dev):
 cargo build --locked --release -p api-server
@@ -91,7 +91,7 @@ The release binary is at `target/release/api-server`.
 ### 4. Run the api-server
 
 ```bash
-cd <WORKDIR>/risc0-asteroids-verifier
+cd <WORKDIR>/kalien-verifier
 
 # Minimal CPU run (with API key auth):
 API_KEY='your-strong-random-secret' cargo run --release -p api-server
@@ -122,20 +122,20 @@ curl -s http://127.0.0.1:8080/health | jq '.accelerator'
 The API server intentionally aborts the process if a timed-out proof remains stuck after the grace window (`TIMED_OUT_PROOF_KILL_SECS`). Running under supervisord ensures automatic recovery. Vast.ai containers do not have systemd, so supervisord is the recommended process manager.
 
 ```bash
-cd <WORKDIR>/risc0-asteroids-verifier
+cd <WORKDIR>/kalien-verifier
 
 # 1) Install config
-mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
-cp deploy/supervisord/risc0-asteroids-api.conf /etc/supervisor/conf.d/
-cp api-server/.env.example /etc/stellar-zk/api-server.env
+mkdir -p /etc/kalien /var/lib/kalien/prover
+cp deploy/supervisord/kalien-api.conf /etc/supervisor/conf.d/
+cp api-server/.env.example /etc/kalien/api-server.env
 
 # 2) Update the conf file paths to match your actual clone directory.
-#    The defaults assume /workspace/stellar-zk — edit command and directory
-#    if your clone is elsewhere (e.g. /workspace/stellar-zk-claude).
-nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
+#    The defaults assume /workspace/kalien — edit command and directory
+#    if your clone is elsewhere (e.g. /workspace/kalien).
+nano /etc/supervisor/conf.d/kalien-api.conf
 
 # 3) Edit secrets/settings
-nano /etc/stellar-zk/api-server.env
+nano /etc/kalien/api-server.env
 # Set API_KEY and any other overrides (PROD: keep RISC0_DEV_MODE=0)
 
 # 4) Load configs (supervisord is already running on Vast.ai images)
@@ -143,14 +143,14 @@ supervisorctl reread && supervisorctl update
 
 # 5) Inspect
 supervisorctl status
-tail -f /var/lib/stellar-zk/prover/api-server.log
+tail -f /var/lib/kalien/prover/api-server.log
 curl -s http://127.0.0.1:8080/health | jq
 ```
 
-If you update `/etc/stellar-zk/api-server.env`, apply changes with:
+If you update `/etc/kalien/api-server.env`, apply changes with:
 
 ```bash
-supervisorctl restart risc0-asteroids-api
+supervisorctl restart kalien-api
 ```
 
 ### 5b. Full prover state reset (flush jobs DB + artifacts)
@@ -159,15 +159,15 @@ If the persisted job store is in a bad state (for example after schema drift),
 you can wipe all prover job state and start fresh:
 
 ```bash
-cd <WORKDIR>/risc0-asteroids-verifier
+cd <WORKDIR>/kalien-verifier
 sudo bash deploy/reset-prover-state.sh
 ```
 
 This deletes:
-- `/var/lib/stellar-zk/prover/jobs.db*`
-- `/var/lib/stellar-zk/prover/results/*`
-- `/var/lib/stellar-zk/prover/api-server.log`
-- `/var/lib/stellar-zk/prover/api-server.err`
+- `/var/lib/kalien/prover/jobs.db*`
+- `/var/lib/kalien/prover/results/*`
+- `/var/lib/kalien/prover/api-server.log`
+- `/var/lib/kalien/prover/api-server.err`
 
 Use `--yes` to skip confirmation:
 
@@ -193,7 +193,7 @@ The tunnel is managed by supervisord alongside the api-server for automatic rest
 ```bash
 cp deploy/supervisord/cloudflared.conf /etc/supervisor/conf.d/
 supervisorctl reread && supervisorctl update
-supervisorctl status   # both risc0-asteroids-api and cloudflared should be RUNNING
+supervisorctl status   # both kalien-api and cloudflared should be RUNNING
 ```
 
 By default this uses quick-tunnel mode (temporary `*.trycloudflare.com` URL). For production, set up a named tunnel so the URL is stable across restarts:
@@ -359,7 +359,7 @@ The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` hea
 For local testing without the HTTP API:
 
 ```bash
-cd risc0-asteroids-verifier
+cd kalien-verifier
 
 # Dev mode (fast, fake proof):
 RISC0_DEV_MODE=1 cargo run -p host --release -- --proof-mode dev --verify-mode policy --tape ../test-fixtures/test-medium.tape
@@ -389,7 +389,7 @@ bash scripts/bench-core-cycles.sh --pprof-case medium --threshold-mode check
 ```
 
 Threshold file:
-- `risc0-asteroids-verifier/benchmarks/core-cycle-thresholds.env`
+- `kalien-verifier/benchmarks/core-cycle-thresholds.env`
 
 ## Tests
 

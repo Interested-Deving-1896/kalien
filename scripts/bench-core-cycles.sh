@@ -22,10 +22,10 @@ dev-mode benchmark binary (RISC0_DEV_MODE=1; no secure proving, no CUDA).
 
 Options:
   --out-dir <path>         Output directory for logs/csv/summary
-                           Default: risc0-asteroids-verifier/benchmarks/runs/core-cycles-<timestamp>
+                           Default: kalien-verifier/benchmarks/runs/core-cycles-<timestamp>
   --threshold-mode <mode>  off|check (default: off)
   --thresholds <path>      Threshold env file
-                           Default: risc0-asteroids-verifier/benchmarks/core-cycle-thresholds.env
+                           Default: kalien-verifier/benchmarks/core-cycle-thresholds.env
   --max-frames <n>         Optional max-frames override passed to benchmark binary
   --pprof-case <case>      none|short|medium|real (default: none)
                            Captures one RISC0 pprof profile and writes a top report if Go is installed.

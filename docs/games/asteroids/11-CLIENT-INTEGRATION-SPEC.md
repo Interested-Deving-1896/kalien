@@ -35,7 +35,7 @@ WASM. No deployed contract or network access is required.
 
 ```bash
 stellar contract bindings typescript \
-  --wasm ./stellar-asteroids-contract/target/wasm32v1-none/release/asteroids_score.wasm \
+  --wasm ./kalien-contract/target/wasm32v1-none/release/asteroids_score.wasm \
   --output-dir ./packages/asteroids-score-client \
   --overwrite
 

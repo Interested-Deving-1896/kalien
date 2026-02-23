@@ -15,7 +15,7 @@ This project now stores leaderboard data in D1 (`LEADERBOARD_DB`) while keeping 
 ## Prerequisites
 
 1. Create a D1 database:
-   - `npx wrangler d1 create stellar-zk-leaderboard`
+   - `npx wrangler d1 create kalien-leaderboard`
 2. Set the returned `database_id` in:
    - `wrangler.jsonc` (`d1_databases[].database_id`)
 3. Deploy worker:

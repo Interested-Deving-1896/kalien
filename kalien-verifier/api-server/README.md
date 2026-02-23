@@ -31,7 +31,7 @@ with `400` and `error_code: "zero_score_not_allowed"`.
 
 ## Quick Local Run
 
-From `risc0-asteroids-verifier/`:
+From `kalien-verifier/`:
 
 ```bash
 RISC0_DEV_MODE=1 cargo run --release -p api-server

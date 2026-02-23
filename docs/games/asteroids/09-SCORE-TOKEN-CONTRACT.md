@@ -151,4 +151,4 @@ Canonical testnet verifier/router references are tracked in
 
 ## Repository Path
 
-`stellar-asteroids-contract/contracts/asteroids_score/src/lib.rs`
+`kalien-contract/contracts/asteroids_score/src/lib.rs`

@@ -63,7 +63,7 @@ Dev mode skips cryptographic proving but still executes the guest and reports
 accurate cycle counts. This is the fastest way to compare experiments.
 
 ```bash
-cd risc0-asteroids-verifier
+cd kalien-verifier
 
 # 1. Edit Cargo.toml with experiment settings (see matrix above)
 
@@ -114,7 +114,7 @@ profiling overhead.
 A reusable script is checked in at `benchmarks/run_ab_test.sh`. It takes an optional tape path argument:
 
 ```bash
-cd risc0-asteroids-verifier
+cd kalien-verifier
 
 # Short tape (default)
 ./benchmarks/run_ab_test.sh

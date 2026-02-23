@@ -42,7 +42,7 @@ jobs and consume expensive GPU time.
 - [ ] **Run automated preflight checks** before every deploy:
       ```bash
       WORKER_CONFIG=wrangler.jsonc \
-      PROVER_ENV=risc0-asteroids-verifier/api-server/.env \
+      PROVER_ENV=kalien-verifier/api-server/.env \
       ./scripts/mainnet-security-preflight.sh
       ```
       This catches placeholder URLs, insecure transport flags, weak/missing
@@ -134,7 +134,7 @@ Deploy the asteroids_score contract to mainnet.
 
 - [ ] **Build the contract WASM** for production:
       ```bash
-      cd stellar-asteroids-contract
+      cd kalien-contract
       stellar contract build
       ```
       Verify the WASM at
@@ -245,13 +245,13 @@ Harden the Cloudflare Workers deployment for mainnet traffic.
       Strict-Transport-Security: max-age=31536000; includeSubDomains
       ```
 - [ ] **Verify R2 bucket is private**. Check the Cloudflare dashboard to ensure
-      `stellar-zk-proof-artifacts` has no public access rules. All access should
+      `kalien-proof-artifacts` has no public access rules. All access should
       be through the Worker binding only.
 - [ ] **Set R2 lifecycle rule** to auto-expire proof artifacts as a safety net.
       The DO already prunes at 24hr/200 jobs, but orphaned R2 objects from edge
       cases (crashes between R2 write and DO tracking) need a backstop:
       ```bash
-      npx wrangler r2 bucket lifecycle add stellar-zk-proof-artifacts \
+      npx wrangler r2 bucket lifecycle add kalien-proof-artifacts \
         --name expire-proof-jobs \
         --prefix proof-jobs/ \
         --expire-days 7
@@ -301,32 +301,32 @@ Production readiness for the Vast.ai prover server.
       (PID 1 is not init), so use supervisord instead. The compiled binary is
       self-contained (no `cargo` or RISC Zero CLI tools needed at runtime;
       CUDA libs are in system `ld` paths on Vast.ai). Deploy files:
-      - `deploy/supervisord/risc0-asteroids-api.conf` (supervisord program)
+      - `deploy/supervisord/kalien-api.conf` (supervisord program)
       - `api-server/.env.example` (env config)
       ```bash
       # On the Vast.ai box via SSH:
-      cd <your-clone>/risc0-asteroids-verifier
+      cd <your-clone>/kalien-verifier
 
       # 1. Build first (the service runs the compiled binary, not cargo run)
       #    NOTE: CPU is default; CUDA must be enabled explicitly for Vast/prod.
       cargo build --locked --release -p api-server --features cuda
 
       # 2. Install supervisord config and env file
-      mkdir -p /etc/stellar-zk /var/lib/stellar-zk/prover
-      cp deploy/supervisord/risc0-asteroids-api.conf /etc/supervisor/conf.d/
-      cp api-server/.env.example /etc/stellar-zk/api-server.env
+      mkdir -p /etc/kalien /var/lib/kalien/prover
+      cp deploy/supervisord/kalien-api.conf /etc/supervisor/conf.d/
+      cp api-server/.env.example /etc/kalien/api-server.env
 
       # 3. IMPORTANT: Edit BOTH files to match your actual clone path.
-      #    The VASTAI script defaults to /workspace/stellar-zk/ but a manual
-      #    git clone uses /workspace/stellar-zk-claude/. Update command and
+      #    The VASTAI script defaults to /workspace/kalien/ but a manual
+      #    git clone uses /workspace/kalien/. Update command and
       #    directory in the .conf file accordingly.
-      nano /etc/supervisor/conf.d/risc0-asteroids-api.conf
-      nano /etc/stellar-zk/api-server.env   # set API_KEY and other config
+      nano /etc/supervisor/conf.d/kalien-api.conf
+      nano /etc/kalien/api-server.env   # set API_KEY and other config
 
       # 4. Load configs (supervisord is already running on Vast.ai images)
       supervisorctl reread && supervisorctl update
       supervisorctl status                              # verify running
-      tail -f /var/lib/stellar-zk/prover/api-server.log
+      tail -f /var/lib/kalien/prover/api-server.log
       ```
 
 ---
@@ -427,13 +427,13 @@ Final verification before flipping the switch.
       - `.gitignore` ignores `.dev.vars` (Cloudflare Worker secrets) — but
         **no `.dev.vars.example`** exists to document expected keys
         (`PROVER_API_KEY`, `PROVER_ACCESS_CLIENT_ID`, etc.)
-      - `stellar-asteroids-contract/.gitignore` ignores `.testnet-state.env`
+      - `kalien-contract/.gitignore` ignores `.testnet-state.env`
         — but **no `.testnet-state.env.example`** exists
-      - `risc0-asteroids-verifier/api-server/.env.example` exists (good)
-      - `risc0-asteroids-verifier/api-server/.env.example` exists (good)
+      - `kalien-verifier/api-server/.env.example` exists (good)
+      - `kalien-verifier/api-server/.env.example` exists (good)
       - Root `.gitignore` does **not** ignore `.env` — add a catch-all
         `.env*` pattern (excluding `.env.example`) as a safety net
-      - `risc0-asteroids-verifier/.gitignore` does **not** exist — any
+      - `kalien-verifier/.gitignore` does **not** exist — any
         `.env` dropped in the prover workspace would be committed
       - Run `git log --all --diff-filter=A -- '*.env' '*.vars' '*secret*'`
         to check history for accidentally committed secrets
@@ -447,16 +447,16 @@ Directory names inside the repo may also change. Do this **before** deploying
 anything to mainnet so all deployed config points to the final names.
 
 - [ ] **Choose the new repo name and GitHub URL.** Update or redirect the
-      current `kalepail/stellar-zk-claude` repo.
+      current `kalepail/kalien` repo.
 - [ ] **Rename / reorganize internal directories** as desired (e.g.
-      `risc0-asteroids-verifier/` → shorter name). After renaming, grep the
+      `kalien-verifier/` → shorter name). After renaming, grep the
       entire repo for stale path references — at minimum these files hardcode
       paths today:
-      - `risc0-asteroids-verifier/VASTAI` — `REPO_URL`, `WORKDIR`,
+      - `kalien-verifier/VASTAI` — `REPO_URL`, `WORKDIR`,
         "Next steps" output (line 106)
-      - `risc0-asteroids-verifier/deploy/supervisord/risc0-asteroids-api.conf`
+      - `kalien-verifier/deploy/supervisord/kalien-api.conf`
         — `command`, `directory`
-      - `risc0-asteroids-verifier/README.md` — clone URLs, paths
+      - `kalien-verifier/README.md` — clone URLs, paths
       - `MAINNET-CHECKLIST.md` — references throughout
 - [ ] **Update `REPO_URL`** in the VASTAI script to the new GitHub URL.
 - [ ] **Update `WORKDIR`** in the VASTAI script and supervisord conf paths to
@@ -477,14 +477,14 @@ anything to mainnet so all deployed config points to the final names.
       (`.testnet-state.env`, test deployer keys).
 - [ ] **Document mainnet contract addresses** for users and integrators.
 - [ ] **Review and update license files**. Currently the only project-owned
-      LICENSE file is `risc0-asteroids-verifier/LICENSE` (Apache 2.0 with
+      LICENSE file is `kalien-verifier/LICENSE` (Apache 2.0 with
       unfilled `[yyyy] [name of copyright owner]` boilerplate). Items to
       address:
       - Fill in the copyright year and owner in the existing Apache 2.0
-        LICENSE in `risc0-asteroids-verifier/`
+        LICENSE in `kalien-verifier/`
       - Add a root-level LICENSE for the overall project (frontend, worker,
         scripts, docs)
-      - Add a LICENSE to `stellar-asteroids-contract/` (the Soroban contract
+      - Add a LICENSE to `kalien-contract/` (the Soroban contract
         has none)
       - Add `license` fields to `package.json` and the Rust `Cargo.toml`
         workspace files (both are currently missing)
@@ -495,16 +495,16 @@ anything to mainnet so all deployed config points to the final names.
       inline code comments, doc specs, and operational notes for accuracy,
       staleness, and consistency with the final project name/URLs. Files to
       cover:
-      - READMEs: `docs/README.md`, `risc0-asteroids-verifier/README.md`,
-        `risc0-asteroids-verifier/api-server/README.md`,
-        `stellar-asteroids-contract/README.md` (no root-level README exists
+      - READMEs: `docs/README.md`, `kalien-verifier/README.md`,
+        `kalien-verifier/api-server/README.md`,
+        `kalien-contract/README.md` (no root-level README exists
         — consider adding one)
       - Specs (30+ files): `docs/games/asteroids/` (game, verification,
         integer math, proving system, proof gateway, client integration,
         guest optimization specs) and `docs/zk/` (protocol foundations,
         proving systems, developer tools, security)
       - Operational docs: `MAINNET-CHECKLIST.md`,
-        `stellar-asteroids-contract/codex-improvements.md`
+        `kalien-contract/codex-improvements.md`
       - Inline comments: code comments referencing testnet contract IDs,
         placeholder URLs, old repo names, or TODO/FIXME/HACK markers
       - Script help text: `VASTAI` "Next steps" output, deploy script

@@ -24,7 +24,7 @@ Local policy is enforced: CPU-only host build and dev-mode proving only.
 
 Options:
   --out-dir <path>         Write artifacts to this directory.
-                           Default: risc0-asteroids-verifier/benchmarks/runs/<utc-timestamp>
+                           Default: kalien-verifier/benchmarks/runs/<utc-timestamp>
   --threshold-mode <mode>  off|check (default: off).
                            off = report metrics only
                            check = enforce regression thresholds

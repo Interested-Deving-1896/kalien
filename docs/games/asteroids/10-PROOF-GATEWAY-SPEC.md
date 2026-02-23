@@ -5,7 +5,7 @@ Last updated: 2026-02-11
 ## Purpose
 
 This document describes the Cloudflare Worker proof gateway (`worker/`) and the
-RISC Zero Asteroids verifier stack (`risc0-asteroids-verifier/`) as they are
+RISC Zero Asteroids verifier stack (`kalien-verifier/`) as they are
 implemented today.
 
 ---
@@ -190,12 +190,12 @@ Storage keys:
 
 The worker has two queue consumers:
 
-1. **Proof queue (`stellar-zk-proof-jobs`)**
+1. **Proof queue (`kalien-proof-jobs`)**
    - Submits the stored tape to prover API.
    - Retries transient errors with bounded exponential backoff.
    - Marks terminal failures in DO state.
 
-2. **Claim queue (`stellar-zk-claim-jobs`)**
+2. **Claim queue (`kalien-claim-jobs`)**
    - Runs only after proof success.
    - Builds `journal_raw_hex` from the proved 24-byte journal.
    - Computes `journal_digest_hex = sha256(journal_raw_hex)`.
@@ -204,7 +204,7 @@ The worker has two queue consumers:
    - Tracks claim retry/failure/success state in DO.
 
 Both queues use `max_batch_size=1`, `max_concurrency=1`, `max_retries=10`,
-and dedicated DLQs (`stellar-zk-proof-jobs-dlq`, `stellar-zk-claim-jobs-dlq`).
+and dedicated DLQs (`kalien-proof-jobs-dlq`, `kalien-claim-jobs-dlq`).
 
 ### DO alarm polling loop
 
@@ -327,15 +327,15 @@ Prover submit defaults (hardcoded in `worker/prover/client.ts`):
 - `segment_limit_po2=21`
 
 Bindings:
-- R2 bucket: `stellar-zk-proof-artifacts`
-- Queue producer: `stellar-zk-proof-jobs`
-- Queue producer: `stellar-zk-claim-jobs`
+- R2 bucket: `kalien-proof-artifacts`
+- Queue producer: `kalien-proof-jobs`
+- Queue producer: `kalien-claim-jobs`
 - Queue consumers: proof queue + proof DLQ + claim queue + claim DLQ
 - Durable Object: `ProofCoordinatorDO` (SQLite class)
 
 ---
 
-## RISC Zero Asteroids Verifier (`risc0-asteroids-verifier/`)
+## RISC Zero Asteroids Verifier (`kalien-verifier/`)
 
 ### Workspace crates
 
@@ -412,10 +412,10 @@ Operational defaults: `MAX_TAPE_BYTES=2097152`, `MAX_JOBS=64`,
 | `worker/tape.ts` | Tape validation |
 | `worker/constants.ts` | Default values |
 | `wrangler.jsonc` | Worker + binding configuration |
-| `risc0-asteroids-verifier/api-server/src/main.rs` | Prover API server |
-| `risc0-asteroids-verifier/host/src/lib.rs` | Host proving library |
-| `risc0-asteroids-verifier/methods/guest/src/main.rs` | zkVM guest entrypoint |
-| `risc0-asteroids-verifier/asteroids-core/src/verify.rs` | Deterministic verification core |
+| `kalien-verifier/api-server/src/main.rs` | Prover API server |
+| `kalien-verifier/host/src/lib.rs` | Host proving library |
+| `kalien-verifier/methods/guest/src/main.rs` | zkVM guest entrypoint |
+| `kalien-verifier/asteroids-core/src/verify.rs` | Deterministic verification core |
 
 ---
 

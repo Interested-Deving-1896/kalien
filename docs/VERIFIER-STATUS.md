@@ -13,7 +13,7 @@ This doc captures the current state of the RISC0 “risk‑zero” Asteroids ver
 
 ## What The Verifier Proves
 
-Verification entrypoint is `verify_tape(bytes, max_frames)` in `risc0-asteroids-verifier/asteroids-core/src/verify.rs`.
+Verification entrypoint is `verify_tape(bytes, max_frames)` in `kalien-verifier/asteroids-core/src/verify.rs`.
 
 At a high level it proves:
 
@@ -36,7 +36,7 @@ Net effect: the prover cannot submit a tape that “claims” a score/RNG/frames
 
 ## Determinism Notes
 
-Rust core (`risc0-asteroids-verifier/asteroids-core`) is integer‑only and uses a xorshift32 RNG (`SeededRng`), so replay is deterministic given `seed + inputs`.
+Rust core (`kalien-verifier/asteroids-core`) is integer‑only and uses a xorshift32 RNG (`SeededRng`), so replay is deterministic given `seed + inputs`.
 
 TypeScript gameplay sim is also integer‑math for the ZK‑relevant physics; however, the interactive frontend still uses wall‑clock time for choosing a default seed (`Date.now()`) unless a seed is provided. This is not a verifier bug, but it is a fairness/product‑policy risk if players are allowed to grind seeds (see “Gaps”).
 

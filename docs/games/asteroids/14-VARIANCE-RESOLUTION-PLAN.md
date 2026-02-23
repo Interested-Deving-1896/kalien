@@ -152,7 +152,7 @@ Reference lines:
 1. Input/Fire system (`V-08`)
 - Implement anti-autofire gate in both:
   - `src/game/AsteroidsGame.ts`
-  - `risc0-asteroids-verifier/asteroids-core/src/sim/game.rs`
+  - `kalien-verifier/asteroids-core/src/sim/game.rs`
 - Add parity tests proving identical shot spawn frames for fixed tapes.
 
 2. Projectile timing model (`V-09`, `V-10`)
