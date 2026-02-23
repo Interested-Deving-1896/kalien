@@ -116,7 +116,7 @@ hostArgs.push("--segment-limit-po2", String(segmentLimitPo2));
 hostArgs.push("--proof-mode", "dev");
 
 const result = spawnSync("cargo", hostArgs, {
-  cwd: resolve(process.cwd(), "risc0-asteroids-verifier"),
+  cwd: resolve(process.cwd(), "kalien-verifier"),
   stdio: "inherit",
   env: {
     ...process.env,

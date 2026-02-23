@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERIFIER_DIR="$ROOT_DIR/risc0-asteroids-verifier"
+VERIFIER_DIR="$ROOT_DIR/kalien-verifier"
 SHORT_TAPE="$ROOT_DIR/test-fixtures/test-short.tape"
 MEDIUM_TAPE="$ROOT_DIR/test-fixtures/test-medium.tape"
 DEFAULT_THRESHOLDS_FILE="$VERIFIER_DIR/benchmarks/thresholds.env"
