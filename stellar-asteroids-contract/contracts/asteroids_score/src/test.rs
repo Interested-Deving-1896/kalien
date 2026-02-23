@@ -639,3 +639,112 @@ fn test_fixture_all_three_cumulative() {
     );
     assert_eq!(token.balance(&claimant), 90 + 32860);
 }
+
+// ---------------------------------------------------------------------------
+// Security tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pause_blocks_submissions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+
+    // Pause the contract
+    client.set_paused(&true);
+
+    // Submissions should fail
+    let journal = make_journal(&env, 1, 42);
+    let result = client.try_submit_score(&seal, &journal, &claimant);
+    assert_eq!(result, Err(Ok(ScoreError::ContractPaused)));
+
+    // Unpause
+    client.set_paused(&false);
+
+    // Submissions should work again
+    let score = client.submit_score(&seal, &journal, &claimant);
+    assert_eq!(score, 42);
+}
+
+#[test]
+fn test_set_paused_admin_only() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let router_addr = env.register(mock_router_ok::MockRouter, ());
+    let image_id = dummy_image_id(&env);
+
+    let contract_id = env.register(
+        AsteroidsScoreContract,
+        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+    );
+    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
+
+    // Without auth, set_paused should fail
+    let result = client.try_set_paused(&true);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_router_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let new_router = Address::generate(&env);
+    client.set_router_id(&new_router);
+    assert_eq!(client.router_id(), new_router);
+}
+
+#[test]
+fn test_set_router_id_admin_only() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let router_addr = env.register(mock_router_ok::MockRouter, ());
+    let image_id = dummy_image_id(&env);
+
+    let contract_id = env.register(
+        AsteroidsScoreContract,
+        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+    );
+    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
+
+    let new_router = Address::generate(&env);
+    let result = client.try_set_router_id(&new_router);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_claimant_auth_required() {
+    let env = Env::default();
+    // NOTE: not calling mock_all_auths — we want real auth checks
+
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let router_addr = env.register(mock_router_ok::MockRouter, ());
+    let image_id = dummy_image_id(&env);
+
+    let contract_id = env.register(
+        AsteroidsScoreContract,
+        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+    );
+    // Skip SAC set_admin — require_auth fires before minting
+    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
+
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+    let journal = make_journal(&env, 1, 42);
+
+    // Without claimant auth, submit should fail
+    let result = client.try_submit_score(&seal, &journal, &claimant);
+    assert!(result.is_err());
+}

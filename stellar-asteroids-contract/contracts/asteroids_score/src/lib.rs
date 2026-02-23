@@ -15,6 +15,7 @@ enum DataKey {
     RouterId,
     ImageId,
     TokenId,
+    Paused,
     Claimed(BytesN<32>),
     Best(Address, u32),
 }
@@ -23,6 +24,8 @@ const RULES_DIGEST: u32 = 0x4153_5433; // "AST3"
 const JOURNAL_BASE_LEN: u32 = 24; // 6 x u32 (seed..rules_digest)
 const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 14 days
 const INSTANCE_TTL_BUMP: u32 = 172_800; // 20 days
+const PERSISTENT_TTL_THRESHOLD: u32 = 518_400; // ~60 days
+const PERSISTENT_TTL_BUMP: u32 = 1_036_800; // ~120 days
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -33,6 +36,7 @@ pub enum ScoreError {
     JournalAlreadyClaimed = 3,
     ZeroScoreNotAllowed = 4,
     ScoreNotImproved = 5,
+    ContractPaused = 6,
 }
 
 #[contractevent]
@@ -84,6 +88,16 @@ impl AsteroidsScoreContract {
         claimant: Address,
     ) -> Result<u32, ScoreError> {
         extend_instance_ttl(&env);
+        claimant.require_auth();
+
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            return Err(ScoreError::ContractPaused);
+        }
 
         if journal_raw.len() != JOURNAL_BASE_LEN {
             return Err(ScoreError::InvalidJournalLength);
@@ -136,6 +150,12 @@ impl AsteroidsScoreContract {
         // Mark journal as claimed
         env.storage().persistent().set(&claimed_key, &());
         env.storage().persistent().set(&best_key, &final_score);
+        env.storage()
+            .persistent()
+            .extend_ttl(&claimed_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_BUMP);
+        env.storage()
+            .persistent()
+            .extend_ttl(&best_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_BUMP);
 
         // Mint only the improvement delta to the claimant.
         let token_client = token::StellarAssetClient::new(&env, &token_id);
@@ -182,6 +202,7 @@ impl AsteroidsScoreContract {
         env.storage()
             .instance()
             .set(&DataKey::ImageId, &new_image_id);
+        extend_instance_ttl(&env);
     }
 
     /// Admin: transfer admin role.
@@ -189,6 +210,7 @@ impl AsteroidsScoreContract {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        extend_instance_ttl(&env);
     }
 
     /// Admin: upgrade this contract to a new wasm hash.
@@ -196,6 +218,25 @@ impl AsteroidsScoreContract {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+        extend_instance_ttl(&env);
+    }
+
+    /// Admin: pause or unpause score submissions.
+    pub fn set_paused(env: Env, paused: bool) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &paused);
+        extend_instance_ttl(&env);
+    }
+
+    /// Admin: update the RISC Zero router address.
+    pub fn set_router_id(env: Env, new_router_id: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::RouterId, &new_router_id);
+        extend_instance_ttl(&env);
     }
 
     /// Read the current image ID.

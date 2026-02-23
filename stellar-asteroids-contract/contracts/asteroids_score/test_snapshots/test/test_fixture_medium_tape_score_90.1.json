@@ -45,7 +45,31 @@
         }
       ]
     ],
-    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "function_name": "submit_score",
+              "args": [
+                {
+                  "bytes": "73c457ba2b3d6e0a1ed6cdc4238344f88e3d5ba41d69e2d85ca54ec3a71812e58fbc014108c489fb26c949a12d143bc058ea0453ba6dd4079cf6b69e23745c967e3b2d6d104e24daab1fd880c5c1ecfe0a91f87d6694cb37bd7657365ea3b8b6624ac65702ae8403ec177b1a71c6cbc18189a1a89b1349c1abfd7ab805f306365694256a230e4dc86d9a43c70fc7e547b5f3a564a5f622eec33ddbc6e1e70f22a9e4e76d2280bf73b817f900102417a3027bf0bb05f1165336843c04d1cefd45bad83de52cb7da73417f250a29dc190acbeab312a0203956f1b4f7ea3ff694ecab20c4ab2fb1d105edf1428d7987f7030b5602d41677876cf1acf4ab5f8e803ad2166eaf"
+                },
+                {
+                  "bytes": "efbeadde8c0f00005a000000ce1907ebe59d2e1133545341"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     [],
     [],
     []
@@ -127,6 +151,26 @@
           "data": {
             "contract_data": {
               "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "key": {
+                "ledger_key_nonce": {
+                  "nonce": "1033654523790656264"
+                }
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
@@ -172,7 +216,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 1036800
       },
       {
         "entry": {
@@ -197,7 +241,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 1036800
       },
       {
         "entry": {
