@@ -39,9 +39,7 @@ export interface SmartAccountConfig {
   rpName: string;
 }
 
-export type SmartAccountRelayerMode =
-  | "configured"
-  | "disabled";
+export type SmartAccountRelayerMode = "configured" | "disabled";
 
 function getEnvValue(key: keyof ImportMetaEnv): string | undefined {
   const value = import.meta.env[key];

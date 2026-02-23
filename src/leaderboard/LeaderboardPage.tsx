@@ -76,9 +76,7 @@ function windowSubtitle(window: LeaderboardWindow): string {
   return "All-time history";
 }
 
-function claimStatusBadgeVariant(
-  status: ClaimStatus,
-): "success" | "error" | "info" {
+function claimStatusBadgeVariant(status: ClaimStatus): "success" | "error" | "info" {
   switch (status) {
     case "succeeded":
       return "success";
@@ -139,10 +137,7 @@ function RelativeTime({ value }: { value: string | null | undefined }) {
 function SkeletonCell({ wide }: { wide?: boolean }) {
   return (
     <span
-      className={cn(
-        "block h-3.5 rounded bg-primary/20 animate-pulse",
-        wide ? "w-28" : "w-14",
-      )}
+      className={cn("block h-3.5 rounded bg-primary/20 animate-pulse", wide ? "w-28" : "w-14")}
     />
   );
 }
@@ -556,9 +551,7 @@ export function LeaderboardPage() {
                     </span>
                   ) : null}
                 </div>
-                {profileSaveError ? (
-                  <p className="m-0 text-[#ffabab]">{profileSaveError}</p>
-                ) : null}
+                {profileSaveError ? <p className="m-0 text-[#ffabab]">{profileSaveError}</p> : null}
               </Card>
             ) : (
               <Card>
@@ -818,10 +811,7 @@ export function LeaderboardPage() {
               {[
                 ["Tracked Players", leaderboard.pagination.total.toLocaleString()],
                 ["Top Score", topEntry ? topEntry.score.toLocaleString() : "n/a"],
-                [
-                  "Event Rows",
-                  leaderboard.ingestion?.total_events?.toLocaleString() ?? "n/a",
-                ],
+                ["Event Rows", leaderboard.ingestion?.total_events?.toLocaleString() ?? "n/a"],
                 [
                   "Highest Ledger",
                   leaderboard.ingestion?.highest_ledger?.toLocaleString() ?? "n/a",

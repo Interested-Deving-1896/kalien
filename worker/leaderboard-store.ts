@@ -1168,6 +1168,12 @@ export async function getLeaderboardPlayer(
     claimStatus: "succeeded";
     claimTxHash: string | null;
   }>;
+  runsPagination: {
+    limit: number;
+    offset: number;
+    total: number;
+    nextOffset: number | null;
+  };
 }> {
   await ensureSchema(env);
   const db = getDb(env);

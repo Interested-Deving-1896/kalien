@@ -18,17 +18,15 @@ export function SiteHeader() {
       </a>
       <div className="flex items-center gap-5">
         {NAV_LINKS.map((link) => {
-          const active =
-            link.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(link.href);
+          const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
           return (
             <a
               key={link.href}
               href={link.href}
               className={cn(
                 "border-b-2 border-transparent pb-px font-display text-[0.8rem] tracking-wider uppercase text-[rgba(157,224,255,0.65)] no-underline transition-[color,border-color] duration-150 hover:text-[#9de0ff]",
-                active && "border-[rgba(157,224,255,0.55)] text-[#9de0ff] [text-shadow:0_0_8px_rgba(157,224,255,0.3)]",
+                active &&
+                  "border-[rgba(157,224,255,0.55)] text-[#9de0ff] [text-shadow:0_0_8px_rgba(157,224,255,0.3)]",
               )}
             >
               {link.label}

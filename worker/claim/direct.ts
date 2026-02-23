@@ -4,9 +4,7 @@ import {
   PluginExecutionError,
   PluginTransportError,
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
-import {
-  Client as ScoreContractClient,
-} from "../../shared/stellar/bindings/asteroids-score/dist/index.js";
+import { Client as ScoreContractClient } from "../../shared/stellar/bindings/asteroids-score/dist/index.js";
 import {
   DEFAULT_BINDINGS_RPC_URL,
   DEFAULT_RELAYER_REQUEST_TIMEOUT_MS,

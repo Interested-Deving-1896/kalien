@@ -1,5 +1,8 @@
 import type { WorkerEnv } from "./env";
-import { fetchLeaderboardEventsFromGalexie, type GalexieFetchResult } from "./leaderboard-ingestion";
+import {
+  fetchLeaderboardEventsFromGalexie,
+  type GalexieFetchResult,
+} from "./leaderboard-ingestion";
 import {
   countLeaderboardEvents,
   getLeaderboardIngestionState,
@@ -238,10 +241,7 @@ export async function runLeaderboardSync(
     ...existingState,
     provider: lastFetched.provider,
     sourceMode: lastFetched.sourceMode,
-    cursor:
-      request.mode === "forward"
-        ? (lastFetched.nextCursor ?? null)
-        : existingState.cursor,
+    cursor: request.mode === "forward" ? (lastFetched.nextCursor ?? null) : existingState.cursor,
     highestLedger: newHighestLedger,
     lastSyncedAt: nowIso,
     lastBackfillAt: request.mode === "backfill" ? nowIso : existingState.lastBackfillAt,

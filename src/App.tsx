@@ -167,10 +167,7 @@ function walletActionLabel(action: WalletAction, connected: boolean): string {
   }
 }
 
-function walletBadgeVariant(
-  action: WalletAction,
-  connected: boolean,
-): "idle" | "info" | "success" {
+function walletBadgeVariant(action: WalletAction, connected: boolean): "idle" | "info" | "success" {
   if (action !== "idle") {
     return "info";
   }
@@ -488,13 +485,7 @@ function GameApp() {
       setManualClaimStatus("failed");
       setManualClaimError(explainScoreSubmissionError(detail));
     }
-  }, [
-    claimantAddress,
-    proofJob,
-    refreshBalance,
-    scoreContractId,
-    walletRelayerMode,
-  ]);
+  }, [claimantAddress, proofJob, refreshBalance, scoreContractId, walletRelayerMode]);
 
   useEffect(() => {
     if (!activeProofJobId || !activeProofJobStatus) {
@@ -700,10 +691,7 @@ function GameApp() {
           The queue is intentionally single-active-job to match prover single-flight behavior.
         </p>
 
-        <Accordion
-          type="multiple"
-          defaultValue={["gateway-health", "game-run", "job-details"]}
-        >
+        <Accordion type="multiple" defaultValue={["gateway-health", "game-run", "job-details"]}>
           {/* Gateway Health */}
           <AccordionItem value="gateway-health">
             <AccordionTrigger>Gateway Health</AccordionTrigger>
@@ -1072,13 +1060,14 @@ function GameApp() {
       {/* Controls Footnote */}
       <section className="text-center text-sm leading-relaxed opacity-85">
         <p>
-          Controls: <strong className="font-display font-semibold text-[#d6fff0]">Arrow Keys</strong>{" "}
-          move and turn, <strong className="font-display font-semibold text-[#d6fff0]">Space</strong>{" "}
-          fires,
+          Controls:{" "}
+          <strong className="font-display font-semibold text-[#d6fff0]">Arrow Keys</strong> move and
+          turn, <strong className="font-display font-semibold text-[#d6fff0]">Space</strong> fires,
           <strong className="font-display font-semibold text-[#d6fff0]"> P</strong> pauses,{" "}
           <strong className="font-display font-semibold text-[#d6fff0]">R</strong> restarts,{" "}
           <strong className="font-display font-semibold text-[#d6fff0]">D</strong> saves a tape,
-          <strong className="font-display font-semibold text-[#d6fff0]"> Esc</strong> returns to menu.
+          <strong className="font-display font-semibold text-[#d6fff0]"> Esc</strong> returns to
+          menu.
         </p>
       </section>
     </main>

@@ -26,7 +26,10 @@ import {
   fetchCredentialPublicKeyFromChain,
   LeaderboardCredentialBindingError,
 } from "../leaderboard-profile-auth";
-import { generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
+import {
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { safeErrorMessage } from "../utils";
 
@@ -506,12 +509,11 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
   // Pass ?from_ledger=N to override the start ledger (skips gaps).
   router.post("/dev/sync", async (c) => {
     const { runLeaderboardSync, runScheduledLeaderboardSync } = await import("../leaderboard-sync");
-    const { setLeaderboardIngestionState, getLeaderboardIngestionState } = await import(
-      "../leaderboard-store"
-    );
+    const { setLeaderboardIngestionState, getLeaderboardIngestionState: getIngestionState } =
+      await import("../leaderboard-store");
     try {
       if (c.req.query("reset_cursor") === "1") {
-        const state = await getLeaderboardIngestionState(c.env);
+        const state = await getIngestionState(c.env);
         await setLeaderboardIngestionState(c.env, { ...state, cursor: null });
       }
       const fromLedgerRaw = c.req.query("from_ledger");
@@ -568,7 +570,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
     const { upsertLeaderboardEvents, upsertLeaderboardProfiles, setLeaderboardIngestionState } =
       await import("../leaderboard-store");
 
-    const events = body.events.map((e: Record<string, unknown>) => ({
+    const events = (body.events as Record<string, unknown>[]).map((e) => ({
       eventId: String(e.eventId ?? crypto.randomUUID()),
       claimantAddress: String(e.claimantAddress),
       seed: Number(e.seed) >>> 0,
@@ -594,7 +596,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
     // Upsert profiles if provided
     let profileCount = 0;
     if (Array.isArray(body.profiles) && body.profiles.length > 0) {
-      const profiles = body.profiles.map((p: Record<string, unknown>) => ({
+      const profiles = (body.profiles as Record<string, unknown>[]).map((p) => ({
         claimantAddress: String(p.claimantAddress),
         username: p.username != null ? String(p.username) : null,
         linkUrl: p.linkUrl != null ? String(p.linkUrl) : null,

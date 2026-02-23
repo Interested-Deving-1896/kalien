@@ -42,6 +42,7 @@ export function safeErrorMessage(error: unknown): string {
       : String(error);
   // Collapse control chars (including embedded binary bytes) so responses
   // remain valid JSON and readable in UI surfaces.
+  // eslint-disable-next-line no-control-regex
   return raw.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
 }
 

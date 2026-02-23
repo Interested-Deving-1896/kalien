@@ -145,7 +145,9 @@ export function parseSacAssetFromName(name: string): Asset {
 
   const separator = normalized.indexOf(":");
   const missingParts =
-    separator <= 0 || separator >= normalized.length - 1 || normalized.indexOf(":", separator + 1) >= 0;
+    separator <= 0 ||
+    separator >= normalized.length - 1 ||
+    normalized.indexOf(":", separator + 1) >= 0;
   if (missingParts) {
     throw new Error(`invalid stellar asset name "${name}"`);
   }
