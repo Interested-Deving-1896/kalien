@@ -9,7 +9,6 @@
 # These MUST be in .dev.vars for local dev (they are `wrangler secret` in prod).
 
 RELAYER_API_KEY=
-LEADERBOARD_ADMIN_KEY=
 
 # Galexie / Lightsail API key (mainnet only — not needed on testnet).
 # GALEXIE_API_KEY=
