@@ -73,11 +73,11 @@ export default {
   },
 
   async queue(batch: MessageBatch<unknown>, env: WorkerEnv): Promise<void> {
-    if (batch.queue === "stellar-zk-proof-jobs-dlq") {
+    if (batch.queue === "kalien-proof-jobs-dlq") {
       await handleDlqBatch(batch as MessageBatch<ProofQueueMessage>, env);
-    } else if (batch.queue === "stellar-zk-claim-jobs") {
+    } else if (batch.queue === "kalien-claim-jobs") {
       await handleClaimQueueBatch(batch as MessageBatch<ClaimQueueMessage>, env);
-    } else if (batch.queue === "stellar-zk-claim-jobs-dlq") {
+    } else if (batch.queue === "kalien-claim-jobs-dlq") {
       await handleClaimDlqBatch(batch as MessageBatch<ClaimQueueMessage>, env);
     } else {
       await handleQueueBatch(batch as MessageBatch<ProofQueueMessage>, env);

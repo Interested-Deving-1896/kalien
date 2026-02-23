@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "stellar-zk",
+  "name": "kalien",
   "main": "./worker/index.ts",
   "compatibility_date": "2025-04-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -57,53 +57,53 @@
   "d1_databases": [
     {
       "binding": "LEADERBOARD_DB",
-      "database_name": "stellar-zk-leaderboard",
+      "database_name": "kalien-leaderboard",
       "database_id": "3ca395d5-5de1-4d46-ac16-b9c2d9982e84",
     },
   ],
   "r2_buckets": [
     {
       "binding": "PROOF_ARTIFACTS",
-      "bucket_name": "stellar-zk-proof-artifacts",
+      "bucket_name": "kalien-proof-artifacts",
     },
   ],
   "queues": {
     "producers": [
       {
         "binding": "PROOF_QUEUE",
-        "queue": "stellar-zk-proof-jobs",
+        "queue": "kalien-proof-jobs",
       },
       {
         "binding": "CLAIM_QUEUE",
-        "queue": "stellar-zk-claim-jobs",
+        "queue": "kalien-claim-jobs",
       },
     ],
     "consumers": [
       {
-        "queue": "stellar-zk-proof-jobs",
+        "queue": "kalien-proof-jobs",
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 10,
         "max_concurrency": 1,
-        "dead_letter_queue": "stellar-zk-proof-jobs-dlq",
+        "dead_letter_queue": "kalien-proof-jobs-dlq",
       },
       {
-        "queue": "stellar-zk-proof-jobs-dlq",
+        "queue": "kalien-proof-jobs-dlq",
         "max_batch_size": 1,
         "max_batch_timeout": 5,
         "max_retries": 3,
         "max_concurrency": 1,
       },
       {
-        "queue": "stellar-zk-claim-jobs",
+        "queue": "kalien-claim-jobs",
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 10,
         "max_concurrency": 1,
-        "dead_letter_queue": "stellar-zk-claim-jobs-dlq",
+        "dead_letter_queue": "kalien-claim-jobs-dlq",
       },
       {
-        "queue": "stellar-zk-claim-jobs-dlq",
+        "queue": "kalien-claim-jobs-dlq",
         "max_batch_size": 1,
         "max_batch_timeout": 5,
         "max_retries": 3,
