@@ -1,12 +1,12 @@
 import type { WorkerEnv } from "./env";
-import { fetchLeaderboardEventsFromGalexie } from "./leaderboard-ingestion";
+import { fetchLeaderboardEventsFromGalexie, type GalexieFetchResult } from "./leaderboard-ingestion";
 import {
   countLeaderboardEvents,
   getLeaderboardIngestionState,
   setLeaderboardIngestionState,
   upsertLeaderboardEvents,
 } from "./leaderboard-store";
-import type { LeaderboardIngestionState } from "./types";
+import type { LeaderboardEventRecord, LeaderboardIngestionState } from "./types";
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
 
@@ -94,6 +94,28 @@ function parseLedgerCursor(cursor: string | null | undefined): number | null {
   return parsed;
 }
 
+function extractLedgerFromOpaqueCursor(cursor: string | null | undefined): number | null {
+  if (!cursor || cursor.trim().length === 0) {
+    return null;
+  }
+  const trimmed = cursor.trim();
+  if (trimmed.startsWith("ledger:")) {
+    return null;
+  }
+  // RPC cursors may be "toid-subIndex" (e.g., "0004537142736896001-0000000000")
+  // or plain toid. Extract the first numeric part and decode the ledger.
+  const toidPart = trimmed.split("-")[0];
+  if (!toidPart || !/^\d+$/.test(toidPart)) {
+    return null;
+  }
+  try {
+    const ledger = Number(BigInt(toidPart) >> 32n);
+    return Number.isFinite(ledger) && ledger >= 0 ? ledger : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseForwardReplayWindowLedgers(env: WorkerEnv): number {
   return parseInteger(env.LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS, 8_000, 1);
 }
@@ -103,18 +125,38 @@ export async function runLeaderboardSync(
   request: LeaderboardSyncRequest,
 ): Promise<LeaderboardSyncResult> {
   const existingState = await getLeaderboardIngestionState(env);
+  const maxPages = parseInteger(env.LEADERBOARD_SYNC_MAX_PAGES, 5, 1);
 
   const replayWindowLedgers = parseForwardReplayWindowLedgers(env);
   const persistedCursor =
     request.mode === "forward" ? (request.cursor ?? existingState.cursor) : null;
   const persistedCursorLedger = parseLedgerCursor(persistedCursor);
-  const hasOpaquePersistedCursor = Boolean(persistedCursor && persistedCursorLedger === null);
 
   let effectiveCursor = request.mode === "forward" ? persistedCursor : request.cursor;
   let effectiveFromLedger = request.fromLedger ?? null;
   let effectiveToLedger = request.toLedger ?? null;
 
-  if (request.mode === "forward" && effectiveFromLedger === null && !hasOpaquePersistedCursor) {
+  // Detect and discard stale opaque RPC cursors.
+  // RPC cursors encode ledger via toid: BigInt(cursorPart) >> 32n.
+  // If the cursor's implied ledger <= highestLedger, it's behind known territory.
+  if (
+    request.mode === "forward" &&
+    effectiveCursor &&
+    persistedCursorLedger === null &&
+    existingState.highestLedger !== null
+  ) {
+    const cursorLedger = extractLedgerFromOpaqueCursor(effectiveCursor);
+    if (cursorLedger !== null && cursorLedger <= existingState.highestLedger) {
+      effectiveCursor = null;
+      effectiveFromLedger = existingState.highestLedger + 1;
+    }
+  }
+
+  // When no opaque cursor is active, compute startLedger from anchor
+  const hasActiveOpaqueCursor = Boolean(
+    effectiveCursor && parseLedgerCursor(effectiveCursor) === null,
+  );
+  if (request.mode === "forward" && effectiveFromLedger === null && !hasActiveOpaqueCursor) {
     const anchorLedger = existingState.highestLedger ?? persistedCursorLedger;
     if (anchorLedger !== null) {
       effectiveFromLedger = Math.max(2, anchorLedger - replayWindowLedgers + 1);
@@ -125,15 +167,50 @@ export async function runLeaderboardSync(
     }
   }
 
-  const fetched = await fetchLeaderboardEventsFromGalexie(env, {
+  // Multi-page fetch loop.
+  // Continues on full pages (drain remaining events) AND on empty/partial pages
+  // when the scan hasn't reached the chain tip yet (bridge ledger gaps).
+  // The RPC has a hard 10K ledger scan limit per request, so bridging a large gap
+  // (e.g. 100K+ ledgers) requires multiple pages.
+  const effectiveLimit = Math.min(Math.max(request.limit ?? 200, 1), 1000);
+  const allEvents: LeaderboardEventRecord[] = [];
+  let totalFetchedCount = 0;
+
+  // eslint-disable-next-line no-await-in-loop
+  let lastFetched: GalexieFetchResult = await fetchLeaderboardEventsFromGalexie(env, {
     cursor: effectiveCursor,
     fromLedger: effectiveFromLedger,
     toLedger: effectiveToLedger,
     limit: request.limit,
     source: request.source ?? null,
   });
+  allEvents.push(...lastFetched.events);
+  totalFetchedCount += lastFetched.fetchedCount;
+  let pageCount = 1;
 
-  const upsert = await upsertLeaderboardEvents(env, fetched.events);
+  while (pageCount < maxPages && lastFetched.nextCursor) {
+    const isFullPage = lastFetched.fetchedCount >= effectiveLimit;
+    if (!isFullPage) {
+      // Empty or partial page — only continue if we're bridging a gap to the chain tip.
+      // The RPC response cursor for an empty page encodes (endLedger - 1) via toid.
+      // If that's still far from latestLedger, keep scanning forward.
+      if (lastFetched.latestLedger === null) break;
+      const scanEndLedger = extractLedgerFromOpaqueCursor(lastFetched.nextCursor);
+      if (scanEndLedger === null || scanEndLedger >= lastFetched.latestLedger) break;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    lastFetched = await fetchLeaderboardEventsFromGalexie(env, {
+      cursor: lastFetched.nextCursor,
+      limit: request.limit,
+      source: request.source ?? null,
+    });
+    allEvents.push(...lastFetched.events);
+    totalFetchedCount += lastFetched.fetchedCount;
+    pageCount += 1;
+  }
+
+  const upsert = await upsertLeaderboardEvents(env, allEvents);
   const hasBaselineState =
     existingState.totalEvents > 0 ||
     existingState.cursor !== null ||
@@ -141,24 +218,31 @@ export async function runLeaderboardSync(
   const totalEvents = hasBaselineState
     ? Math.max(existingState.totalEvents, 0) + upsert.inserted
     : await countLeaderboardEvents(env);
-  const ledgers = fetched.events
+  const ledgers = allEvents
     .map((event) => event.ledger)
     .filter((value): value is number => typeof value === "number");
   const highestLedgerFromBatch = ledgers.length > 0 ? Math.max(...ledgers) : null;
+
+  // Advance highestLedger from event ledgers only — NOT from latestLedger.
+  // Advancing to latestLedger would skip unscanned territory due to the RPC's
+  // 10K ledger scan limit, causing the stale cursor detection to jump past
+  // events that exist in the gap.
+  const newHighestLedger =
+    highestLedgerFromBatch !== null
+      ? Math.max(existingState.highestLedger ?? 0, highestLedgerFromBatch)
+      : existingState.highestLedger;
+
   const nowIso = new Date().toISOString();
 
   const nextState: LeaderboardIngestionState = {
     ...existingState,
-    provider: fetched.provider,
-    sourceMode: fetched.sourceMode,
+    provider: lastFetched.provider,
+    sourceMode: lastFetched.sourceMode,
     cursor:
       request.mode === "forward"
-        ? (fetched.nextCursor ?? effectiveCursor ?? existingState.cursor)
+        ? (lastFetched.nextCursor ?? null)
         : existingState.cursor,
-    highestLedger:
-      highestLedgerFromBatch === null
-        ? existingState.highestLedger
-        : Math.max(existingState.highestLedger ?? 0, highestLedgerFromBatch),
+    highestLedger: newHighestLedger,
     lastSyncedAt: nowIso,
     lastBackfillAt: request.mode === "backfill" ? nowIso : existingState.lastBackfillAt,
     totalEvents,
@@ -176,13 +260,13 @@ export async function runLeaderboardSync(
       limit: request.limit ?? null,
       source: request.source ?? "default",
     },
-    fetched_count: fetched.fetchedCount,
-    accepted_count: fetched.events.length,
+    fetched_count: totalFetchedCount,
+    accepted_count: allEvents.length,
     inserted_count: upsert.inserted,
     updated_count: upsert.updated,
-    next_cursor: fetched.nextCursor,
-    provider: fetched.provider,
-    source_mode: fetched.sourceMode,
+    next_cursor: lastFetched.nextCursor,
+    provider: lastFetched.provider,
+    source_mode: lastFetched.sourceMode,
     state: nextState,
   };
 }

@@ -44,6 +44,7 @@ export interface GalexieFetchResult {
   fetchedCount: number;
   provider: LeaderboardProvider;
   sourceMode: LeaderboardResolvedSourceMode;
+  latestLedger: number | null;
 }
 
 interface GalexieDatastoreConfig {
@@ -1151,12 +1152,16 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
   const nextCursor =
     typeof cursorRaw === "string" && cursorRaw.trim().length > 0 ? cursorRaw.trim() : null;
 
+  const latestLedgerRaw = root ? toInteger(root.latestLedger) : null;
+  const latestLedger = latestLedgerRaw !== null && latestLedgerRaw >= 0 ? latestLedgerRaw : null;
+
   return {
     events,
     nextCursor,
     fetchedCount: rawEvents.length,
     provider: "rpc",
     sourceMode: "rpc",
+    latestLedger,
   };
 }
 
@@ -1175,7 +1180,8 @@ async function fetchLeaderboardEventsFromRpcEvents(
   const pagination: JsonRecord = {
     limit,
   };
-  const hasLedgerCursor = parseLedgerCursor(options.cursor) !== null;
+  const ledgerFromCursor = parseLedgerCursor(options.cursor);
+  const hasLedgerCursor = ledgerFromCursor !== null;
   if (!hasLedgerCursor && options.cursor && options.cursor.trim().length > 0) {
     pagination.cursor = options.cursor.trim();
   }
@@ -1194,6 +1200,8 @@ async function fetchLeaderboardEventsFromRpcEvents(
 
   if (typeof options.fromLedger === "number" && options.fromLedger >= 2) {
     params.startLedger = Math.trunc(options.fromLedger);
+  } else if (hasLedgerCursor && ledgerFromCursor >= 2) {
+    params.startLedger = ledgerFromCursor;
   }
   if (typeof options.toLedger === "number" && options.toLedger >= 2) {
     params.endLedger = Math.trunc(options.toLedger);
@@ -1477,6 +1485,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
     fetchedCount: inspectedEventCount,
     provider: "galexie",
     sourceMode: "datalake",
+    latestLedger,
   };
 }
 
@@ -1615,6 +1624,7 @@ export function normalizeGalexieScoreEvents(
     fetchedCount: rawEvents.length,
     provider: "galexie",
     sourceMode: "events_api",
+    latestLedger: null,
   };
 }
 
