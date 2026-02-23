@@ -81,7 +81,7 @@ async fn main() -> std::io::Result<()> {
     let job_store = JobStore::open(&data_dir).expect("failed to open job store");
 
     tracing::info!(
-        "starting risc0 asteroids api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] dev_mode={} http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
+        "starting kalien api: bind_addr={} accelerator={} prover_concurrency={} max_tape_bytes={} max_jobs={} max_frames={} segment_limit_po2=[{}..={}] dev_mode={} http_workers={:?} http_max_connections={} http_keep_alive_secs={} timed_out_proof_kill_secs={} cors_allowed_origin={} auth_required={} data_dir={}",
         bind_addr,
         accelerator(),
         FIXED_PROVER_CONCURRENCY,

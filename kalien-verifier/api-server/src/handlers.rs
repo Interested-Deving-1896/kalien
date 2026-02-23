@@ -62,7 +62,7 @@ pub(crate) async fn health(state: Data<AppState>) -> impl Responder {
 
     HttpResponse::Ok().json(HealthResponse {
         status: "healthy",
-        service: "risc0-asteroids-api",
+        service: "kalien-api",
         accelerator: accelerator(),
         image_id: host::image_id_hex(),
         rules_digest: RULES_DIGEST,
