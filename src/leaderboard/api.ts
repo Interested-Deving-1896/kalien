@@ -1,7 +1,4 @@
-import type {
-  AuthenticationResponseJSON,
-  PublicKeyCredentialRequestOptionsJSON,
-} from "@simplewebauthn/browser";
+import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
 
 export type LeaderboardWindow = "10m" | "day" | "all";
 
@@ -75,27 +72,24 @@ export interface LeaderboardPlayerResponse {
       all: number | null;
     };
     recent_runs: Array<Omit<LeaderboardEntry, "rank" | "profile">>;
+    runs_pagination: {
+      limit: number;
+      offset: number;
+      total: number;
+      next_offset: number | null;
+    };
   };
+}
+
+interface LeaderboardProfileAuthOptionsResponse {
+  success: true;
+  challenge_id: string;
+  options: PublicKeyCredentialRequestOptionsJSON;
 }
 
 interface ApiErrorResponse {
   success: false;
   error?: string;
-}
-
-interface LeaderboardProfileAuthOptionsResponse {
-  success: true;
-  auth: {
-    challenge_id: string;
-    options: PublicKeyCredentialRequestOptionsJSON;
-    expires_at: string;
-  };
-}
-
-export interface LeaderboardProfilePasskeyCredential {
-  credentialId: string;
-  credentialPublicKey: string;
-  credentialTransports?: string[] | null;
 }
 
 export class LeaderboardApiError extends Error {
@@ -178,12 +172,18 @@ export async function getLeaderboard({
 
 export async function getLeaderboardPlayer(
   claimantAddress: string,
+  options?: { runsLimit?: number; runsOffset?: number },
 ): Promise<LeaderboardPlayerResponse> {
-  const response = await fetchWithTimeout(
-    `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}`,
-    { method: "GET" },
-    10_000,
-  );
+  const params = new URLSearchParams();
+  if (options?.runsLimit != null) {
+    params.set("runs_limit", `${options.runsLimit}`);
+  }
+  if (options?.runsOffset != null) {
+    params.set("runs_offset", `${options.runsOffset}`);
+  }
+  const qs = params.toString();
+  const url = `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}${qs ? `?${qs}` : ""}`;
+  const response = await fetchWithTimeout(url, { method: "GET" }, 10_000);
   if (!response.ok) {
     throw await parseError(response);
   }
@@ -194,59 +194,45 @@ export async function getLeaderboardPlayer(
 export async function updateLeaderboardProfile(
   claimantAddress: string,
   updates: { username: string | null; linkUrl: string | null },
-  passkey: LeaderboardProfilePasskeyCredential,
+  credentialId: string,
 ): Promise<{ success: true; profile: PlayerProfile }> {
-  const authOptionsResponse = await fetchWithTimeout(
+  // Step 1: Request authentication options (15s timeout for RPC latency)
+  const optionsResponse = await fetchWithTimeout(
     `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}/profile/auth/options`,
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        credential_id: passkey.credentialId,
-        credential_public_key: passkey.credentialPublicKey,
-        transports: passkey.credentialTransports ?? null,
-      }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ credential_id: credentialId }),
     },
-    10_000,
+    15_000,
   );
-  if (!authOptionsResponse.ok) {
-    throw await parseError(authOptionsResponse);
+  if (!optionsResponse.ok) {
+    throw await parseError(optionsResponse);
   }
+  const optionsData =
+    await parseJson<LeaderboardProfileAuthOptionsResponse>(optionsResponse);
 
-  const authOptions = await parseJson<LeaderboardProfileAuthOptionsResponse>(authOptionsResponse);
+  // Step 2: Sign with passkey via browser WebAuthn API
+  const { startAuthentication } = await import("@simplewebauthn/browser");
+  const authResponse = await startAuthentication({ optionsJSON: optionsData.options });
 
-  let authResponse: AuthenticationResponseJSON;
-  try {
-    const { startAuthentication } = await import("@simplewebauthn/browser");
-    authResponse = await startAuthentication({
-      optionsJSON: authOptions.auth.options,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "passkey authentication failed";
-    throw new LeaderboardApiError(message, 401);
-  }
-
+  // Step 3: Submit profile update with WebAuthn proof
   const response = await fetchWithTimeout(
     `/api/leaderboard/player/${encodeURIComponent(claimantAddress)}/profile`,
     {
       method: "PUT",
-      headers: {
-        "content-type": "application/json",
-      },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         username: updates.username,
         link_url: updates.linkUrl,
         auth: {
-          challenge_id: authOptions.auth.challenge_id,
+          challenge_id: optionsData.challenge_id,
           response: authResponse,
         },
       }),
     },
     10_000,
   );
-
   if (!response.ok) {
     throw await parseError(response);
   }

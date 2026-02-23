@@ -1,8 +1,4 @@
 import { Hono } from "hono";
-import {
-  generateAuthenticationOptions,
-  verifyAuthenticationResponse,
-} from "@simplewebauthn/server";
 import type { WorkerEnv } from "../env";
 import { LEADERBOARD_CACHE_CONTROL, LEADERBOARD_PRIVATE_CACHE_CONTROL } from "../cache-control";
 import {
@@ -15,27 +11,29 @@ import {
   getLeaderboardPage,
   getLeaderboardPlayer,
   getLeaderboardIngestionState,
+  upsertLeaderboardProfile,
   createLeaderboardProfileAuthChallenge,
   getLeaderboardProfileAuthChallenge,
   getLeaderboardProfileCredential,
   markLeaderboardProfileAuthChallengeUsed,
   purgeExpiredLeaderboardProfileAuthChallenges,
   updateLeaderboardProfileCredentialCounter,
-  upsertLeaderboardProfile,
   upsertLeaderboardProfileCredential,
 } from "../leaderboard-store";
 import {
   assertCredentialBelongsToClaimantContract,
   encodeRawP256PublicKeyBase64UrlToCose,
+  fetchCredentialPublicKeyFromChain,
   LeaderboardCredentialBindingError,
-  normalizeAuthenticatorTransports,
 } from "../leaderboard-profile-auth";
+import { generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { safeErrorMessage } from "../utils";
 
-const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const MAX_USERNAME_LENGTH = 32;
 const MAX_LINK_URL_LENGTH = 240;
 const USERNAME_PATTERN = /^[a-zA-Z0-9 _.@#-]+$/u;
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
 const READ_RATE_LIMIT = 60;
 const WRITE_RATE_LIMIT = 10;
@@ -193,7 +191,15 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
         return jsonError(c, 400, "missing player address");
       }
 
-      const player = await getLeaderboardPlayer(c.env, address);
+      const runsLimitRaw = c.req.query("runs_limit");
+      const runsLimit = runsLimitRaw ? Number.parseInt(runsLimitRaw, 10) || 25 : 25;
+      const runsOffsetRaw = c.req.query("runs_offset");
+      const runsOffset = runsOffsetRaw ? Number.parseInt(runsOffsetRaw, 10) || 0 : 0;
+
+      const player = await getLeaderboardPlayer(c.env, address, {
+        limit: runsLimit,
+        offset: runsOffset,
+      });
 
       c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
       return c.json({
@@ -213,6 +219,12 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
             all: player.ranks.all,
           },
           recent_runs: player.recentRuns,
+          runs_pagination: {
+            limit: player.runsPagination.limit,
+            offset: player.runsPagination.offset,
+            total: player.runsPagination.total,
+            next_offset: player.runsPagination.nextOffset,
+          },
         },
       });
     } catch (error) {
@@ -242,22 +254,11 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       }
 
       const credentialId = body.credential_id;
-      const credentialPublicKey = body.credential_public_key;
       if (typeof credentialId !== "string" || credentialId.trim().length === 0) {
         return jsonError(c, 400, "missing credential_id");
       }
-      if (typeof credentialPublicKey !== "string" || credentialPublicKey.trim().length === 0) {
-        return jsonError(c, 400, "missing credential_public_key");
-      }
 
-      let transports: string[] | null;
-      try {
-        transports = normalizeAuthenticatorTransports(body.transports ?? null);
-      } catch (error) {
-        return jsonError(c, 400, safeErrorMessage(error));
-      }
-
-      // Verify credential belongs to the claimant address
+      // Verify credential belongs to claimant address via indexer
       try {
         await assertCredentialBelongsToClaimantContract({
           claimantAddress: address,
@@ -271,56 +272,76 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
         throw error;
       }
 
-      // Upsert credential
-      await upsertLeaderboardProfileCredential(c.env, {
-        claimantAddress: address,
-        credentialId,
-        publicKey: credentialPublicKey,
-        transports: transports as string[] | undefined,
-      });
+      // Check D1 cache for public key; if not found, fetch from chain
+      let credential = await getLeaderboardProfileCredential(c.env, credentialId);
+      if (!credential) {
+        const rpcUrl = c.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.org";
+        const networkPassphrase =
+          c.env.CLAIM_NETWORK_PASSPHRASE || "Test SDF Network ; September 2015";
 
-      // Purge expired challenges
-      await purgeExpiredLeaderboardProfileAuthChallenges(c.env);
+        let rawPublicKeyBase64Url: string;
+        try {
+          rawPublicKeyBase64Url = await fetchCredentialPublicKeyFromChain({
+            contractAddress: address,
+            credentialIdBase64Url: credentialId,
+            rpcUrl,
+            networkPassphrase,
+          });
+        } catch (error) {
+          if (error instanceof LeaderboardCredentialBindingError) {
+            return jsonError(c, error.statusCode, error.message);
+          }
+          console.error(`[leaderboard] fetch chain pubkey error: ${safeErrorMessage(error)}`);
+          return jsonError(c, 503, "failed to fetch credential public key from chain");
+        }
+
+        credential = await upsertLeaderboardProfileCredential(c.env, {
+          claimantAddress: address,
+          credentialId,
+          publicKey: rawPublicKeyBase64Url,
+        });
+      }
+
+      // Derive origin and RP ID from request URL
+      const requestUrl = new URL(c.req.url);
+      const rpId = requestUrl.hostname;
+      const expectedOrigin = requestUrl.origin;
 
       // Generate WebAuthn authentication options
-      const rpId = new URL(c.req.url).hostname;
       const options = await generateAuthenticationOptions({
         rpID: rpId,
         allowCredentials: [
           {
             id: credentialId,
-            transports: transports as
-              | import("@simplewebauthn/server").AuthenticatorTransportFuture[]
+            transports: (credential.transports ?? undefined) as
+              | ("ble" | "cable" | "hybrid" | "internal" | "nfc" | "smart-card" | "usb")[]
               | undefined,
           },
         ],
         userVerification: "required",
-        timeout: CHALLENGE_TTL_MS,
+        timeout: 300_000,
       });
 
-      // Store challenge
-      const challengeId = crypto.randomUUID();
-      const nowMs = Date.now();
-      const expiresAt = new Date(nowMs + CHALLENGE_TTL_MS).toISOString();
-      const origin = new URL(c.req.url).origin;
+      // Purge expired challenges, then store new one
+      await purgeExpiredLeaderboardProfileAuthChallenges(c.env);
 
+      const challengeId = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
       await createLeaderboardProfileAuthChallenge(c.env, {
         challengeId,
         claimantAddress: address,
         credentialId,
         challenge: options.challenge,
-        expectedOrigin: origin,
+        expectedOrigin,
         expectedRpId: rpId,
         expiresAt,
       });
 
+      c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
       return c.json({
         success: true,
-        auth: {
-          challenge_id: challengeId,
-          options,
-          expires_at: expiresAt,
-        },
+        challenge_id: challengeId,
+        options,
       });
     } catch (error) {
       console.error(`[leaderboard] POST auth/options error: ${safeErrorMessage(error)}`);
@@ -346,6 +367,21 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
         body = (await c.req.json()) as Record<string, unknown>;
       } catch {
         return jsonError(c, 400, "invalid JSON body");
+      }
+
+      // Validate auth object
+      const auth = body.auth;
+      if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
+        return jsonError(c, 400, "missing auth object");
+      }
+      const authObj = auth as Record<string, unknown>;
+      const challengeId = authObj.challenge_id;
+      if (typeof challengeId !== "string" || challengeId.trim().length === 0) {
+        return jsonError(c, 400, "missing auth.challenge_id");
+      }
+      const authResponse = authObj.response;
+      if (!authResponse || typeof authResponse !== "object" || Array.isArray(authResponse)) {
+        return jsonError(c, 400, "missing auth.response");
       }
 
       // Validate username
@@ -386,77 +422,63 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
         }
       }
 
-      // Validate auth
-      const auth = body.auth;
-      if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
-        return jsonError(c, 400, "missing auth object");
-      }
-      const authObj = auth as Record<string, unknown>;
-      const challengeId = authObj.challenge_id;
-      const authResponse = authObj.response;
-      if (typeof challengeId !== "string" || challengeId.trim().length === 0) {
-        return jsonError(c, 400, "missing auth.challenge_id");
-      }
-      if (!authResponse || typeof authResponse !== "object") {
-        return jsonError(c, 400, "missing auth.response");
-      }
-
       // Retrieve and validate challenge
       const challenge = await getLeaderboardProfileAuthChallenge(c.env, challengeId);
       if (!challenge) {
-        return jsonError(c, 400, "invalid or expired challenge");
+        return jsonError(c, 401, "invalid or expired challenge");
       }
       if (challenge.claimantAddress !== address) {
-        return jsonError(c, 403, "challenge does not belong to this address");
+        return jsonError(c, 401, "challenge does not match claimant address");
       }
       if (challenge.usedAt !== null) {
-        return jsonError(c, 400, "challenge already used");
+        return jsonError(c, 401, "challenge already used");
+      }
+      if (new Date(challenge.expiresAt).getTime() < Date.now()) {
+        return jsonError(c, 401, "challenge expired");
       }
 
-      // Check TTL
-      const expiresAtMs = new Date(challenge.expiresAt).getTime();
-      if (!Number.isFinite(expiresAtMs) || Date.now() > expiresAtMs) {
-        return jsonError(c, 400, "challenge has expired");
+      // Atomically claim the challenge BEFORE verification to prevent race conditions.
+      // The SQL uses WHERE used_at IS NULL, so only one concurrent request can succeed.
+      const claimed = await markLeaderboardProfileAuthChallengeUsed(c.env, challengeId);
+      if (!claimed) {
+        return jsonError(c, 401, "challenge already used");
       }
 
-      // Get stored credential
+      // Retrieve cached credential (public key)
       const credential = await getLeaderboardProfileCredential(c.env, challenge.credentialId);
       if (!credential) {
-        return jsonError(c, 400, "credential not found");
-      }
-      if (credential.claimantAddress !== address) {
-        return jsonError(c, 403, "credential does not belong to this address");
+        return jsonError(c, 401, "credential not found");
       }
 
-      // Verify WebAuthn authentication response
+      // Verify WebAuthn response
+      const cosePublicKey = encodeRawP256PublicKeyBase64UrlToCose(credential.publicKey);
       let verification;
       try {
-        const coseKey = encodeRawP256PublicKeyBase64UrlToCose(credential.publicKey);
         verification = await verifyAuthenticationResponse({
-          response: authResponse as import("@simplewebauthn/server").AuthenticationResponseJSON,
+          response: authResponse as AuthenticationResponseJSON,
           expectedChallenge: challenge.challenge,
           expectedOrigin: challenge.expectedOrigin,
           expectedRPID: challenge.expectedRpId,
           credential: {
             id: credential.credentialId,
-            publicKey: Uint8Array.from(coseKey),
+            publicKey: cosePublicKey as Uint8Array<ArrayBuffer>,
             counter: credential.counter,
-            transports: credential.transports as
-              | import("@simplewebauthn/server").AuthenticatorTransportFuture[]
+            transports: (credential.transports ?? undefined) as
+              | ("ble" | "cable" | "hybrid" | "internal" | "nfc" | "smart-card" | "usb")[]
               | undefined,
           },
           requireUserVerification: true,
         });
       } catch (error) {
-        return jsonError(c, 401, `authentication verification failed: ${safeErrorMessage(error)}`);
+        console.error(`[leaderboard] webauthn verify error: ${safeErrorMessage(error)}`);
+        return jsonError(c, 401, "WebAuthn verification failed");
       }
 
       if (!verification.verified) {
-        return jsonError(c, 401, "authentication verification failed");
+        return jsonError(c, 401, "WebAuthn verification failed");
       }
 
-      // Mark challenge used and update counter
-      await markLeaderboardProfileAuthChallengeUsed(c.env, challengeId);
+      // Update counter (challenge already marked used above)
       await updateLeaderboardProfileCredentialCounter(
         c.env,
         credential.credentialId,
@@ -477,6 +499,128 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       console.error(`[leaderboard] PUT profile error: ${safeErrorMessage(error)}`);
       return jsonError(c, 503, "leaderboard temporarily unavailable");
     }
+  });
+
+  // DEV-ONLY: Trigger leaderboard sync (same as cron handler)
+  // Pass ?reset_cursor=1 to clear stale RPC cursor.
+  // Pass ?from_ledger=N to override the start ledger (skips gaps).
+  router.post("/dev/sync", async (c) => {
+    const { runLeaderboardSync, runScheduledLeaderboardSync } = await import("../leaderboard-sync");
+    const { setLeaderboardIngestionState, getLeaderboardIngestionState } = await import(
+      "../leaderboard-store"
+    );
+    try {
+      if (c.req.query("reset_cursor") === "1") {
+        const state = await getLeaderboardIngestionState(c.env);
+        await setLeaderboardIngestionState(c.env, { ...state, cursor: null });
+      }
+      const fromLedgerRaw = c.req.query("from_ledger");
+      if (fromLedgerRaw) {
+        const fromLedger = Number.parseInt(fromLedgerRaw, 10);
+        if (!Number.isFinite(fromLedger) || fromLedger < 2) {
+          return jsonError(c, 400, "invalid from_ledger");
+        }
+        // Clear persisted cursor so from_ledger takes effect
+        const state = await getLeaderboardIngestionState(c.env);
+        await setLeaderboardIngestionState(c.env, { ...state, cursor: null });
+        const result = await runLeaderboardSync(c.env, {
+          mode: "forward",
+          fromLedger,
+          cursor: null,
+          limit: 200,
+        });
+        return c.json({ success: true, forward: result, catchup: null, warning: null });
+      }
+      const result = await runScheduledLeaderboardSync(c.env);
+      return c.json({ success: true, ...result });
+    } catch (error) {
+      console.error(`[leaderboard-sync] dev/sync failed: ${safeErrorMessage(error)}`);
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+  });
+
+  // DEV-ONLY: Reset all leaderboard data
+  router.post("/dev/reset", async (c) => {
+    const db = c.env.LEADERBOARD_DB;
+    await db.batch([
+      db.prepare("DELETE FROM leaderboard_events"),
+      db.prepare("DELETE FROM leaderboard_profiles"),
+      db.prepare("DELETE FROM leaderboard_profile_credentials"),
+      db.prepare("DELETE FROM leaderboard_profile_auth_challenges"),
+      db.prepare("DELETE FROM leaderboard_ingestion_state"),
+    ]);
+    return c.json({ success: true, message: "all leaderboard data cleared" });
+  });
+
+  // DEV-ONLY: Seed test data into the leaderboard
+  router.post("/dev/seed", async (c) => {
+    let body: { events: unknown[]; profiles?: unknown[] };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return jsonError(c, 400, "invalid JSON body");
+    }
+
+    if (!Array.isArray(body.events) || body.events.length === 0) {
+      return jsonError(c, 400, "events must be a non-empty array");
+    }
+
+    const { upsertLeaderboardEvents, upsertLeaderboardProfiles, setLeaderboardIngestionState } =
+      await import("../leaderboard-store");
+
+    const events = body.events.map((e: Record<string, unknown>) => ({
+      eventId: String(e.eventId ?? crypto.randomUUID()),
+      claimantAddress: String(e.claimantAddress),
+      seed: Number(e.seed) >>> 0,
+      frameCount: e.frameCount != null ? Number(e.frameCount) : null,
+      finalScore: Number(e.finalScore),
+      finalRngState: e.finalRngState != null ? Number(e.finalRngState) : null,
+      tapeChecksum: e.tapeChecksum != null ? Number(e.tapeChecksum) : null,
+      rulesDigest: e.rulesDigest != null ? Number(e.rulesDigest) : null,
+      previousBest: Number(e.previousBest ?? 0),
+      newBest: Number(e.newBest ?? e.finalScore),
+      mintedDelta: Number(e.mintedDelta ?? e.finalScore),
+      journalDigest: e.journalDigest != null ? String(e.journalDigest) : null,
+      txHash: e.txHash != null ? String(e.txHash) : null,
+      eventIndex: e.eventIndex != null ? Number(e.eventIndex) : null,
+      ledger: e.ledger != null ? Number(e.ledger) : null,
+      closedAt: String(e.closedAt ?? new Date().toISOString()),
+      source: (e.source === "rpc" ? "rpc" : "galexie") as "galexie" | "rpc",
+      ingestedAt: String(e.ingestedAt ?? new Date().toISOString()),
+    }));
+
+    const result = await upsertLeaderboardEvents(c.env, events);
+
+    // Upsert profiles if provided
+    let profileCount = 0;
+    if (Array.isArray(body.profiles) && body.profiles.length > 0) {
+      const profiles = body.profiles.map((p: Record<string, unknown>) => ({
+        claimantAddress: String(p.claimantAddress),
+        username: p.username != null ? String(p.username) : null,
+        linkUrl: p.linkUrl != null ? String(p.linkUrl) : null,
+        updatedAt: String(p.updatedAt ?? new Date().toISOString()),
+      }));
+      profileCount = await upsertLeaderboardProfiles(c.env, profiles);
+    }
+
+    // Update ingestion state so the UI shows sync info
+    await setLeaderboardIngestionState(c.env, {
+      provider: "rpc",
+      sourceMode: "rpc",
+      cursor: null,
+      highestLedger: Math.max(...events.map((e) => e.ledger ?? 0)),
+      lastSyncedAt: new Date().toISOString(),
+      lastBackfillAt: null,
+      totalEvents: events.length,
+      lastError: null,
+    });
+
+    return c.json({
+      success: true,
+      inserted: result.inserted,
+      updated: result.updated,
+      profiles: profileCount,
+    });
   });
 
   return router;

@@ -1140,6 +1140,7 @@ async function getClaimantRankForWindow(
 export async function getLeaderboardPlayer(
   env: WorkerEnv,
   claimantAddress: string,
+  runsOptions?: { limit?: number; offset?: number },
 ): Promise<{
   profile: PlayerProfileRecord | null;
   stats: {
@@ -1171,6 +1172,8 @@ export async function getLeaderboardPlayer(
   await ensureSchema(env);
   const db = getDb(env);
   const nowMs = Date.now();
+  const runsLimit = Math.min(Math.max(runsOptions?.limit ?? 25, 1), 100);
+  const runsOffset = Math.max(runsOptions?.offset ?? 0, 0);
 
   const [profileRow, statsRow, recentRows, rank10m, rankDay, rankAll] = await Promise.all([
     db
@@ -1211,9 +1214,9 @@ export async function getLeaderboardPlayer(
          FROM leaderboard_events
          WHERE claimant_address = ?
          ORDER BY closed_at DESC, new_best DESC, event_id ASC
-         LIMIT 25`,
+         LIMIT ? OFFSET ?`,
       )
-      .bind(claimantAddress)
+      .bind(claimantAddress, runsLimit, runsOffset)
       .all<Record<string, unknown>>(),
     getClaimantRankForWindow(env, claimantAddress, "10m", nowMs),
     getClaimantRankForWindow(env, claimantAddress, "day", nowMs),
@@ -1244,10 +1247,12 @@ export async function getLeaderboardPlayer(
     claimTxHash: toNullableString(row.claim_tx_hash),
   }));
 
+  const totalRuns = toNumber(statsRow?.total_runs, 0);
+
   return {
     profile,
     stats: {
-      totalRuns: toNumber(statsRow?.total_runs, 0),
+      totalRuns,
       bestScore: toNumber(statsRow?.best_score, 0),
       totalMinted: toNumber(statsRow?.total_minted, 0),
       lastPlayedAt: toNullableString(statsRow?.last_played_at),
@@ -1258,5 +1263,11 @@ export async function getLeaderboardPlayer(
       all: rankAll,
     },
     recentRuns,
+    runsPagination: {
+      limit: runsLimit,
+      offset: runsOffset,
+      total: totalRuns,
+      nextOffset: runsOffset + runsLimit < totalRuns ? runsOffset + runsLimit : null,
+    },
   };
 }

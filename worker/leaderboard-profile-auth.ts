@@ -1,24 +1,8 @@
-import type { AuthenticatorTransportFuture } from "@simplewebauthn/server";
-
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
-
-const COSE_KEY_TYPE_EC2 = 2;
-const COSE_ALG_ES256 = -7;
-const COSE_CRV_P256 = 1;
 
 export const DEFAULT_SMART_ACCOUNT_INDEXER_URL =
   "https://smart-account-indexer.sdf-ecosystem.workers.dev";
 export const DEFAULT_SMART_ACCOUNT_INDEXER_TIMEOUT_MS = 10_000;
-
-const VALID_AUTHENTICATOR_TRANSPORTS = new Set<AuthenticatorTransportFuture>([
-  "ble",
-  "cable",
-  "hybrid",
-  "internal",
-  "nfc",
-  "smart-card",
-  "usb",
-]);
 
 export class LeaderboardCredentialBindingError extends Error {
   readonly retryable: boolean;
@@ -69,118 +53,6 @@ export function base64UrlToHex(value: string): string {
     hex += byte.toString(16).padStart(2, "0");
   }
   return hex;
-}
-
-function appendCborTypeAndValue(output: number[], majorType: number, value: number): void {
-  if (!Number.isInteger(majorType) || majorType < 0 || majorType > 7) {
-    throw new Error("invalid CBOR major type");
-  }
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error("invalid CBOR value");
-  }
-
-  const major = majorType << 5;
-  if (value < 24) {
-    output.push(major | value);
-    return;
-  }
-  if (value < 256) {
-    output.push(major | 24, value);
-    return;
-  }
-  if (value < 65_536) {
-    output.push(major | 25, (value >> 8) & 0xff, value & 0xff);
-    return;
-  }
-  if (value <= 0xffff_ffff) {
-    output.push(
-      major | 26,
-      (value >>> 24) & 0xff,
-      (value >>> 16) & 0xff,
-      (value >>> 8) & 0xff,
-      value & 0xff,
-    );
-    return;
-  }
-
-  throw new Error("CBOR value exceeds supported integer range");
-}
-
-function appendCborInteger(output: number[], value: number): void {
-  if (!Number.isInteger(value)) {
-    throw new Error("CBOR integer value must be an integer");
-  }
-
-  if (value >= 0) {
-    appendCborTypeAndValue(output, 0, value);
-    return;
-  }
-
-  appendCborTypeAndValue(output, 1, -1 - value);
-}
-
-function appendCborBytes(output: number[], bytes: Uint8Array): void {
-  appendCborTypeAndValue(output, 2, bytes.byteLength);
-  for (const byte of bytes) {
-    output.push(byte);
-  }
-}
-
-export function encodeRawP256PublicKeyBase64UrlToCose(rawPublicKeyBase64Url: string): Uint8Array {
-  const raw = decodeBase64UrlString(rawPublicKeyBase64Url);
-  if (raw.byteLength !== 65 || raw[0] !== 0x04) {
-    throw new Error("credential_public_key must be a 65-byte uncompressed secp256r1 key");
-  }
-
-  const x = raw.slice(1, 33);
-  const y = raw.slice(33, 65);
-
-  const cbor: number[] = [];
-  appendCborTypeAndValue(cbor, 5, 5);
-  appendCborInteger(cbor, 1);
-  appendCborInteger(cbor, COSE_KEY_TYPE_EC2);
-  appendCborInteger(cbor, 3);
-  appendCborInteger(cbor, COSE_ALG_ES256);
-  appendCborInteger(cbor, -1);
-  appendCborInteger(cbor, COSE_CRV_P256);
-  appendCborInteger(cbor, -2);
-  appendCborBytes(cbor, x);
-  appendCborInteger(cbor, -3);
-  appendCborBytes(cbor, y);
-  return new Uint8Array(cbor);
-}
-
-export function normalizeAuthenticatorTransports(
-  raw: unknown,
-): AuthenticatorTransportFuture[] | null {
-  if (raw === null || raw === undefined) {
-    return null;
-  }
-  if (!Array.isArray(raw)) {
-    throw new Error("transports must be an array of strings");
-  }
-  if (raw.length > 8) {
-    throw new Error("transports must contain at most 8 entries");
-  }
-
-  const deduped: AuthenticatorTransportFuture[] = [];
-  const seen = new Set<string>();
-  for (const entry of raw) {
-    if (typeof entry !== "string") {
-      throw new Error("transports must contain only strings");
-    }
-
-    const normalized = entry.trim();
-    if (!VALID_AUTHENTICATOR_TRANSPORTS.has(normalized as AuthenticatorTransportFuture)) {
-      throw new Error(`unsupported authenticator transport: ${normalized}`);
-    }
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
-      deduped.push(normalized as AuthenticatorTransportFuture);
-    }
-  }
-
-  return deduped;
 }
 
 function normalizeIndexerBaseUrl(rawBaseUrl: string | null | undefined): string {
@@ -283,6 +155,120 @@ export async function fetchIndexedContractsForCredential({
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function encodeRawP256PublicKeyBase64UrlToCose(rawPublicKeyBase64Url: string): Uint8Array {
+  const raw = decodeBase64UrlString(rawPublicKeyBase64Url);
+  if (raw.length !== 65 || raw[0] !== 0x04) {
+    throw new Error("expected 65-byte uncompressed P-256 public key (0x04 || x || y)");
+  }
+  const x = raw.slice(1, 33);
+  const y = raw.slice(33, 65);
+
+  // COSE_Key for EC2/P-256/ES256: {1: 2, 3: -7, -1: 1, -2: x, -3: y}
+  const cose = new Uint8Array(77);
+  let offset = 0;
+  cose[offset++] = 0xa5; // map(5)
+  cose[offset++] = 0x01; // unsigned(1) - kty
+  cose[offset++] = 0x02; // unsigned(2) - EC2
+  cose[offset++] = 0x03; // unsigned(3) - alg
+  cose[offset++] = 0x26; // negative(6) = -7 - ES256
+  cose[offset++] = 0x20; // negative(0) = -1 - crv
+  cose[offset++] = 0x01; // unsigned(1) - P-256
+  cose[offset++] = 0x21; // negative(1) = -2 - x coordinate
+  cose[offset++] = 0x58; // bstr header
+  cose[offset++] = 0x20; // 32 bytes
+  cose.set(x, offset);
+  offset += 32;
+  cose[offset++] = 0x22; // negative(2) = -3 - y coordinate
+  cose[offset++] = 0x58; // bstr header
+  cose[offset++] = 0x20; // 32 bytes
+  cose.set(y, offset);
+  return cose;
+}
+
+const DEFAULT_CHAIN_FETCH_TIMEOUT_MS = 15_000;
+
+export async function fetchCredentialPublicKeyFromChain({
+  contractAddress,
+  credentialIdBase64Url,
+  rpcUrl,
+  networkPassphrase,
+  timeoutMs = DEFAULT_CHAIN_FETCH_TIMEOUT_MS,
+}: {
+  contractAddress: string;
+  credentialIdBase64Url: string;
+  rpcUrl: string;
+  networkPassphrase: string;
+  timeoutMs?: number;
+}): Promise<string> {
+  const credentialIdBytes = decodeBase64UrlString(credentialIdBase64Url);
+
+  const fetchFromChain = async (): Promise<string> => {
+    const { Client } = await import("smart-account-kit-bindings");
+    const client = new Client({
+      contractId: contractAddress,
+      networkPassphrase,
+      rpcUrl,
+    });
+
+    const tx = await client.get_context_rules({
+      context_rule_type: { tag: "Default", values: undefined as unknown as void },
+    });
+    const rules = tx.result;
+
+    for (const rule of rules) {
+      for (const signer of rule.signers) {
+        if (signer.tag !== "External") continue;
+
+        const keyData = signer.values[1];
+        if (keyData.length < 65) continue;
+
+        const signerCredIdBytes = keyData.slice(65);
+        if (signerCredIdBytes.length !== credentialIdBytes.length) continue;
+
+        let match = true;
+        for (let i = 0; i < credentialIdBytes.length; i++) {
+          if (signerCredIdBytes[i] !== credentialIdBytes[i]) {
+            match = false;
+            break;
+          }
+        }
+
+        if (match) {
+          return encodeBase64Url(new Uint8Array(keyData.slice(0, 65)));
+        }
+      }
+    }
+
+    throw new LeaderboardCredentialBindingError(
+      "credential public key not found in smart account contract",
+      { retryable: false, statusCode: 403 },
+    );
+  };
+
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(
+      () =>
+        reject(
+          new LeaderboardCredentialBindingError("on-chain public key fetch timed out", {
+            retryable: true,
+            statusCode: 503,
+          }),
+        ),
+      Math.max(1000, timeoutMs),
+    );
+  });
+
+  return Promise.race([fetchFromChain(), timeout]);
 }
 
 export async function assertCredentialBelongsToClaimantContract({
