@@ -1,131 +1,137 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "kalien",
-  "main": "./worker/index.ts",
-  "compatibility_date": "2025-04-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": false,
-  "routes": [
-    {
-      "pattern": "kalien.xyz",
-      "custom_domain": true,
-    },
-  ],
-  "observability": {
-    "enabled": true,
-    "logs": {
-      "invocation_logs": true,
-      "head_sampling_rate": 1,
-    },
-    "traces": {
-      "enabled": true,
-      "head_sampling_rate": 1,
-    },
-  },
-  "assets": {
-    "not_found_handling": "single-page-application",
-    "binding": "ASSETS",
-  },
-  "vars": {
-    // Prover
-    "PROVER_BASE_URL": "https://risc0-kalien.stellar.buzz",
-    "PROVER_HEALTH_CACHE_MS": "30000",
-    "PROVER_POLL_INTERVAL_MS": "3000",
-    "PROVER_POLL_TIMEOUT_MS": "660000",
-    "PROVER_POLL_BUDGET_MS": "45000",
-    "PROVER_REQUEST_TIMEOUT_MS": "30000",
-    "ALLOW_INSECURE_PROVER_URL": "0",
-    // Gateway limits
-    "MAX_TAPE_BYTES": "2097152",
-    "MAX_JOB_WALL_TIME_MS": "660000",
-    "MAX_COMPLETED_JOBS": "200",
-    "COMPLETED_JOB_RETENTION_MS": "86400000",
-    // Relayer (OpenZeppelin Channels testnet)
-    "RELAYER_URL": "https://channels.openzeppelin.com/testnet",
-    "RELAYER_PLUGIN_ID": "",
-    "RELAYER_REQUEST_TIMEOUT_MS": "30000",
-    // Stellar testnet
-    "SCORE_CONTRACT_ID": "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
-    "CLAIM_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
-    // Leaderboard sync (auto mode → RPC-only on testnet; Galexie vars omitted)
-    "LEADERBOARD_SYNC_CRON_ENABLED": "1",
-    "LEADERBOARD_SYNC_CRON_LIMIT": "400",
-    "LEADERBOARD_CATCHUP_INTERVAL_MINUTES": "30",
-    "LEADERBOARD_CATCHUP_WINDOW_LEDGERS": "8000",
-    "LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS": "8000",
-  },
-  "d1_databases": [
-    {
-      "binding": "LEADERBOARD_DB",
-      "database_name": "kalien-leaderboard",
-      "database_id": "3ca395d5-5de1-4d46-ac16-b9c2d9982e84",
-    },
-  ],
-  "r2_buckets": [
-    {
-      "binding": "PROOF_ARTIFACTS",
-      "bucket_name": "kalien-proof-artifacts",
-    },
-  ],
-  "queues": {
-    "producers": [
-      {
-        "binding": "PROOF_QUEUE",
-        "queue": "kalien-proof-jobs",
-      },
-      {
-        "binding": "CLAIM_QUEUE",
-        "queue": "kalien-claim-jobs",
-      },
-    ],
-    "consumers": [
-      {
-        "queue": "kalien-proof-jobs",
-        "max_batch_size": 1,
-        "max_batch_timeout": 1,
-        "max_retries": 10,
-        "max_concurrency": 1,
-        "dead_letter_queue": "kalien-proof-jobs-dlq",
-      },
-      {
-        "queue": "kalien-proof-jobs-dlq",
-        "max_batch_size": 1,
-        "max_batch_timeout": 5,
-        "max_retries": 3,
-        "max_concurrency": 1,
-      },
-      {
-        "queue": "kalien-claim-jobs",
-        "max_batch_size": 1,
-        "max_batch_timeout": 1,
-        "max_retries": 10,
-        "max_concurrency": 1,
-        "dead_letter_queue": "kalien-claim-jobs-dlq",
-      },
-      {
-        "queue": "kalien-claim-jobs-dlq",
-        "max_batch_size": 1,
-        "max_batch_timeout": 5,
-        "max_retries": 3,
-        "max_concurrency": 1,
-      },
-    ],
-  },
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "PROOF_COORDINATOR",
-        "class_name": "ProofCoordinatorDO",
-      },
-    ],
-  },
-  "migrations": [
-    {
-      "tag": "v1-proof-coordinator",
-      "new_sqlite_classes": ["ProofCoordinatorDO"],
-    },
-  ],
-  "triggers": {
-    "crons": ["*/1 * * * *"],
-  },
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "kalien",
+	"main": "./worker/index.ts",
+	"compatibility_date": "2025-04-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"workers_dev": false,
+	"routes": [
+		{
+			"pattern": "kalien.xyz",
+			"custom_domain": true,
+		},
+	],
+	"observability": {
+		"enabled": true,
+		"logs": {
+			"invocation_logs": true,
+			"head_sampling_rate": 1,
+		},
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 1,
+		},
+	},
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"binding": "ASSETS",
+	},
+	"vars": {
+		// Prover
+		"PROVER_BASE_URL": "https://risc0-kalien.stellar.buzz",
+		"PROVER_HEALTH_CACHE_MS": "30000",
+		"PROVER_POLL_INTERVAL_MS": "3000",
+		"PROVER_POLL_TIMEOUT_MS": "660000",
+		"PROVER_POLL_BUDGET_MS": "45000",
+		"PROVER_REQUEST_TIMEOUT_MS": "30000",
+		"ALLOW_INSECURE_PROVER_URL": "0",
+		// Gateway limits
+		"MAX_TAPE_BYTES": "2097152",
+		"MAX_JOB_WALL_TIME_MS": "660000",
+		"MAX_COMPLETED_JOBS": "200",
+		"COMPLETED_JOB_RETENTION_MS": "86400000",
+		// Relayer (OpenZeppelin Channels testnet)
+		"RELAYER_URL": "https://channels.openzeppelin.com/testnet",
+		"RELAYER_PLUGIN_ID": "",
+		"RELAYER_REQUEST_TIMEOUT_MS": "30000",
+		// Stellar testnet
+		"SCORE_CONTRACT_ID": "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
+		"CLAIM_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
+		// Leaderboard sync (auto mode → RPC-only on testnet; Galexie vars omitted)
+		"LEADERBOARD_SYNC_CRON_ENABLED": "1",
+		"LEADERBOARD_SYNC_CRON_LIMIT": "400",
+		"LEADERBOARD_CATCHUP_INTERVAL_MINUTES": "30",
+		"LEADERBOARD_CATCHUP_WINDOW_LEDGERS": "8000",
+		"LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS": "8000",
+	},
+	"d1_databases": [
+		{
+			"binding": "LEADERBOARD_DB",
+			"database_name": "kalien-leaderboard",
+			"database_id": "3ca395d5-5de1-4d46-ac16-b9c2d9982e84",
+		},
+	],
+	"r2_buckets": [
+		{
+			"binding": "PROOF_ARTIFACTS",
+			"bucket_name": "kalien-proof-artifacts",
+		},
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "PROOF_QUEUE",
+				"queue": "kalien-proof-jobs",
+			},
+			{
+				"binding": "CLAIM_QUEUE",
+				"queue": "kalien-claim-jobs",
+			},
+		],
+		"consumers": [
+			{
+				"queue": "kalien-proof-jobs",
+				"max_batch_size": 1,
+				"max_batch_timeout": 1,
+				"max_retries": 10,
+				"max_concurrency": 1,
+				"dead_letter_queue": "kalien-proof-jobs-dlq",
+			},
+			{
+				"queue": "kalien-proof-jobs-dlq",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"max_concurrency": 1,
+			},
+			{
+				"queue": "kalien-claim-jobs",
+				"max_batch_size": 1,
+				"max_batch_timeout": 1,
+				"max_retries": 10,
+				"max_concurrency": 1,
+				"dead_letter_queue": "kalien-claim-jobs-dlq",
+			},
+			{
+				"queue": "kalien-claim-jobs-dlq",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"max_concurrency": 1,
+			},
+		],
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "PROOF_COORDINATOR",
+				"class_name": "ProofCoordinatorDO",
+			},
+		],
+	},
+	"migrations": [
+		{
+			"tag": "v1-proof-coordinator",
+			"new_sqlite_classes": [
+				"ProofCoordinatorDO"
+			],
+		},
+	],
+	"triggers": {
+		"crons": [
+			"*/1 * * * *"
+		],
+	},
 }
