@@ -23,6 +23,20 @@ PROVER_ACCESS_CLIENT_SECRET=
 # When unset, any image_id from the prover is accepted.
 # PROVER_EXPECTED_IMAGE_ID=
 
+# ── Boundless proving (alternative to PROVER_BASE_URL) ───────────────────
+# When BOUNDLESS_RPC_URL is set in wrangler.jsonc "vars", the worker uses
+# Boundless (RISC Zero's proof marketplace) instead of the self-hosted
+# Vast.ai prover. Only the private key is a secret.
+# Non-secret config (RPC URL, image URL/ID, pricing, poll intervals) lives
+# in wrangler.jsonc "vars". Defaults target Base Mainnet (chain 8453).
+# Set BOUNDLESS_CHAIN_ID in wrangler.jsonc to use a testnet instead.
+# BOUNDLESS_PRIVATE_KEY=0x...
+
+# ── IPFS (Pinata) ────────────────────────────────────────────────────────
+# Used by Boundless to upload stdin input when inline data exceeds order
+# stream limits (~3.4 KB). Also used for one-time ELF uploads.
+# PINATA_JWT=
+
 # ── Local-dev overrides ───────────────────────────────────────────────────
 # Uncomment to override wrangler.jsonc defaults for local development.
 
