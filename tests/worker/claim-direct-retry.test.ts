@@ -11,7 +11,13 @@ describe("isRetryableDirectClaimMessage", () => {
     expect(
       isRetryableDirectClaimMessage("internal error; reference = q56n24hg30ocu0h4acq2v75h"),
     ).toBe(true);
-    expect(isRetryableDirectClaimMessage("Simulation failed (SIMULATION_FAILED)")).toBe(true);
+  });
+
+  it("does not retry opaque simulation failures (handled at higher level)", () => {
+    // Bare "Simulation failed" with no transient indicator is not retryable
+    // by this function — the SIMULATION_FAILED code path is handled by
+    // isRetryableChannelsExecution which checks for fatal indicators first.
+    expect(isRetryableDirectClaimMessage("Simulation failed (SIMULATION_FAILED)")).toBe(false);
   });
 
   it("does not retry deterministic contract/input failures", () => {

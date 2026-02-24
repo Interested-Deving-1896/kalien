@@ -193,11 +193,29 @@ function extractExecutionCode(details: unknown): string | null {
   return null;
 }
 
+/** Deterministic contract / input patterns that should never be retried. */
+function hasFatalClaimIndicator(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("error(contract") ||
+    m.includes("hosterror") ||
+    m.includes("missing proof") ||
+    m.includes("required") ||
+    m.includes("must be a valid") ||
+    m.includes("score not improved") ||
+    m.includes("already claimed")
+  );
+}
+
 function isRetryableChannelsExecution(message: string, code: string | null): boolean {
   if (code?.toLowerCase() === "simulation_failed") {
     // Channels can surface transient RPC/plugin errors as SIMULATION_FAILED.
-    // Only treat it as fatal when the message clearly carries deterministic
-    // contract/input failures.
+    // Treat as fatal when the message carries a deterministic contract/input
+    // failure; otherwise check for known transient indicators before defaulting
+    // to fatal (avoids blind retries on opaque simulation failures).
+    if (hasFatalClaimIndicator(message)) {
+      return false;
+    }
     return isRetryableDirectClaimMessage(message);
   }
 
@@ -233,15 +251,7 @@ function buildChannelsClient(config: ChannelsConfig): ChannelsClient {
 export function isRetryableDirectClaimMessage(rawMessage: string): boolean {
   const message = rawMessage.toLowerCase();
 
-  if (
-    message.includes("error(contract") ||
-    message.includes("hosterror") ||
-    message.includes("missing proof") ||
-    message.includes("required") ||
-    message.includes("must be a valid") ||
-    message.includes("score not improved") ||
-    message.includes("already claimed")
-  ) {
+  if (hasFatalClaimIndicator(message)) {
     return false;
   }
 
@@ -255,8 +265,6 @@ export function isRetryableDirectClaimMessage(rawMessage: string): boolean {
     message.includes("connection lost") ||
     message.includes("connection reset") ||
     message.includes("connection refused") ||
-    message.includes("simulation failed") ||
-    message.includes("simulation_failed") ||
     message.includes("socket hang up") ||
     message.includes("temporarily unavailable") ||
     message.includes("timed out") ||
