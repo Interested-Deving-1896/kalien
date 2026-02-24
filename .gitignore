@@ -30,5 +30,8 @@ bun-debug.log*
 # Batch test output
 batch-results/
 
+# Generated tapes
+generated-tapes/
+
 # Autopilot artifacts
 *-autopilot/

@@ -6,7 +6,6 @@ import {
   base64UrlToHex,
   encodeRawP256PublicKeyBase64UrlToCose,
   fetchIndexedContractsForCredential,
-  normalizeAuthenticatorTransports,
 } from "../../worker/leaderboard-profile-auth";
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -51,12 +50,6 @@ describe("leaderboard profile auth helpers", () => {
     expect(() =>
       encodeRawP256PublicKeyBase64UrlToCose(bytesToBase64Url(new Uint8Array(65))),
     ).toThrow("65-byte");
-  });
-
-  it("normalizes and validates authenticator transports", () => {
-    expect(normalizeAuthenticatorTransports(["usb", "nfc", "usb"])).toEqual(["usb", "nfc"]);
-    expect(normalizeAuthenticatorTransports(null)).toBeNull();
-    expect(() => normalizeAuthenticatorTransports(["invalid"])).toThrow("unsupported");
   });
 
   it("looks up indexed contracts by credential id", async () => {

@@ -7,7 +7,8 @@
  * writes the tape to a file, then verifies it inline.
  */
 
-import { writeFileSync, readFileSync } from "fs";
+import { writeFileSync, readFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
 import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
@@ -33,7 +34,10 @@ for (let i = 0; i < args.length; i++) {
 
 if (!outputPath) {
   const seedHex = seed.toString(16).padStart(8, "0");
-  outputPath = `asteroids-${seedHex}.tape`;
+  const rootDir = join(dirname(new URL(import.meta.url).pathname), "..");
+  const outDir = join(rootDir, "generated-tapes");
+  mkdirSync(outDir, { recursive: true });
+  outputPath = join(outDir, `asteroids-${seedHex}.tape`);
 }
 
 console.log(`Generating tape:`);

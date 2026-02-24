@@ -32,6 +32,7 @@ import {
 } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { safeErrorMessage } from "../utils";
+import { validateClaimantStrKey } from "../../shared/stellar/strkey";
 
 const MAX_USERNAME_LENGTH = 32;
 const MAX_LINK_URL_LENGTH = 240;
@@ -148,8 +149,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
 
       const ingestion = await getLeaderboardIngestionState(c.env);
 
-      c.header("Cache-Control", LEADERBOARD_CACHE_CONTROL);
-      return c.json({
+      const payload = {
         success: true,
         source: "d1",
         provider: ingestion.provider,
@@ -174,7 +174,38 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
           highest_ledger: ingestion.highestLedger,
           total_events: ingestion.totalEvents,
         },
-      });
+      };
+
+      const body = JSON.stringify(payload);
+
+      // Use private cache when caller asks for a specific address (personalised response).
+      c.header(
+        "Cache-Control",
+        address ? LEADERBOARD_PRIVATE_CACHE_CONTROL : LEADERBOARD_CACHE_CONTROL,
+      );
+
+      // ETag for conditional revalidation
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+      const hashHex = Array.from(new Uint8Array(digest.slice(0, 8)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      const etag = `"lb-${hashHex}"`;
+      c.header("ETag", etag);
+
+      const ifNoneMatch = c.req.header("if-none-match");
+      if (ifNoneMatch === etag) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            "Cache-Control": address
+              ? LEADERBOARD_PRIVATE_CACHE_CONTROL
+              : LEADERBOARD_CACHE_CONTROL,
+            ETag: etag,
+          },
+        });
+      }
+
+      return c.json(payload);
     } catch (error) {
       console.error(`[leaderboard] GET / error: ${safeErrorMessage(error)}`);
       return jsonError(c, 503, "leaderboard temporarily unavailable");
@@ -192,6 +223,12 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       const address = c.req.param("address");
       if (!address || address.trim().length === 0) {
         return jsonError(c, 400, "missing player address");
+      }
+
+      try {
+        validateClaimantStrKey(address);
+      } catch {
+        return jsonError(c, 400, "invalid player address");
       }
 
       const runsLimitRaw = c.req.query("runs_limit");
