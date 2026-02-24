@@ -82,6 +82,12 @@ mock.module("../../worker/leaderboard-store", () => ({
         claimTxHash: EXAMPLE_ENTRY.claimTxHash,
       },
     ],
+    runsPagination: {
+      limit: 25,
+      offset: 0,
+      total: 1,
+      nextOffset: null,
+    },
   }),
   getLeaderboardProfileAuthChallenge: async () => null,
   getLeaderboardProfileCredential: async () => null,
@@ -140,7 +146,9 @@ mock.module("../../worker/durable/coordinator", () => ({
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
 
+const { Hono } = await import("hono");
 const { createApiRouter } = await import("../../worker/api/routes");
+const { createLeaderboardRouter } = await import("../../worker/api/leaderboard-routes");
 
 const noopExecutionContext = {
   waitUntil() {
@@ -182,6 +190,21 @@ function makeCoordinatorStub(overrides: Record<string, unknown> = {}): Record<st
   };
 }
 
+function makeMockD1Database(): D1Database {
+  return {
+    prepare: (query: string) => ({
+      bind: () => ({ run: async () => ({ success: true }), all: async () => ({ results: [] }) }),
+      run: async () => ({ success: true }),
+      all: async () => ({ results: [] }),
+      first: async () => null,
+      raw: async () => [],
+    }),
+    batch: async () => [],
+    exec: async () => ({ count: 0, duration: 0 }),
+    dump: async () => new ArrayBuffer(0),
+  } as unknown as D1Database;
+}
+
 function makeEnv(
   overrides: (Partial<WorkerEnv> & { __coordinator?: Record<string, unknown> }) | undefined = {},
 ): WorkerEnv {
@@ -206,6 +229,7 @@ function makeEnv(
       put: async () => undefined,
       delete: async () => undefined,
     } as unknown as R2Bucket,
+    LEADERBOARD_DB: makeMockD1Database(),
     PROVER_BASE_URL: "",
     __coordinator: coordinator,
     ...overrides,
@@ -217,9 +241,11 @@ async function requestApi(
   init: RequestInit | undefined,
   env: WorkerEnv,
 ): Promise<Response> {
-  const router = createApiRouter();
+  const app = new Hono<{ Bindings: WorkerEnv }>();
+  app.route("/", createApiRouter());
+  app.route("/leaderboard", createLeaderboardRouter());
   const request = new Request(`https://worker.test${path}`, init);
-  return router.fetch(request, env, noopExecutionContext);
+  return app.fetch(request, env, noopExecutionContext);
 }
 
 describe("API routes", () => {
@@ -233,98 +259,6 @@ describe("API routes", () => {
     };
     expect(payload.success).toBe(true);
     expect(payload.prover.status).toBe("degraded");
-  });
-
-  it("GET /leaderboard/sync/status requires leaderboard admin key", async () => {
-    const response = await requestApi(
-      "/leaderboard/sync/status",
-      undefined,
-      makeEnv({ LEADERBOARD_ADMIN_KEY: "secret-admin-key" }),
-    );
-    expect(response.status).toBe(401);
-  });
-
-  it("GET /leaderboard/sync/status returns ingestion state for admins", async () => {
-    const response = await requestApi(
-      "/leaderboard/sync/status",
-      {
-        headers: {
-          "x-leaderboard-admin-key": "secret-admin-key",
-        },
-      },
-      makeEnv({ LEADERBOARD_ADMIN_KEY: "secret-admin-key" }),
-    );
-    expect(response.status).toBe(200);
-
-    const payload = (await response.json()) as {
-      success: boolean;
-      event_count: number;
-      source_mode: string;
-    };
-    expect(payload.success).toBe(true);
-    expect(payload.event_count).toBe(EXAMPLE_INGESTION_STATE.totalEvents);
-    expect(payload.source_mode).toBe(EXAMPLE_INGESTION_STATE.sourceMode);
-  });
-
-  it("POST /leaderboard/sync validates mode", async () => {
-    const response = await requestApi(
-      "/leaderboard/sync",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-leaderboard-admin-key": "secret-admin-key",
-        },
-        body: JSON.stringify({ mode: "invalid-mode" }),
-      },
-      makeEnv({ LEADERBOARD_ADMIN_KEY: "secret-admin-key" }),
-    );
-    expect(response.status).toBe(400);
-  });
-
-  it("POST /leaderboard/sync succeeds for valid admin requests", async () => {
-    const response = await requestApi(
-      "/leaderboard/sync",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-leaderboard-admin-key": "secret-admin-key",
-        },
-        body: JSON.stringify({ mode: "forward", limit: 10 }),
-      },
-      makeEnv({ LEADERBOARD_ADMIN_KEY: "secret-admin-key" }),
-    );
-    expect(response.status).toBe(200);
-  });
-
-  it("POST /leaderboard/migrate/do-to-d1 requires migration confirmation header", async () => {
-    const response = await requestApi(
-      "/leaderboard/migrate/do-to-d1",
-      {
-        method: "POST",
-        headers: {
-          "x-leaderboard-admin-key": "secret-admin-key",
-        },
-      },
-      makeEnv({ LEADERBOARD_ADMIN_KEY: "secret-admin-key" }),
-    );
-    expect(response.status).toBe(400);
-  });
-
-  it("POST /leaderboard/migrate/do-to-d1 succeeds with admin and confirmation headers", async () => {
-    const response = await requestApi(
-      "/leaderboard/migrate/do-to-d1",
-      {
-        method: "POST",
-        headers: {
-          "x-leaderboard-admin-key": "secret-admin-key",
-          "x-migration-confirm": "do-to-d1",
-        },
-      },
-      makeEnv({ LEADERBOARD_ADMIN_KEY: "secret-admin-key" }),
-    );
-    expect(response.status).toBe(200);
   });
 
   it("GET /leaderboard validates window query", async () => {
@@ -489,5 +423,89 @@ describe("API routes", () => {
       }),
     );
     expect(response.status).toBe(200);
+  });
+
+  it("POST /leaderboard/dev/sync triggers sync and returns result", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/sync",
+      { method: "POST" },
+      makeEnv(),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { success: boolean };
+    expect(payload.success).toBe(true);
+  });
+
+  it("POST /leaderboard/dev/sync?from_ledger=invalid returns 400", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/sync?from_ledger=abc",
+      { method: "POST" },
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("POST /leaderboard/dev/reset clears data", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/reset",
+      { method: "POST" },
+      makeEnv(),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { success: boolean; message: string };
+    expect(payload.success).toBe(true);
+    expect(payload.message).toContain("cleared");
+  });
+
+  it("POST /leaderboard/dev/seed with valid events returns insert counts", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/seed",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          events: [
+            {
+              claimantAddress: VALID_CLAIMANT_CONTRACT,
+              seed: 42,
+              finalScore: 1337,
+              previousBest: 0,
+              newBest: 1337,
+              closedAt: EXAMPLE_GENERATED_AT,
+            },
+          ],
+        }),
+      },
+      makeEnv(),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { success: boolean };
+    expect(payload.success).toBe(true);
+  });
+
+  it("POST /leaderboard/dev/seed with empty events returns 400", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/seed",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events: [] }),
+      },
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("POST /leaderboard/dev/seed with invalid JSON returns 400", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/seed",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "not json",
+      },
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
   });
 });
