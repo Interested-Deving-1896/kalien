@@ -1,5 +1,7 @@
 import { DEFAULT_MAX_JOB_WALL_TIME_MS, MAX_QUEUE_RETRIES } from "../constants";
 import { submitClaim } from "../claim/submit";
+import { resolveBoundlessConfig } from "../boundless/config";
+import { submitToBoundless } from "../boundless/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { submitToProver } from "../prover/client";
@@ -87,9 +89,16 @@ async function processQueueMessage(
   }
 
   const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
+
+  // Route to Boundless or Vast.ai based on configuration
+  const boundlessConfig = resolveBoundlessConfig(env);
+  const useBoundless = boundlessConfig !== null;
+
   let submitResult: Awaited<ReturnType<typeof submitToProver>>;
   try {
-    submitResult = await submitToProver(env, tapeBytes, {});
+    submitResult = useBoundless
+      ? await submitToBoundless(boundlessConfig, tapeBytes)
+      : await submitToProver(env, tapeBytes, {});
   } catch (error) {
     const reason = `submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_QUEUE_RETRIES) {

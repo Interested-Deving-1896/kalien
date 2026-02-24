@@ -52,3 +52,9 @@ export const JOB_KEY_PREFIX = "job:";
 export const PROFILE_KEY_PREFIX = "profile:";
 export const LEADERBOARD_EVENT_KEY_PREFIX = "lb:event:";
 export const LEADERBOARD_INGESTION_STATE_KEY = "lb:ingestion-state";
+
+// Boundless proving defaults
+export const DEFAULT_BOUNDLESS_POLL_INTERVAL_MS = 5_000;
+export const DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_BOUNDLESS_MAX_FRAMES = 18_000;
+export const DEFAULT_BOUNDLESS_POLL_BUDGET_MS = 45_000;

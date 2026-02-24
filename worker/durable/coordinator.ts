@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   ACTIVE_JOB_KEY,
   COORDINATOR_OBJECT_NAME,
+  DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
   DEFAULT_COMPLETED_JOB_RETENTION_MS,
   DEFAULT_MAX_JOB_WALL_TIME_MS,
   DEFAULT_MAX_COMPLETED_JOBS,
@@ -14,6 +15,8 @@ import {
   MAX_PROVER_RECOVERY_ATTEMPTS,
   PROFILE_KEY_PREFIX,
 } from "../constants";
+import { resolveBoundlessConfig } from "../boundless/config";
+import { pollBoundless, pollBoundlessOnce } from "../boundless/client";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
 import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
@@ -206,6 +209,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   private async scheduleAlarm(delayMs: number): Promise<void> {
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
+  }
+
+  private isBoundlessJob(job: ProofJobRecord): boolean {
+    return job.prover.statusUrl?.startsWith("boundless:") === true;
   }
 
   private segmentFallbackForOom(job: ProofJobRecord, reason: string): number | null {
@@ -941,7 +948,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     if (pollResult.type === "retry") {
       if (pollResult.clearProverJob) {
         if (scheduleNext) {
-          // alarm path: attempt recovery re-submit
+          // Boundless jobs cannot be re-submitted — the on-chain request already exists.
+          if (this.isBoundlessJob(job)) {
+            await this.markFailed(
+              activeJobId,
+              `boundless proving failed: ${pollResult.message}`,
+            );
+            return;
+          }
+
+          // alarm path: attempt recovery re-submit (Vast.ai only)
           const recoveryAttempts = job.prover.recoveryAttempts;
           if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
             await this.markFailed(
@@ -1074,7 +1090,20 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     let pollResult: ProverPollResult;
     try {
-      pollResult = await pollProverOnce(this.env, proverJobId);
+      if (this.isBoundlessJob(job)) {
+        const boundlessConfig = resolveBoundlessConfig(this.env);
+        if (!boundlessConfig) {
+          job.prover.pollingErrors += 1;
+          job.prover.lastPolledAt = nowIso();
+          job.updatedAt = nowIso();
+          job.queue.lastError = "boundless config missing during poll";
+          await this.saveJob(job);
+          return;
+        }
+        pollResult = await pollBoundlessOnce(boundlessConfig, proverJobId);
+      } else {
+        pollResult = await pollProverOnce(this.env, proverJobId);
+      }
     } catch (error) {
       job.prover.pollingErrors += 1;
       job.prover.lastPolledAt = nowIso();
@@ -1112,7 +1141,19 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     const proverJobId = job.prover.jobId;
+    const isBoundless = this.isBoundlessJob(job);
+
     if (!proverJobId) {
+      // For Boundless jobs, there's no re-submit — Boundless handles retries internally.
+      // Just fail if we somehow lost the prover job ID.
+      if (isBoundless) {
+        await this.markFailed(
+          activeJobId,
+          "boundless request ID lost; cannot recover",
+        );
+        return;
+      }
+
       const recoveryAttempts = job.prover.recoveryAttempts;
       if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
         await this.markFailed(
@@ -1172,7 +1213,20 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     let pollResult: ProverPollResult;
     try {
-      pollResult = await pollProver(this.env, proverJobId);
+      if (isBoundless) {
+        const boundlessConfig = resolveBoundlessConfig(this.env);
+        if (!boundlessConfig) {
+          await this.markFailed(activeJobId, "boundless config missing during alarm poll");
+          return;
+        }
+        pollResult = await pollBoundless(
+          boundlessConfig,
+          proverJobId,
+          DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
+        );
+      } else {
+        pollResult = await pollProver(this.env, proverJobId);
+      }
     } catch (error) {
       job.prover.pollingErrors += 1;
       job.status = "retrying";
