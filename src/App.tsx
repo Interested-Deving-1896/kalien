@@ -31,6 +31,7 @@ import { extractGroth16SealFromArtifact, packJournalRaw } from "./proof/artifact
 import {
   GATEWAY_HEALTH_INITIAL_POLL_DELAY_MS,
   GATEWAY_HEALTH_POLL_INTERVAL_MS,
+  PROOF_STATUS_CLAIM_RETRY_POLL_INTERVAL_MS,
   PROOF_STATUS_ERROR_POLL_INTERVAL_MS,
   PROOF_STATUS_INITIAL_POLL_DELAY_MS,
   PROOF_STATUS_POLL_INTERVAL_MS,
@@ -516,7 +517,15 @@ function GameApp() {
           (response.job.status === "succeeded" &&
             !isTerminalClaimStatus(response.job.claim.status));
         if (shouldContinuePolling) {
-          timeoutId = window.setTimeout(poll, PROOF_STATUS_POLL_INTERVAL_MS);
+          // Slow down polling when proof is done but claim is retrying —
+          // the next retry won't happen for seconds/minutes (exp. backoff).
+          const claimRetrying =
+            response.job.status === "succeeded" &&
+            response.job.claim.status === "retrying";
+          const interval = claimRetrying
+            ? PROOF_STATUS_CLAIM_RETRY_POLL_INTERVAL_MS
+            : PROOF_STATUS_POLL_INTERVAL_MS;
+          timeoutId = window.setTimeout(poll, interval);
           return;
         }
       } catch (error) {
