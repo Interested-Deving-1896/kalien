@@ -27,6 +27,8 @@ import { encodeStdin } from "../worker/boundless/stdin";
 import { boundlessMarketAbi, eip712Types } from "../worker/boundless/abi";
 import type { ProofRequest } from "../worker/boundless/types";
 import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
+import { parseAndValidateTape } from "../worker/tape";
+import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../worker/constants";
 import { Client as ScoreContractClient } from "../shared/stellar/bindings/asteroids-score/dist/index.js";
 import {
   ChannelsClient,
@@ -69,10 +71,10 @@ const GROTH16_SELECTOR = "0x73c457ba" as const;
 
 const MIN_PRICE = 50000000000n;   // ~$0.0001 — auction floor
 const MAX_PRICE = 5000000000000n; // ~$0.01 — auction ceiling
-const FLAT_PERIOD_SEC = 120;   // 2 min prover discovery window before ramp
-const RAMP_PERIOD_SEC = 480;   // 8 min for price to ramp from minPrice to maxPrice
-const LOCK_TIMEOUT_SEC = 1680; // 28 min from rampUpStart (8m ramp + 20m at max price)
-const TIMEOUT_SEC = 3480;      // lock (28m) + 30m expiry = 60m total
+const FLAT_PERIOD_SEC = 60;    // 1 min prover discovery window before ramp
+const RAMP_PERIOD_SEC = 660;   // 11 min for price to ramp from minPrice to maxPrice
+const LOCK_TIMEOUT_SEC = 1740; // 29 min from rampUpStart (11m ramp + 18m at max price)
+const TIMEOUT_SEC = 3540;      // lock (29m) + 30m expiry = 60m total
 const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 65 * 60_000; // 65 minutes
 const MAX_FRAMES = 36_000;
@@ -283,6 +285,26 @@ if (claimOnly) {
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const rampUpStart = nowSec + BigInt(FLAT_PERIOD_SEC);
 
+  // Compute DigestMatch predicate: bind to this exact tape by precomputing
+  // the expected journal (all 6 fields are known from the tape) and using sha256(journal).
+  const tapeMeta = parseAndValidateTape(tapeBytes, DEFAULT_MAX_TAPE_BYTES);
+  const expectedJournal = new Uint8Array(24);
+  const jv = new DataView(expectedJournal.buffer);
+  jv.setUint32(0, tapeMeta.seed, true);
+  jv.setUint32(4, tapeMeta.frameCount, true);
+  jv.setUint32(8, tapeMeta.finalScore, true);
+  jv.setUint32(12, tapeMeta.finalRngState, true);
+  jv.setUint32(16, tapeMeta.checksum, true);
+  jv.setUint32(20, EXPECTED_RULES_DIGEST, true);
+  const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", expectedJournal));
+  // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
+  const imageIdBytes = hexToBytes(IMAGE_ID);
+  const predicateData = new Uint8Array(64);
+  predicateData.set(imageIdBytes, 0);
+  predicateData.set(journalDigest, 32);
+  const predicateDataHex = `0x${Array.from(predicateData).map(b => b.toString(16).padStart(2, "0")).join("")}` as Hex;
+  console.log(`  Predicate data: ${predicateDataHex}`);
+
   const proofRequest: ProofRequest = {
     id: requestId,
     requirements: {
@@ -291,8 +313,8 @@ if (claimOnly) {
         gasLimit: 0n,
       },
       predicate: {
-        predicateType: 1,
-        data: IMAGE_ID,
+        predicateType: 0, // DigestMatch — proof must produce this exact journal from this image
+        data: predicateDataHex,
       },
       selector: GROTH16_SELECTOR,
     },
@@ -366,7 +388,7 @@ if (claimOnly) {
         id: requestIdHex,
         requirements: {
           callback: { addr: proofRequest.requirements.callback.addr, gasLimit: "0x0" },
-          predicate: { predicateType: "PrefixMatch", data: proofRequest.requirements.predicate.data },
+          predicate: { predicateType: "DigestMatch", data: proofRequest.requirements.predicate.data },
           selector: proofRequest.requirements.selector,
         },
         imageUrl: proofRequest.imageUrl,

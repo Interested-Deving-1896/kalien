@@ -17,6 +17,8 @@ import { uploadInput } from "./storage";
 import type { ProverPollResult, ProverSubmitResult } from "../types";
 import type { FulfillmentData, ProofRequest } from "./types";
 import { adaptFulfillmentToProverResponse } from "./adapter";
+import { parseAndValidateTape } from "../tape";
+import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../constants";
 
 /**
  * Submit a tape to Boundless for proving.
@@ -75,6 +77,26 @@ export async function submitToBoundless(
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const rampUpStart = nowSec + BigInt(config.flatPeriodSec);
 
+  // Compute DigestMatch predicate: bind proof request to this exact tape by
+  // precomputing the expected journal (all 6 fields are known from the tape)
+  // and using sha256(journal) as the predicate data.
+  const tapeMeta = parseAndValidateTape(tapeBytes, DEFAULT_MAX_TAPE_BYTES);
+  const expectedJournal = new Uint8Array(24);
+  const jv = new DataView(expectedJournal.buffer);
+  jv.setUint32(0, tapeMeta.seed, true);
+  jv.setUint32(4, tapeMeta.frameCount, true);
+  jv.setUint32(8, tapeMeta.finalScore, true);
+  jv.setUint32(12, tapeMeta.finalRngState, true);
+  jv.setUint32(16, tapeMeta.checksum, true);
+  jv.setUint32(20, EXPECTED_RULES_DIGEST, true);
+  const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", expectedJournal));
+  // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
+  const imageIdBytes = hexToUint8Array(config.imageId as Hex);
+  const predicateData = new Uint8Array(64);
+  predicateData.set(imageIdBytes, 0);
+  predicateData.set(journalDigest, 32);
+  const predicateDataHex = `0x${uint8ArrayToHex(predicateData)}` as Hex;
+
   const proofRequest: ProofRequest = {
     id: requestId,
     requirements: {
@@ -83,8 +105,8 @@ export async function submitToBoundless(
         gasLimit: 0n,
       },
       predicate: {
-        predicateType: 1, // PrefixMatch — match any journal from this image
-        data: config.imageId,
+        predicateType: 0, // DigestMatch — proof must produce this exact journal from this image
+        data: predicateDataHex,
       },
       selector: "0x73c457ba", // Groth16V3_0 — Stellar requires standalone Groth16 proofs
     },
@@ -173,6 +195,7 @@ export async function submitToBoundless(
     inputType: inputType === 1 ? "url" : "inline",
     maxPrice: config.maxPrice.toString(),
     chainId: config.chainId.toString(),
+    predicateData: predicateDataHex,
   });
 
   // 6. Also submit to the off-chain order stream so provers discover it faster.
