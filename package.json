@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js dev",
-    "dev:rpc-proxy": "node scripts/dev-rpc-proxy.mjs",
+    "dev:rpc-proxy": "bun run scripts/dev-rpc-proxy.ts",
     "build": "vite build",
     "preview": "node node_modules/vite/bin/vite.js preview",
     "deploy": "vite build && wrangler deploy",
@@ -14,7 +14,8 @@
     "typecheck:app": "tsc --noEmit -p tsconfig.json",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
-    "typecheck": "bun run typegen:check && bun run typecheck:app && bun run typecheck:node && bun run typecheck:worker",
+    "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
+    "typecheck": "bun run typegen:check && bun run typecheck:app && bun run typecheck:node && bun run typecheck:worker && bun run typecheck:scripts",
     "lint": "oxlint src worker",
     "lint:fix": "oxlint src worker --fix",
     "format": "oxfmt src worker --write",

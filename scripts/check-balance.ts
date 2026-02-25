@@ -2,7 +2,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-const lines = readFileSync(resolve(import.meta.dir, ".env"), "utf-8").split("\n");
+const lines = readFileSync(resolve(import.meta.dirname, ".env"), "utf-8").split("\n");
 const vars: Record<string, string> = {};
 for (const line of lines) {
   const t = line.trim();

@@ -8,7 +8,36 @@ const RPC_URL = process.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.
 
 const SCORE_EVENT_KEYS = new Set(["score_submitted"]);
 
-function normalizeEventKey(value) {
+interface RawEvent {
+  id?: string;
+  topic?: string[];
+  value?: string;
+  txHash?: string;
+  operationIndex?: number;
+  ledger?: number;
+  ledgerClosedAt?: string;
+}
+
+interface NormalizedEvent {
+  id: string | undefined;
+  claimant: string;
+  seed: number;
+  frame_count: number;
+  final_score: number;
+  final_rng_state: number;
+  tape_checksum: number;
+  rules_digest: number;
+  previous_best: number;
+  new_best: number;
+  minted_delta: number;
+  journal_digest: string;
+  tx_hash: string | null;
+  event_index: number;
+  ledger: number | null;
+  closed_at: string | null;
+}
+
+function normalizeEventKey(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -16,7 +45,7 @@ function normalizeEventKey(value) {
   return value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
 }
 
-function decodeScValBase64(base64) {
+function decodeScValBase64(base64: unknown): unknown {
   if (typeof base64 !== "string" || base64.length === 0) {
     return null;
   }
@@ -30,7 +59,7 @@ function decodeScValBase64(base64) {
   }
 }
 
-function toInt(value) {
+function toInt(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.trunc(value);
   }
@@ -50,7 +79,7 @@ function toInt(value) {
   return null;
 }
 
-function toHexString(value) {
+function toHexString(value: unknown): string | null {
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -73,7 +102,7 @@ function toHexString(value) {
   return null;
 }
 
-function normalizeDigestHex(value) {
+function normalizeDigestHex(value: unknown): string | null {
   const hexRaw = toHexString(value);
   if (!hexRaw) {
     return null;
@@ -86,7 +115,7 @@ function normalizeDigestHex(value) {
   return normalized.toLowerCase();
 }
 
-function readMapValue(mapLike, keys) {
+function readMapValue(mapLike: unknown, keys: string[]): unknown {
   if (mapLike instanceof Map) {
     for (const key of keys) {
       if (mapLike.has(key)) {
@@ -106,7 +135,7 @@ function readMapValue(mapLike, keys) {
   if (mapLike && typeof mapLike === "object") {
     for (const key of keys) {
       if (Object.prototype.hasOwnProperty.call(mapLike, key)) {
-        return mapLike[key];
+        return (mapLike as Record<string, unknown>)[key];
       }
     }
   }
@@ -114,7 +143,7 @@ function readMapValue(mapLike, keys) {
   return undefined;
 }
 
-function normalizeEvent(raw) {
+function normalizeEvent(raw: RawEvent): NormalizedEvent | null {
   const topic =
     Array.isArray(raw.topic) && raw.topic.length > 0 ? decodeScValBase64(raw.topic[0]) : null;
   const eventName = normalizeEventKey(typeof topic === "string" ? topic : null);
@@ -182,13 +211,25 @@ function normalizeEvent(raw) {
     minted_delta: mintedDelta,
     journal_digest: journalDigest,
     tx_hash: typeof raw.txHash === "string" ? raw.txHash : null,
-    event_index: Number.isFinite(raw.operationIndex) ? raw.operationIndex : 0,
-    ledger: Number.isFinite(raw.ledger) ? raw.ledger : null,
+    event_index: raw.operationIndex != null && Number.isFinite(raw.operationIndex) ? raw.operationIndex : 0,
+    ledger: raw.ledger != null && Number.isFinite(raw.ledger) ? raw.ledger : null,
     closed_at: typeof raw.ledgerClosedAt === "string" ? raw.ledgerClosedAt : null,
   };
 }
 
-async function handleEvents(url, res) {
+interface RpcEventFilter {
+  type: string;
+  contractIds?: string[];
+}
+
+interface RpcGetEventsParams {
+  filters: RpcEventFilter[];
+  pagination: { limit: number; cursor?: string };
+  startLedger?: number;
+  endLedger?: number;
+}
+
+async function handleEvents(url: URL, res: http.ServerResponse): Promise<void> {
   const requestedEventName = url.searchParams.get("event_name");
   const requestedEventKey = normalizeEventKey(requestedEventName || "score_submitted");
   if (!requestedEventKey || !SCORE_EVENT_KEYS.has(requestedEventKey)) {
@@ -203,7 +244,7 @@ async function handleEvents(url, res) {
   const toLedgerRaw = url.searchParams.get("to_ledger");
   const contractId = url.searchParams.get("contract_id");
 
-  const pagination = {
+  const pagination: { limit: number; cursor?: string } = {
     limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 200,
   };
 
@@ -211,7 +252,7 @@ async function handleEvents(url, res) {
     pagination.cursor = cursor.trim();
   }
 
-  const params = {
+  const params: RpcGetEventsParams = {
     filters: [
       {
         type: "contract",
@@ -221,7 +262,7 @@ async function handleEvents(url, res) {
   };
 
   if (contractId && contractId.trim().length > 0) {
-    params.filters[0].contractIds = [contractId.trim()];
+    params.filters[0]!.contractIds = [contractId.trim()];
   }
 
   const fromLedger = Number.parseInt(fromLedgerRaw || "", 10);
@@ -253,9 +294,11 @@ async function handleEvents(url, res) {
     return;
   }
 
-  const payload = await rpcResponse.json();
-  const events = Array.isArray(payload?.result?.events) ? payload.result.events : [];
-  const normalized = [];
+  const payload = (await rpcResponse.json()) as {
+    result?: { events?: RawEvent[]; cursor?: string; latestLedger?: number };
+  };
+  const events = Array.isArray(payload?.result?.events) ? payload.result!.events : [];
+  const normalized: NormalizedEvent[] = [];
   for (const event of events) {
     const mapped = normalizeEvent(event);
     if (mapped) {

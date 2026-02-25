@@ -1,6 +1,4 @@
-#!/usr/bin/env node
-
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 
 const host = process.env.RPC_PROXY_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.RPC_PROXY_PORT ?? "8789", 10);
@@ -11,10 +9,10 @@ if (!Number.isFinite(port) || port <= 0) {
   throw new Error(`invalid RPC_PROXY_PORT: ${process.env.RPC_PROXY_PORT}`);
 }
 
-async function readBody(req) {
-  const chunks = [];
+async function readBody(req: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
   for await (const chunk of req) {
-    chunks.push(chunk);
+    chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
 }
@@ -38,7 +36,7 @@ const server = createServer(async (req, res) => {
         "content-type": "application/json",
         accept: "application/json",
       },
-      body,
+      body: new Uint8Array(body),
       signal: controller.signal,
     });
 
@@ -65,4 +63,3 @@ server.listen(port, host, () => {
   console.log(`[dev-rpc-proxy] listening on http://${host}:${port}`);
   console.log(`[dev-rpc-proxy] forwarding to ${targetUrl}`);
 });
-
