@@ -50,6 +50,7 @@ export interface WorkerEnv {
   BOUNDLESS_PRIVATE_KEY?: string;
   BOUNDLESS_IMAGE_URL?: string;
   BOUNDLESS_IMAGE_ID?: string;
+  BOUNDLESS_MIN_PRICE?: string;
   BOUNDLESS_MAX_PRICE?: string;
   BOUNDLESS_POLL_INTERVAL_MS?: string;
   BOUNDLESS_POLL_TIMEOUT_MS?: string;

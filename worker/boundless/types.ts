@@ -41,4 +41,3 @@ export interface FulfillmentData {
   seal: Uint8Array;
   journal: Uint8Array;
 }
-

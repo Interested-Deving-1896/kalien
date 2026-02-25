@@ -14,7 +14,7 @@ import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
 
-const DEFAULT_MAX_FRAMES = 18_000;
+const DEFAULT_MAX_FRAMES = 36_000;
 
 // Parse arguments
 let seed = Date.now();
@@ -96,7 +96,7 @@ console.log();
 console.log("Verifying tape...");
 
 const verifyData = new Uint8Array(readFileSync(outputPath));
-const tape = deserializeTape(verifyData, DEFAULT_MAX_FRAMES);
+const tape = deserializeTape(verifyData, maxFrames);
 
 const verifyGame = new AsteroidsGame({ headless: true, seed: tape.header.seed });
 verifyGame.startNewGame(tape.header.seed);

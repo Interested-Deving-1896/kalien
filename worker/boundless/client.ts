@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   createWalletClient,
+  decodeAbiParameters,
   defineChain,
   hashTypedData,
   http,
@@ -9,10 +10,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 import { safeErrorMessage, sleep } from "../utils";
-import {
-  MAX_INLINE_STDIN_BYTES,
-  type BoundlessConfig,
-} from "./config";
+import { MAX_INLINE_STDIN_BYTES, type BoundlessConfig } from "./config";
 import { boundlessMarketAbi, eip712Types } from "./abi";
 import { encodeStdin } from "./stdin";
 import { uploadInput } from "./storage";
@@ -35,6 +33,7 @@ export async function submitToBoundless(
   // 2. Determine input type: upload to IPFS if too large for inline, or if IPFS is available
   let inputType: number;
   let inputData: Hex;
+  let ipfsCid: string | undefined;
 
   if (stdinBytes.length > MAX_INLINE_STDIN_BYTES) {
     // Must upload to IPFS — inline data would be rejected by the order stream
@@ -46,11 +45,16 @@ export async function submitToBoundless(
     }
 
     try {
-      const stdinUrl = await uploadInput(config.pinataJwt, stdinBytes);
-      const urlBytes = new TextEncoder().encode(stdinUrl);
+      const upload = await uploadInput(config.pinataJwt, stdinBytes);
+      ipfsCid = upload.cid;
+      const urlBytes = new TextEncoder().encode(upload.url);
       inputData = `0x${uint8ArrayToHex(new Uint8Array(urlBytes))}` as Hex;
       inputType = 1; // Url
-      console.log("[boundless] uploaded stdin to IPFS", { url: stdinUrl, stdinBytes: stdinBytes.length });
+      console.log("[boundless] uploaded stdin to IPFS", {
+        url: upload.url,
+        cid: ipfsCid,
+        stdinBytes: stdinBytes.length,
+      });
     } catch (error) {
       return {
         type: "retry",
@@ -82,7 +86,7 @@ export async function submitToBoundless(
         predicateType: 1, // PrefixMatch — match any journal from this image
         data: config.imageId,
       },
-      selector: "0x00000000",
+      selector: "0x73c457ba", // Groth16V3_0 — Stellar requires standalone Groth16 proofs
     },
     imageUrl: config.imageUrl,
     input: {
@@ -90,12 +94,12 @@ export async function submitToBoundless(
       data: inputData,
     },
     offer: {
-      minPrice: 0n,                             // Start at zero — reverse Dutch auction
-      maxPrice: config.maxPrice,                 // Ceiling the ramp reaches
-      rampUpStart,                               // Flat period before ramp begins
-      rampUpPeriod: config.rampPeriodSec,        // Seconds for 0 → maxPrice
-      lockTimeout: config.lockTimeoutSec,        // Prover deadline (from rampUpStart)
-      timeout: config.timeoutSec,                  // Request expiry (from rampUpStart)
+      minPrice: config.minPrice, // Reverse Dutch auction floor
+      maxPrice: config.maxPrice, // Ceiling the ramp reaches
+      rampUpStart, // Flat period before ramp begins
+      rampUpPeriod: config.rampPeriodSec, // Seconds for 0 → maxPrice
+      lockTimeout: config.lockTimeoutSec, // Prover deadline (from rampUpStart)
+      timeout: config.timeoutSec, // Request expiry (from rampUpStart)
       lockCollateral: 0n,
     },
   };
@@ -185,10 +189,15 @@ export async function submitToBoundless(
     jobId: requestIdHex,
     statusUrl: `boundless:${requestIdHex}`,
     segmentLimitPo2: 0,
+    ipfsCid,
   };
 }
 
-const PREDICATE_TYPE_NAMES: Record<number, string> = { 0: "DigestMatch", 1: "PrefixMatch", 2: "ClaimDigestMatch" };
+const PREDICATE_TYPE_NAMES: Record<number, string> = {
+  0: "DigestMatch",
+  1: "PrefixMatch",
+  2: "ClaimDigestMatch",
+};
 const INPUT_TYPE_NAMES: Record<number, string> = { 0: "Inline", 1: "Url" };
 
 /**
@@ -224,7 +233,8 @@ async function submitToOrderStream(
           gasLimit: `0x${request.requirements.callback.gasLimit.toString(16)}`,
         },
         predicate: {
-          predicateType: PREDICATE_TYPE_NAMES[request.requirements.predicate.predicateType] ?? "DigestMatch",
+          predicateType:
+            PREDICATE_TYPE_NAMES[request.requirements.predicate.predicateType] ?? "DigestMatch",
           data: request.requirements.predicate.data,
         },
         selector: request.requirements.selector,
@@ -309,29 +319,43 @@ export async function pollBoundlessOnce(
     };
   }
 
-  // 2. Get the fulfillment event logs
+  // 2. Get the ProofDelivered event logs (contains seal + journal)
   let fulfillmentData: FulfillmentData;
   try {
     const currentBlock = await publicClient.getBlockNumber();
-    // Search the last ~24 hours of blocks (Base ~2s/block ≈ 43200, Eth ~12s ≈ 7200).
-    // Use a generous window to avoid missing events on fast chains.
-    const LOG_SEARCH_WINDOW = 50_000n;
-    const fromBlock = config.deploymentBlock > currentBlock - LOG_SEARCH_WINDOW
-      ? config.deploymentBlock
-      : currentBlock - LOG_SEARCH_WINDOW;
+    // Search recent blocks for the event. Base public RPC limits eth_getLogs to
+    // 10,000 blocks, so use 9,900 (~5.5 hours on Base at ~2s/block).
+    const LOG_SEARCH_WINDOW = 9_900n;
+    const fromBlock =
+      config.deploymentBlock > currentBlock - LOG_SEARCH_WINDOW
+        ? config.deploymentBlock
+        : currentBlock - LOG_SEARCH_WINDOW;
 
     const logs = await publicClient.getLogs({
       address: config.marketAddress,
       event: {
         type: "event",
-        name: "RequestFulfilled",
+        name: "ProofDelivered",
         inputs: [
-          { name: "id", type: "uint256", indexed: true },
-          { name: "fulfillment", type: "bytes", indexed: false },
+          { name: "requestId", type: "uint256", indexed: true },
+          { name: "prover", type: "address", indexed: true },
+          {
+            name: "fulfillment",
+            type: "tuple",
+            indexed: false,
+            components: [
+              { name: "id", type: "uint256" },
+              { name: "requestDigest", type: "bytes32" },
+              { name: "claimDigest", type: "bytes32" },
+              { name: "fulfillmentDataType", type: "uint8" },
+              { name: "fulfillmentData", type: "bytes" },
+              { name: "seal", type: "bytes" },
+            ],
+          },
         ],
       },
       args: {
-        id: requestId,
+        requestId: requestId,
       },
       fromBlock,
       toBlock: currentBlock,
@@ -340,20 +364,20 @@ export async function pollBoundlessOnce(
     if (logs.length === 0) {
       return {
         type: "retry",
-        message: "request reported as fulfilled but no RequestFulfilled event found",
+        message: "request reported as fulfilled but no ProofDelivered event found",
       };
     }
 
     const log = logs[0];
-    const fulfillmentBytes = log.args.fulfillment;
-    if (!fulfillmentBytes) {
+    const fulfillment = log.args.fulfillment;
+    if (!fulfillment) {
       return {
         type: "retry",
-        message: "RequestFulfilled event missing fulfillment data",
+        message: "ProofDelivered event missing fulfillment data",
       };
     }
 
-    fulfillmentData = decodeFulfillment(fulfillmentBytes);
+    fulfillmentData = decodeFulfillmentFromEvent(fulfillment);
   } catch (error) {
     return {
       type: "retry",
@@ -404,45 +428,37 @@ export async function pollBoundless(
 }
 
 /**
- * Decode the fulfillment bytes from the RequestFulfilled event.
+ * Decode a ProofDelivered event's fulfillment tuple into seal + journal.
  *
- * Fulfillment encoding (ABI-encoded struct):
- * - journal_digest (bytes32)
- * - seal (bytes, dynamic)
- * - journal (bytes, dynamic)
+ * The Fulfillment struct has:
+ *   { id, requestDigest, claimDigest, fulfillmentDataType, fulfillmentData, seal }
+ *
+ * When fulfillmentDataType == 1 (ImageIdAndJournal), fulfillmentData is
+ * ABI-encoded: (bytes32 imageId, bytes journal).
  */
-function decodeFulfillment(fulfillmentHex: Hex): FulfillmentData {
-  const bytes = hexToUint8Array(fulfillmentHex);
+function decodeFulfillmentFromEvent(fulfillment: {
+  fulfillmentDataType: number;
+  fulfillmentData: Hex;
+  seal: Hex;
+}): FulfillmentData {
+  const seal = hexToUint8Array(fulfillment.seal);
 
-  // ABI-encoded: first 32 bytes = journal_digest, then dynamic offsets for seal and journal
-  // Skip journal_digest (32 bytes)
-  // offset to seal (32 bytes at position 32)
-  // offset to journal (32 bytes at position 64)
-  if (bytes.length < 96) {
-    throw new Error(`fulfillment data too short: ${bytes.length} bytes`);
+  if (fulfillment.fulfillmentDataType !== 1) {
+    throw new Error(
+      `unexpected fulfillmentDataType: ${fulfillment.fulfillmentDataType} (expected 1 = ImageIdAndJournal)`,
+    );
   }
 
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // fulfillmentData is abi.encode(bytes32 imageId, bytes journal)
+  const [, journalHex] = decodeAbiParameters(
+    [
+      { name: "imageId", type: "bytes32" },
+      { name: "journal", type: "bytes" },
+    ],
+    fulfillment.fulfillmentData,
+  );
 
-  const sealOffset = Number(readUint256(view, 32));
-  const journalOffset = Number(readUint256(view, 64));
-
-  const sealLen = Number(readUint256(view, sealOffset));
-  const seal = bytes.slice(sealOffset + 32, sealOffset + 32 + sealLen);
-
-  const journalLen = Number(readUint256(view, journalOffset));
-  const journal = bytes.slice(journalOffset + 32, journalOffset + 32 + journalLen);
-
-  return { seal, journal };
-}
-
-function readUint256(view: DataView, offset: number): bigint {
-  // Read 32 bytes as big-endian uint256
-  let result = 0n;
-  for (let i = 0; i < 32; i++) {
-    result = (result << 8n) | BigInt(view.getUint8(offset + i));
-  }
-  return result;
+  return { seal, journal: hexToUint8Array(journalHex as Hex) };
 }
 
 function hexToUint8Array(hex: Hex): Uint8Array {

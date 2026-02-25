@@ -8,31 +8,51 @@ export const boundlessMarketAbi = [
         type: "tuple",
         components: [
           { name: "id", type: "uint256" },
-          { name: "requirements", type: "tuple", components: [
-            { name: "callback", type: "tuple", components: [
-              { name: "addr", type: "address" },
-              { name: "gasLimit", type: "uint96" },
-            ]},
-            { name: "predicate", type: "tuple", components: [
-              { name: "predicateType", type: "uint8" },
-              { name: "data", type: "bytes" },
-            ]},
-            { name: "selector", type: "bytes4" },
-          ]},
+          {
+            name: "requirements",
+            type: "tuple",
+            components: [
+              {
+                name: "callback",
+                type: "tuple",
+                components: [
+                  { name: "addr", type: "address" },
+                  { name: "gasLimit", type: "uint96" },
+                ],
+              },
+              {
+                name: "predicate",
+                type: "tuple",
+                components: [
+                  { name: "predicateType", type: "uint8" },
+                  { name: "data", type: "bytes" },
+                ],
+              },
+              { name: "selector", type: "bytes4" },
+            ],
+          },
           { name: "imageUrl", type: "string" },
-          { name: "input", type: "tuple", components: [
-            { name: "inputType", type: "uint8" },
-            { name: "data", type: "bytes" },
-          ]},
-          { name: "offer", type: "tuple", components: [
-            { name: "minPrice", type: "uint256" },
-            { name: "maxPrice", type: "uint256" },
-            { name: "rampUpStart", type: "uint64" },
-            { name: "rampUpPeriod", type: "uint32" },
-            { name: "lockTimeout", type: "uint32" },
-            { name: "timeout", type: "uint32" },
-            { name: "lockCollateral", type: "uint256" },
-          ]},
+          {
+            name: "input",
+            type: "tuple",
+            components: [
+              { name: "inputType", type: "uint8" },
+              { name: "data", type: "bytes" },
+            ],
+          },
+          {
+            name: "offer",
+            type: "tuple",
+            components: [
+              { name: "minPrice", type: "uint256" },
+              { name: "maxPrice", type: "uint256" },
+              { name: "rampUpStart", type: "uint64" },
+              { name: "rampUpPeriod", type: "uint32" },
+              { name: "lockTimeout", type: "uint32" },
+              { name: "timeout", type: "uint32" },
+              { name: "lockCollateral", type: "uint256" },
+            ],
+          },
         ],
       },
       { name: "signature", type: "bytes" },
@@ -56,10 +76,23 @@ export const boundlessMarketAbi = [
   },
   {
     type: "event",
-    name: "RequestFulfilled",
+    name: "ProofDelivered",
     inputs: [
-      { name: "id", type: "uint256", indexed: true },
-      { name: "fulfillment", type: "bytes", indexed: false },
+      { name: "requestId", type: "uint256", indexed: true },
+      { name: "prover", type: "address", indexed: true },
+      {
+        name: "fulfillment",
+        type: "tuple",
+        indexed: false,
+        components: [
+          { name: "id", type: "uint256" },
+          { name: "requestDigest", type: "bytes32" },
+          { name: "claimDigest", type: "bytes32" },
+          { name: "fulfillmentDataType", type: "uint8" },
+          { name: "fulfillmentData", type: "bytes" },
+          { name: "seal", type: "bytes" },
+        ],
+      },
     ],
   },
 ] as const;
