@@ -43,8 +43,9 @@ export interface BoundlessConfig {
   privateKey: `0x${string}`;
   imageUrl: string;
   imageId: `0x${string}`;
-  minPrice: bigint;
-  maxPrice: bigint;
+  // USD-denominated pricing — resolved to wei at submission time via Chainlink ETH/USD feed
+  maxPriceUsd: number;
+  minPriceUsd: number;
   pollIntervalMs: number;
   pollTimeoutMs: number;
   // Auction shape (reverse Dutch auction) — all in seconds (contract uses block.timestamp)
@@ -91,10 +92,12 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     ? BigInt(deploymentBlockRaw)
     : (knownDeployment?.deploymentBlock ?? DEFAULT_DEPLOYMENT.deploymentBlock);
 
-  const maxPriceRaw = env.BOUNDLESS_MAX_PRICE?.trim();
-  const maxPrice = maxPriceRaw ? BigInt(maxPriceRaw) : 5000000000000n; // 0.000005 ETH default (~$0.01)
-  const minPriceRaw = env.BOUNDLESS_MIN_PRICE?.trim();
-  const minPrice = minPriceRaw ? BigInt(minPriceRaw) : 50000000000n; // ~1% of default max (~$0.0001)
+  const maxPriceUsd = env.BOUNDLESS_MAX_PRICE_USD
+    ? Number.parseFloat(env.BOUNDLESS_MAX_PRICE_USD)
+    : 0.02; // $0.02 default — resolved to wei at submission time via Chainlink
+  const minPriceUsd = env.BOUNDLESS_MIN_PRICE_USD
+    ? Number.parseFloat(env.BOUNDLESS_MIN_PRICE_USD)
+    : 0.0002; // ~1% of max — auction floor
 
   // Auction shape — reverse Dutch auction from minPrice to maxPrice.
   // All timing values are in SECONDS (the contract uses block.timestamp).
@@ -127,8 +130,8 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     privateKey: normalizedKey as `0x${string}`,
     imageUrl,
     imageId: normalizedImageId as `0x${string}`,
-    minPrice,
-    maxPrice,
+    maxPriceUsd,
+    minPriceUsd,
     pollIntervalMs,
     pollTimeoutMs,
     flatPeriodSec,

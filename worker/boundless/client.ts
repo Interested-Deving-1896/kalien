@@ -19,6 +19,7 @@ import type { FulfillmentData, ProofRequest } from "./types";
 import { adaptFulfillmentToProverResponse } from "./adapter";
 import { parseAndValidateTape } from "../tape";
 import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../constants";
+import { fetchEthPriceUsd, usdToWei } from "./pricing";
 
 /**
  * Submit a tape to Boundless for proving.
@@ -29,7 +30,29 @@ export async function submitToBoundless(
 ): Promise<ProverSubmitResult> {
   const account = privateKeyToAccount(config.privateKey);
 
-  // 1. Encode stdin
+  // 1. Resolve USD pricing to wei via Chainlink ETH/USD feed
+  let ethPriceUsd: number;
+  let minPrice: bigint;
+  let maxPrice: bigint;
+  try {
+    ethPriceUsd = await fetchEthPriceUsd(config.rpcUrl, Number(config.chainId));
+    minPrice = usdToWei(config.minPriceUsd, ethPriceUsd);
+    maxPrice = usdToWei(config.maxPriceUsd, ethPriceUsd);
+    console.log("[boundless] ETH price", {
+      ethPriceUsd: ethPriceUsd.toFixed(2),
+      maxPriceUsd: config.maxPriceUsd,
+      maxPriceWei: maxPrice.toString(),
+      minPriceUsd: config.minPriceUsd,
+      minPriceWei: minPrice.toString(),
+    });
+  } catch (error) {
+    return {
+      type: "retry",
+      message: `failed fetching ETH price for USD pricing: ${safeErrorMessage(error)}`,
+    };
+  }
+
+  // 2. Encode stdin
   const stdinBytes = encodeStdin(tapeBytes);
 
   // 2. Determine input type: upload to IPFS if too large for inline, or if IPFS is available
@@ -116,8 +139,8 @@ export async function submitToBoundless(
       data: inputData,
     },
     offer: {
-      minPrice: config.minPrice, // Reverse Dutch auction floor
-      maxPrice: config.maxPrice, // Ceiling the ramp reaches
+      minPrice, // Reverse Dutch auction floor (resolved from USD)
+      maxPrice, // Ceiling the ramp reaches (resolved from USD)
       rampUpStart, // Flat period before ramp begins
       rampUpPeriod: config.rampPeriodSec, // Seconds for 0 → maxPrice
       lockTimeout: config.lockTimeoutSec, // Prover deadline (from rampUpStart)
@@ -171,7 +194,7 @@ export async function submitToBoundless(
       abi: boundlessMarketAbi,
       functionName: "submitRequest",
       args: [proofRequest, signature],
-      value: config.maxPrice,
+      value: maxPrice,
     });
   } catch (error) {
     const msg = safeErrorMessage(error);
@@ -193,7 +216,7 @@ export async function submitToBoundless(
     txHash,
     stdinBytes: stdinBytes.length,
     inputType: inputType === 1 ? "url" : "inline",
-    maxPrice: config.maxPrice.toString(),
+    maxPriceWei: maxPrice.toString(),
     chainId: config.chainId.toString(),
     predicateData: predicateDataHex,
   });
