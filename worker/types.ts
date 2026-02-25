@@ -1,3 +1,16 @@
+export type ProverBackend = "boundless" | "vast";
+
+export interface ProverAttempt {
+  index: number;            // 0-based attempt index
+  backend: ProverBackend;
+  startedAt: string;        // ISO timestamp
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  proverJobId: string | null;
+  statusUrl: string | null; // "boundless:{requestId}" or Vast.ai job URL
+}
+
 export type ProofJobStatus =
   | "queued"
   | "dispatching"
@@ -100,6 +113,7 @@ export interface ProofJobRecord {
   tape: ProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
+  proverAttempts: ProverAttempt[];
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
@@ -196,6 +210,7 @@ export interface PublicProofJob {
   tape: PublicProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
+  proverAttempts: ProverAttempt[];
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;

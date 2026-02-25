@@ -39,7 +39,7 @@
 		"ALLOW_INSECURE_PROVER_URL": "0",
 		// Gateway limits
 		"MAX_TAPE_BYTES": "2097152",
-		"MAX_JOB_WALL_TIME_MS": "660000",
+		"MAX_JOB_WALL_TIME_MS": "21600000",
 		"MAX_COMPLETED_JOBS": "200",
 		"COMPLETED_JOB_RETENTION_MS": "86400000",
 		// Relayer (OpenZeppelin Channels testnet)
@@ -49,7 +49,7 @@
 		// Boundless proving (alternative to Vast.ai prover)
 		// Secrets (BOUNDLESS_PRIVATE_KEY, PINATA_JWT) go in .dev.vars / `wrangler secret`
 		// Defaults target Base Mainnet (chain 8453). Override BOUNDLESS_CHAIN_ID for testnets.
-		// "BOUNDLESS_RPC_URL": "https://base-mainnet.public.blastapi.io",
+		"BOUNDLESS_RPC_URL": "https://base-mainnet.public.blastapi.io",
 		"BOUNDLESS_IMAGE_URL": "https://gateway.pinata.cloud/ipfs/QmRCff7XUQm4rYDALBBxMZmv5yMRG6nHXUNCjgd8JdCMwr",
 		"BOUNDLESS_IMAGE_ID": "0xc2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5e3a0",
 		"BOUNDLESS_MIN_PRICE": "50000000000",

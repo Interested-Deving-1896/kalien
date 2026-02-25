@@ -3,6 +3,7 @@ import {
   API_TIMEOUT_GET_ARTIFACT_MS,
   API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
   API_TIMEOUT_GET_PROOF_MS,
+  API_TIMEOUT_LIST_JOBS_MS,
   API_TIMEOUT_SUBMIT_PROOF_MS,
 } from "../consts";
 
@@ -34,6 +35,19 @@ export interface QueueTracking {
   nextRetryAt: string | null;
 }
 
+export type ProverBackend = "boundless" | "vast";
+
+export interface ProverAttempt {
+  index: number;
+  backend: ProverBackend;
+  startedAt: string;
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  proverJobId: string | null;
+  statusUrl: string | null;
+}
+
 export interface ProverTracking {
   jobId: string | null;
   status: "queued" | "running" | "succeeded" | "failed" | null;
@@ -41,6 +55,7 @@ export interface ProverTracking {
   lastPolledAt: string | null;
   pollingErrors: number;
   recoveryAttempts: number;
+  ipfsCid: string | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -98,6 +113,7 @@ export interface ProofJobPublic {
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
+  proverAttempts: ProverAttempt[];
 }
 
 export interface SubmitProofJobResponse {
@@ -298,4 +314,34 @@ export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
   }
 
   return parseJson<GatewayHealthResponse>(response);
+}
+
+export interface ListProofJobsResponse {
+  success: true;
+  jobs: ProofJobPublic[];
+  total: number;
+  offset: number;
+  limit: number;
+  next_offset: number | null;
+}
+
+export async function listProofJobs(
+  claimantAddress: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ListProofJobsResponse> {
+  const params = new URLSearchParams({ address: claimantAddress });
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.offset != null) params.set("offset", String(options.offset));
+
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs?${params}`,
+    { method: "GET" },
+    API_TIMEOUT_LIST_JOBS_MS,
+  );
+  if (!response.ok) throw await parseError(response);
+  return parseJson<ListProofJobsResponse>(response);
+}
+
+export function getTapeDownloadUrl(jobId: string): string {
+  return `/api/proofs/jobs/${jobId}/tape`;
 }

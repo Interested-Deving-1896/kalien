@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "/", label: "Game" },
+  { href: "/proofs", label: "Proofs" },
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
 

@@ -26,7 +26,7 @@ export interface UseProofJobReturn {
   hasResult: boolean;
   error: string | null;
   friendlyStatus: string;
-  submitRun: (run: CompletedGameRun, claimantAddress: string) => Promise<void>;
+  submitRun: (run: CompletedGameRun, claimantAddress: string) => Promise<boolean>;
   cancel: () => Promise<void>;
   clearError: () => void;
   setError: (message: string) => void;
@@ -75,17 +75,17 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   const hasResult = Boolean(job?.result?.summary);
   const friendlyStatus = getFriendlyStatus(status);
 
-  const submitRun = useCallback(async (run: CompletedGameRun, claimantAddress: string) => {
+  const submitRun = useCallback(async (run: CompletedGameRun, claimantAddress: string): Promise<boolean> => {
     if (!run) {
-      return;
+      return false;
     }
     if (run.record.finalScore <= 0) {
       setError("zero-score runs are not accepted for proving or token minting");
-      return;
+      return false;
     }
     if (claimantAddress.trim().length === 0) {
       setError("connect a smart wallet before submitting a proof");
-      return;
+      return false;
     }
 
     let tapeBytes: Uint8Array;
@@ -99,7 +99,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     } catch (err) {
       const message = err instanceof Error ? err.message : "failed to serialize tape";
       setError(message);
-      return;
+      return false;
     }
 
     setIsSubmitting(true);
@@ -108,6 +108,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     try {
       const response = await submitProofJob(tapeBytes, claimantAddress);
       setJob(response.job);
+      return true;
     } catch (err) {
       if (err instanceof ProofApiError) {
         if (err.activeJob) {
@@ -117,6 +118,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
       } else {
         setError("failed to submit proof job");
       }
+      return false;
     } finally {
       setIsSubmitting(false);
     }

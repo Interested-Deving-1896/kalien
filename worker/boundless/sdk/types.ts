@@ -1,0 +1,143 @@
+/**
+ * Boundless SDK — type definitions.
+ *
+ * These types mirror the Rust SDK's ProofRequest, Fulfillment, and related
+ * structures, adapted for TypeScript/viem.
+ */
+
+// ── On-chain request types ────────────────────────────────────────────────
+
+export interface BoundlessProofRequest {
+  id: bigint;
+  requirements: BoundlessRequirements;
+  imageUrl: string;
+  input: BoundlessInput;
+  offer: BoundlessOffer;
+}
+
+export interface BoundlessRequirements {
+  callback: BoundlessCallback;
+  predicate: BoundlessPredicate;
+  selector: `0x${string}`;
+}
+
+export interface BoundlessPredicate {
+  /** 0=DigestMatch, 1=PrefixMatch, 2=ClaimDigestMatch */
+  predicateType: number;
+  data: `0x${string}`;
+}
+
+export interface BoundlessCallback {
+  addr: `0x${string}`;
+  /** uint96 */
+  gasLimit: bigint;
+}
+
+export interface BoundlessInput {
+  /** 0=Inline, 1=Url */
+  inputType: number;
+  data: `0x${string}`;
+}
+
+export interface BoundlessOffer {
+  minPrice: bigint;
+  maxPrice: bigint;
+  /** uint64 — unix timestamp when the auction ramp begins */
+  rampUpStart: bigint;
+  /** uint32 — seconds for price to ramp from minPrice to maxPrice */
+  rampUpPeriod: number;
+  /** uint32 — seconds from rampUpStart; prover must deliver by this deadline */
+  lockTimeout: number;
+  /** uint32 — seconds from rampUpStart; request expires (lockTimeout + expiry window) */
+  timeout: number;
+  lockCollateral: bigint;
+}
+
+// ── Fulfillment types ─────────────────────────────────────────────────────
+
+export interface BoundlessFulfillmentData {
+  seal: Uint8Array;
+  journal: Uint8Array;
+}
+
+// ── Submit / Poll results ─────────────────────────────────────────────────
+
+export interface BoundlessSubmitResult {
+  /** The hex-formatted request ID (0x-prefixed) */
+  requestId: string;
+  /** The numeric bigint request ID */
+  requestIdBigInt: bigint;
+  /** IPFS CID if input was uploaded to Pinata (undefined for inline) */
+  ipfsCid?: string;
+  /** The on-chain tx hash */
+  txHash: string;
+}
+
+export interface BoundlessPollResult {
+  type: "running" | "success" | "retry" | "fatal";
+  /** Present when type === "success" */
+  fulfillment?: BoundlessFulfillmentData;
+  /** Present when type === "running", "retry", or "fatal" */
+  message?: string;
+  /** Present when type === "running" */
+  status?: "running";
+}
+
+// ── Config types (re-exported from parent config for SDK consumers) ────────
+
+export interface BoundlessClientConfig {
+  rpcUrl: string;
+  privateKey: `0x${string}`;
+  imageUrl: string;
+  /** 0x-prefixed 32-byte image ID */
+  imageId: `0x${string}`;
+  minPrice: bigint;
+  maxPrice: bigint;
+  pollIntervalMs: number;
+  pollTimeoutMs: number;
+  /** Seconds before price ramp begins (prover discovery window) */
+  flatPeriodSec: number;
+  /** Seconds for price to ramp linearly from minPrice to maxPrice */
+  rampPeriodSec: number;
+  /** Seconds from rampUpStart for prover to deliver proof */
+  lockTimeoutSec: number;
+  /** Total request expiry from rampUpStart */
+  timeoutSec: number;
+  chainId: bigint;
+  marketAddress: `0x${string}`;
+  orderStreamUrl: string;
+  deploymentBlock: bigint;
+  /** Pinata JWT for IPFS uploads (required if stdin > MAX_INLINE_STDIN_BYTES) */
+  pinataJwt: string | null;
+}
+
+// ── Internal order stream format ─────────────────────────────────────────
+
+export interface OrderStreamRequest {
+  request: {
+    id: string;
+    requirements: {
+      callback: { addr: string; gasLimit: string };
+      predicate: { predicateType: string; data: string };
+      selector: string;
+    };
+    imageUrl: string;
+    input: { inputType: string; data: string };
+    offer: {
+      minPrice: string;
+      maxPrice: string;
+      rampUpStart: number;
+      rampUpPeriod: number;
+      lockTimeout: number;
+      timeout: number;
+      lockCollateral: string;
+    };
+  };
+  request_digest: string;
+  signature: {
+    r: string;
+    s: string;
+    yParity: string;
+    v: string;
+  };
+}

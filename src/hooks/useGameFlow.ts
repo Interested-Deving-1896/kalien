@@ -124,7 +124,10 @@ export function useGameFlow(): UseGameFlowReturn {
     if (!latestRun) {
       return;
     }
-    await proof.submitRun(latestRun, wallet.address);
+    const success = await proof.submitRun(latestRun, wallet.address);
+    if (success) {
+      window.location.href = "/proofs";
+    }
   }, [latestRun, proof.submitRun, wallet.address]);
 
   const submitOnChain = useCallback(async () => {

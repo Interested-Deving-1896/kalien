@@ -22,10 +22,11 @@ export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
 export const OPPORTUNISTIC_POLL_STALE_MS = 5_000;
 // End-to-end job lifetime cap in the gateway (includes queue + polling + storage).
 // Keep slightly above the prover timeout to allow status propagation + artifact writes.
-export const DEFAULT_MAX_JOB_WALL_TIME_MS = 11 * 60_000; // 11 minutes
+export const DEFAULT_MAX_JOB_WALL_TIME_MS = 6 * 60 * 60_000; // 6 hours
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
-export const MAX_PROVER_RECOVERY_ATTEMPTS = 1;
+export const MAX_PROVER_RECOVERY_ATTEMPTS = 0; // replaced by MAX_TOTAL_PROVER_ATTEMPTS fallback system
+export const MAX_TOTAL_PROVER_ATTEMPTS = 4; // 2 Boundless + 2 Vast.ai interleaved
 
 export const DEFAULT_SEGMENT_LIMIT_PO2 = 21;
 
@@ -48,6 +49,7 @@ export const RETRYABLE_JOB_ERROR_CODES = new Set([
 ]);
 
 export const ACTIVE_JOB_KEY = "active_job_id";
+export const ACTIVE_JOBS_KEY = "active_job_ids";
 export const JOB_KEY_PREFIX = "job:";
 export const PROFILE_KEY_PREFIX = "profile:";
 export const LEADERBOARD_EVENT_KEY_PREFIX = "lb:event:";
