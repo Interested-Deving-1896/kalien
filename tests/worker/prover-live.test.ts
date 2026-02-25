@@ -178,20 +178,17 @@ describe("live prover integration", () => {
     expect(summary.journal.final_score).toBe(32860);
   }, 300_000);
 
-  // ───── Zero-score rejection ─────
+  // ───── Short tape acceptance ─────
 
-  it("rejects zero-score tape", async () => {
+  it("accepts short tape (test-short, score=1030)", async () => {
     if (skipIfUnreachable()) return;
 
     const env = makeEnv();
     const tapeBytes = new Uint8Array(readFileSync(join(TAPE_DIR, "test-short.tape")));
 
     const submitResult = await submitToProver(env, tapeBytes, { segmentLimitPo2: 21 });
-    // The prover rejects score=0 with a 4xx — worker client should report fatal
-    expect(submitResult.type).toBe("fatal");
-    if (submitResult.type === "fatal") {
-      expect(submitResult.message).toMatch(/zero.*score|final_score.*zero|score.*greater/i);
-    }
+    // test-short.tape has score=1030 — valid tape, prover should accept
+    expect(submitResult.type).toBe("success");
   });
 
   // ───── Poll nonexistent job ─────
