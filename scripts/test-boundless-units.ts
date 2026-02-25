@@ -4,7 +4,7 @@
  * Usage: bun run scripts/test-boundless-units.ts
  */
 
-import { encodeStdin } from "../worker/boundless/stdin";
+import { encodeStdin, encodeGuestEnvV1 } from "../worker/boundless/stdin";
 import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
 import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../worker/constants";
 import type { FulfillmentData } from "../worker/boundless/types";
@@ -38,75 +38,175 @@ function test(name: string, fn: () => void): void {
 }
 
 // ---------------------------------------------------------------------------
-// encodeStdin tests
+// Helper: decode the V1 msgpack envelope to extract the raw stdin bytes
+// (inverse of encodeGuestEnvV1 — used only for test verification)
+// ---------------------------------------------------------------------------
+
+function decodeGuestEnvV1(encoded: Uint8Array): Uint8Array {
+  let pos = 0;
+  assert(encoded[pos++] === 0x01, "V1 version byte expected");
+  assert(encoded[pos++] === 0x81, "fixmap(1) expected");
+  assert(encoded[pos++] === 0xa5, "fixstr(5) expected");
+  assert(encoded[pos++] === 0x73, "'s' expected"); // s
+  assert(encoded[pos++] === 0x74, "'t' expected"); // t
+  assert(encoded[pos++] === 0x64, "'d' expected"); // d
+  assert(encoded[pos++] === 0x69, "'i' expected"); // i
+  assert(encoded[pos++] === 0x6e, "'n' expected"); // n
+
+  // Read array header
+  let arrLen: number;
+  const arrTag = encoded[pos++];
+  if ((arrTag & 0xf0) === 0x90) {
+    arrLen = arrTag & 0x0f; // fixarray
+  } else if (arrTag === 0xdc) {
+    arrLen = (encoded[pos++] << 8) | encoded[pos++]; // array16
+  } else if (arrTag === 0xdd) {
+    arrLen = (encoded[pos++] << 24) | (encoded[pos++] << 16) | (encoded[pos++] << 8) | encoded[pos++]; // array32
+  } else {
+    throw new Error("unexpected array tag: 0x" + arrTag.toString(16));
+  }
+
+  // Decode individual bytes
+  const result = new Uint8Array(arrLen);
+  for (let i = 0; i < arrLen; i++) {
+    const b = encoded[pos++];
+    if (b < 0x80) {
+      result[i] = b; // positive fixint
+    } else if (b === 0xcc) {
+      result[i] = encoded[pos++]; // uint8
+    } else {
+      throw new Error("unexpected msgpack tag at element " + i + ": 0x" + b.toString(16));
+    }
+  }
+  assert(pos === encoded.length, "unexpected trailing bytes: consumed " + pos + " of " + encoded.length);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// encodeGuestEnvV1 tests (low-level msgpack encoding)
+// ---------------------------------------------------------------------------
+
+console.log("\n=== encodeGuestEnvV1 ===\n");
+
+test("V1 envelope matches known production format for small input", () => {
+  // Reproduce the production example:
+  // stdin bytes: [0,0,64,31,0,0,0,0,77,165,88,66,15,97,191,136]
+  const stdin = new Uint8Array([0, 0, 64, 31, 0, 0, 0, 0, 77, 165, 88, 66, 15, 97, 191, 136]);
+  const result = encodeGuestEnvV1(stdin);
+  const expected = "0181a5737464696edc00100000401f000000004dcca558420f61ccbfcc88";
+  const resultHex = Array.from(result).map(b => b.toString(16).padStart(2, "0")).join("");
+  assert(resultHex === expected, "mismatch:\n  got:      " + resultHex + "\n  expected: " + expected);
+});
+
+test("V1 envelope round-trips correctly for all-low bytes", () => {
+  const stdin = new Uint8Array([0, 1, 2, 127]);
+  const encoded = encodeGuestEnvV1(stdin);
+  const decoded = decodeGuestEnvV1(encoded);
+  assert(decoded.length === 4, "length mismatch");
+  for (let i = 0; i < 4; i++) assert(decoded[i] === stdin[i], "byte " + i + " mismatch");
+});
+
+test("V1 envelope round-trips correctly for all-high bytes", () => {
+  const stdin = new Uint8Array([128, 200, 255]);
+  const encoded = encodeGuestEnvV1(stdin);
+  const decoded = decodeGuestEnvV1(encoded);
+  assert(decoded.length === 3, "length mismatch");
+  for (let i = 0; i < 3; i++) assert(decoded[i] === stdin[i], "byte " + i + " mismatch");
+});
+
+test("V1 high bytes use 2-byte uint8 encoding (0xcc prefix)", () => {
+  const stdin = new Uint8Array([200]); // >= 128
+  const encoded = encodeGuestEnvV1(stdin);
+  // header(8) + fixarray(1) for 1 element + 0xcc + 200 = 11 bytes
+  assert(encoded.length === 8 + 1 + 2, "expected 11, got " + encoded.length);
+});
+
+test("V1 fixarray for stdin <= 15 bytes", () => {
+  const stdin = new Uint8Array(15);
+  const encoded = encodeGuestEnvV1(stdin);
+  assert(encoded[8] === (0x90 | 15), "expected fixarray(15), got 0x" + encoded[8].toString(16));
+});
+
+test("V1 array16 for stdin 16-65535 bytes", () => {
+  const stdin = new Uint8Array(16);
+  const encoded = encodeGuestEnvV1(stdin);
+  assert(encoded[8] === 0xdc, "expected array16 tag 0xdc, got 0x" + encoded[8].toString(16));
+  const len = (encoded[9] << 8) | encoded[10];
+  assert(len === 16, "expected array16 length 16, got " + len);
+});
+
+test("V1 empty stdin produces fixarray(0)", () => {
+  const stdin = new Uint8Array(0);
+  const encoded = encodeGuestEnvV1(stdin);
+  assert(encoded[8] === 0x90, "expected fixarray(0) = 0x90, got 0x" + encoded[8].toString(16));
+  assert(encoded.length === 9, "expected 9 bytes, got " + encoded.length);
+});
+
+// ---------------------------------------------------------------------------
+// encodeStdin tests (full pipeline: tape → stdin → V1 msgpack)
 // ---------------------------------------------------------------------------
 
 console.log("\n=== encodeStdin ===\n");
 
-test("total length = 4 + 4 + paddedLen when tape is already aligned", () => {
-  const tape = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+test("encodeStdin output starts with V1 version byte (0x01)", () => {
+  const tape = new Uint8Array([1, 2, 3, 4]);
   const result = encodeStdin(tape);
-  assert(result.length === 4 + 4 + 8, "expected 16, got " + result.length);
+  assert(result[0] === 0x01, "byte 0: expected 0x01 (V1), got 0x" + result[0].toString(16));
 });
 
-test("total length pads tape to 4-byte alignment", () => {
-  const tape = new Uint8Array([10, 20, 30, 40, 50]);
-  const result = encodeStdin(tape);
-  assert(result.length === 4 + 4 + 8, "expected 16, got " + result.length);
-});
-
-test("first 4 bytes are max_frames as u32 LE (default)", () => {
+test("encodeStdin output decodes to correct max_frames (default)", () => {
   const tape = new Uint8Array([0xAA]);
   const result = encodeStdin(tape);
-  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
+  const stdin = decodeGuestEnvV1(result);
+  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
   const frames = view.getUint32(0, true);
   assert(frames === DEFAULT_BOUNDLESS_MAX_FRAMES, "expected " + DEFAULT_BOUNDLESS_MAX_FRAMES + ", got " + frames);
 });
 
-test("first 4 bytes are max_frames as u32 LE (custom)", () => {
+test("encodeStdin output decodes to correct max_frames (custom)", () => {
   const tape = new Uint8Array([0xBB]);
-  const customFrames = 42;
-  const result = encodeStdin(tape, customFrames);
-  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
+  const result = encodeStdin(tape, 42);
+  const stdin = decodeGuestEnvV1(result);
+  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
   const frames = view.getUint32(0, true);
-  assert(frames === customFrames, "expected " + customFrames + ", got " + frames);
+  assert(frames === 42, "expected 42, got " + frames);
 });
 
-test("bytes 4-7 are tape_len as u32 LE", () => {
+test("encodeStdin output decodes to correct tape_len", () => {
   const tape = new Uint8Array([1, 2, 3, 4, 5]);
   const result = encodeStdin(tape);
-  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
+  const stdin = decodeGuestEnvV1(result);
+  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
   const tapeLen = view.getUint32(4, true);
   assert(tapeLen === 5, "expected 5, got " + tapeLen);
 });
 
-test("bytes 8..N contain the tape data followed by zero padding", () => {
+test("encodeStdin output preserves tape data with padding", () => {
   const tape = new Uint8Array([0x11, 0x22, 0x33]);
   const result = encodeStdin(tape);
-  assert(result[8] === 0x11, "byte 8: expected 0x11, got 0x" + result[8].toString(16));
-  assert(result[9] === 0x22, "byte 9: expected 0x22, got 0x" + result[9].toString(16));
-  assert(result[10] === 0x33, "byte 10: expected 0x33, got 0x" + result[10].toString(16));
-  assert(result[11] === 0x00, "padding byte 11: expected 0x00, got 0x" + result[11].toString(16));
+  const stdin = decodeGuestEnvV1(result);
+  assert(stdin[8] === 0x11, "byte 8: expected 0x11, got 0x" + stdin[8].toString(16));
+  assert(stdin[9] === 0x22, "byte 9: expected 0x22, got 0x" + stdin[9].toString(16));
+  assert(stdin[10] === 0x33, "byte 10: expected 0x33, got 0x" + stdin[10].toString(16));
+  assert(stdin[11] === 0x00, "padding byte 11: expected 0x00, got 0x" + stdin[11].toString(16));
 });
 
-test("empty tape produces 8 byte output (just headers)", () => {
-  const tape = new Uint8Array([]);
-  const result = encodeStdin(tape);
-  assert(result.length === 8, "expected 8, got " + result.length);
-  const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
-  assert(view.getUint32(4, true) === 0, "tape_len should be 0, got " + view.getUint32(4, true));
+test("encodeStdin with empty tape decodes to 8-byte stdin (just headers)", () => {
+  const result = encodeStdin(new Uint8Array([]));
+  const stdin = decodeGuestEnvV1(result);
+  assert(stdin.length === 8, "expected 8, got " + stdin.length);
+  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
+  assert(view.getUint32(4, true) === 0, "tape_len should be 0");
 });
 
-test("large tape preserves all bytes and alignment", () => {
+test("encodeStdin with large tape preserves all bytes", () => {
   const tape = new Uint8Array(1025);
   for (let i = 0; i < tape.length; i++) tape[i] = i & 0xFF;
   const result = encodeStdin(tape);
-  assert(result.length === 4 + 4 + 1028, "expected " + (4 + 4 + 1028) + ", got " + result.length);
-  assert(result[8] === 0, "first tape byte wrong");
-  assert(result[8 + 1024] === (1024 & 0xFF), "tape byte at offset 1024 wrong");
-  assert(result[8 + 1025] === 0, "padding byte 1 not zero");
-  assert(result[8 + 1026] === 0, "padding byte 2 not zero");
-  assert(result[8 + 1027] === 0, "padding byte 3 not zero");
+  const stdin = decodeGuestEnvV1(result);
+  assert(stdin.length === 4 + 4 + 1028, "expected " + (4 + 4 + 1028) + ", got " + stdin.length);
+  assert(stdin[8] === 0, "first tape byte wrong");
+  assert(stdin[8 + 1024] === (1024 & 0xFF), "tape byte at offset 1024 wrong");
 });
 
 // ---------------------------------------------------------------------------
