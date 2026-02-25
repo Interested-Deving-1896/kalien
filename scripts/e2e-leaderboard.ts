@@ -108,7 +108,7 @@ async function submitTape(tape: TapeInfo): Promise<string> {
       "Content-Type": "application/octet-stream",
       "x-claimant-address": CLAIMANT,
     },
-    body: tape.bytes,
+    body: new Uint8Array(tape.bytes),
   });
 
   if (!response.ok) {

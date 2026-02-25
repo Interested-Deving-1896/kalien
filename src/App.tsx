@@ -520,8 +520,7 @@ function GameApp() {
           // Slow down polling when proof is done but claim is retrying —
           // the next retry won't happen for seconds/minutes (exp. backoff).
           const claimRetrying =
-            response.job.status === "succeeded" &&
-            response.job.claim.status === "retrying";
+            response.job.status === "succeeded" && response.job.claim.status === "retrying";
           const interval = claimRetrying
             ? PROOF_STATUS_CLAIM_RETRY_POLL_INTERVAL_MS
             : PROOF_STATUS_POLL_INTERVAL_MS;

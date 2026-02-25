@@ -317,7 +317,7 @@ export async function submitToProver(
       {
         method: "POST",
         headers: buildProverHeaders(env, true),
-        body: tapeBytes,
+        body: new Uint8Array(tapeBytes),
       },
       timeoutMs,
     );
