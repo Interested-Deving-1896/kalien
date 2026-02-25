@@ -49,19 +49,20 @@
 		// Boundless proving (alternative to Vast.ai prover)
 		// Secrets (BOUNDLESS_PRIVATE_KEY, PINATA_JWT) go in .dev.vars / `wrangler secret`
 		// Defaults target Base Mainnet (chain 8453). Override BOUNDLESS_CHAIN_ID for testnets.
-		"BOUNDLESS_RPC_URL": "https://sepolia.base.org",
-		"BOUNDLESS_IMAGE_URL": "https://gateway.pinata.cloud/ipfs/QmZqAjEpY6i7ZpZ3x6DLwgpxwGd4tntWKJ2Qt6a8GFmXsx",
+		"BOUNDLESS_RPC_URL": "https://base-mainnet.public.blastapi.io",
+		"BOUNDLESS_IMAGE_URL": "https://gateway.pinata.cloud/ipfs/QmRCff7XUQm4rYDALBBxMZmv5yMRG6nHXUNCjgd8JdCMwr",
 		"BOUNDLESS_IMAGE_ID": "0xc2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5e3a0",
-		"BOUNDLESS_MAX_PRICE": "1000000000000000",
-		"BOUNDLESS_FLAT_PERIOD_SEC": "300",
-		"BOUNDLESS_RAMP_PERIOD_SEC": "600",
-		"BOUNDLESS_LOCK_TIMEOUT_SEC": "2400",
-		"BOUNDLESS_TIMEOUT_SEC": "5100",
+		"BOUNDLESS_MIN_PRICE": "50000000000",
+		"BOUNDLESS_MAX_PRICE": "5000000000000",
+		"BOUNDLESS_FLAT_PERIOD_SEC": "120",
+		"BOUNDLESS_RAMP_PERIOD_SEC": "480",
+		"BOUNDLESS_LOCK_TIMEOUT_SEC": "1680",
+		"BOUNDLESS_TIMEOUT_SEC": "3480",
 		"BOUNDLESS_POLL_INTERVAL_MS": "15000",
 		"BOUNDLESS_POLL_TIMEOUT_MS": "600000",
 		// Set chain ID to select known deployment (8453=Base Mainnet, 11155111=Eth Sepolia, 84532=Base Sepolia)
 		// Or set explicit overrides: BOUNDLESS_MARKET_ADDRESS, BOUNDLESS_ORDER_STREAM_URL, BOUNDLESS_DEPLOYMENT_BLOCK
-		"BOUNDLESS_CHAIN_ID": "84532",
+		"BOUNDLESS_CHAIN_ID": "8453",
 		// Stellar testnet
 		"SCORE_CONTRACT_ID": "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
 		"CLAIM_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
