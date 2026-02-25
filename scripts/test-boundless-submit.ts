@@ -7,13 +7,12 @@
  * Claim-only mode (uses existing fulfilled request):
  *   bun run scripts/test-boundless-submit.ts --request-id 0x...
  *
- * Secrets:
- *   scripts/.env  — BOUNDLESS_PRIVATE_KEY, PINATA_JWT (only needed in full mode)
- *   .dev.vars     — RELAYER_API_KEY
+ * Secrets (loaded from scripts/.env → .dev.vars → .env, highest priority first):
+ *   BOUNDLESS_PRIVATE_KEY  — EVM wallet private key (only needed in full mode)
+ *   PINATA_JWT             — Pinata API JWT for IPFS uploads (only needed in full mode)
+ *   RELAYER_API_KEY        — OpenZeppelin Relayer key for Stellar claim
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   createPublicClient,
   createWalletClient,
@@ -34,6 +33,7 @@ import {
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
 import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { Autopilot } from "../src/game/Autopilot";
+import { env } from "./load-env";
 
 // ── Parse CLI args ───────────────────────────────────────────────────────
 const requestIdArg = (() => {
@@ -43,28 +43,13 @@ const requestIdArg = (() => {
 })();
 const claimOnly = requestIdArg !== null;
 
-// ── Load secrets ─────────────────────────────────────────────────────────
-function loadEnvFile(path: string): Record<string, string> {
-  if (!existsSync(path)) return {};
-  const vars: Record<string, string> = {};
-  for (const line of readFileSync(path, "utf-8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq > 0) vars[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
-  }
-  return vars;
-}
-
-const scriptEnv = loadEnvFile(resolve(import.meta.dirname, ".env"));
-const devVars = loadEnvFile(resolve(import.meta.dirname, "../.dev.vars"));
-
-if (!claimOnly && (!scriptEnv.BOUNDLESS_PRIVATE_KEY || !scriptEnv.PINATA_JWT)) {
-  console.error("Missing BOUNDLESS_PRIVATE_KEY or PINATA_JWT in scripts/.env");
+// ── Validate secrets ──────────────────────────────────────────────────────
+if (!claimOnly && (!env.BOUNDLESS_PRIVATE_KEY || !env.PINATA_JWT)) {
+  console.error("Missing BOUNDLESS_PRIVATE_KEY or PINATA_JWT in scripts/.env, .dev.vars, or .env");
   process.exit(1);
 }
-if (!devVars.RELAYER_API_KEY) {
-  console.error("Missing RELAYER_API_KEY in .dev.vars");
+if (!env.RELAYER_API_KEY) {
+  console.error("Missing RELAYER_API_KEY in scripts/.env, .dev.vars, or .env");
   process.exit(1);
 }
 
@@ -75,7 +60,7 @@ const ORDER_STREAM_URL = "https://base-mainnet.boundless.network";
 // BlastAPI is reliable for eth_getLogs (mainnet.base.org returns 503)
 const RPC_URL = "https://base-mainnet.public.blastapi.io";
 
-const RELAYER_API_KEY = devVars.RELAYER_API_KEY;
+const RELAYER_API_KEY = env.RELAYER_API_KEY;
 const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmRCff7XUQm4rYDALBBxMZmv5yMRG6nHXUNCjgd8JdCMwr";
 const IMAGE_ID = "0xc2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5e3a0";
 
@@ -240,8 +225,8 @@ if (claimOnly) {
   console.log("  Confirmed: request is fulfilled on-chain\n");
 } else {
   // ── Full mode: Generate tape + Submit to Boundless ──────────────────────
-  const PRIVATE_KEY = scriptEnv.BOUNDLESS_PRIVATE_KEY;
-  const PINATA_JWT = scriptEnv.PINATA_JWT;
+  const PRIVATE_KEY = env.BOUNDLESS_PRIVATE_KEY;
+  const PINATA_JWT = env.PINATA_JWT;
   const account = privateKeyToAccount(PRIVATE_KEY as `0x${string}`);
 
   console.log("=== Boundless → Stellar E2E Test ===\n");

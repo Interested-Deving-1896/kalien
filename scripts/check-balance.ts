@@ -1,17 +1,7 @@
 import { privateKeyToAccount } from "viem/accounts";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { env } from "./load-env";
 
-const lines = readFileSync(resolve(import.meta.dirname, ".env"), "utf-8").split("\n");
-const vars: Record<string, string> = {};
-for (const line of lines) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq > 0) vars[t.slice(0, eq)] = t.slice(eq + 1);
-}
-
-const account = privateKeyToAccount(vars.BOUNDLESS_PRIVATE_KEY as `0x${string}`);
+const account = privateKeyToAccount(env.BOUNDLESS_PRIVATE_KEY as `0x${string}`);
 console.log("Wallet:", account.address);
 
 // Check Base Mainnet balance
