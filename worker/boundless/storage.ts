@@ -4,7 +4,10 @@ import { IPFS_GATEWAY_PREFIX } from "./config";
  * Upload raw stdin bytes to Pinata IPFS.
  * Returns the IPFS gateway URL for the uploaded content.
  */
-export async function uploadInput(pinataJwt: string, stdinBytes: Uint8Array): Promise<{ url: string; cid: string }> {
+export async function uploadInput(
+  pinataJwt: string,
+  stdinBytes: Uint8Array,
+): Promise<{ url: string; cid: string }> {
   // Compute sha256 hex for the filename
   const hashBuffer = await crypto.subtle.digest("SHA-256", new Uint8Array(stdinBytes));
   const hashHex = Array.from(new Uint8Array(hashBuffer))
@@ -65,9 +68,15 @@ export async function unpinInput(pinataJwt: string, cid: string): Promise<void> 
       console.log("[boundless] unpinned IPFS input", { cid });
     } else {
       const detail = await response.text().catch(() => "");
-      console.warn(`[boundless] unpin failed (${response.status}): ${detail || "no body"}`, { cid });
+      console.warn(`[boundless] unpin failed (${response.status}): ${detail || "no body"}`, {
+        cid,
+      });
     }
   } catch (error) {
-    console.warn("[boundless] unpin error:", error instanceof Error ? error.message : String(error), { cid });
+    console.warn(
+      "[boundless] unpin error:",
+      error instanceof Error ? error.message : String(error),
+      { cid },
+    );
   }
 }
