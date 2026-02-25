@@ -69,8 +69,8 @@ const IMAGE_ID = "0xc2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5
 // Groth16V3_0 selector — explicitly request Groth16 proofs for Stellar
 const GROTH16_SELECTOR = "0x73c457ba" as const;
 
-const MIN_PRICE = 50000000000n;   // ~$0.0001 — auction floor
-const MAX_PRICE = 5000000000000n; // ~$0.01 — auction ceiling
+const MIN_PRICE = 50000000000n;    // ~$0.0001 — auction floor
+const MAX_PRICE = 5_300_000_000_000n; // ~$0.01 @ $1,900/ETH — auction ceiling
 const FLAT_PERIOD_SEC = 60;    // 1 min prover discovery window before ramp
 const RAMP_PERIOD_SEC = 660;   // 11 min for price to ramp from minPrice to maxPrice
 const LOCK_TIMEOUT_SEC = 1740; // 29 min from rampUpStart (11m ramp + 18m at max price)
