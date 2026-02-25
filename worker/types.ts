@@ -75,6 +75,7 @@ export interface ProverTracking {
   lastPolledAt: string | null;
   pollingErrors: number;
   recoveryAttempts: number;
+  ipfsCid?: string | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -266,7 +267,7 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number }
+  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number; ipfsCid?: string }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 

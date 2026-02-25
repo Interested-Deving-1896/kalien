@@ -17,6 +17,7 @@ import {
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
 import { pollBoundless, pollBoundlessOnce } from "../boundless/client";
+import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
 import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
@@ -83,6 +84,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     } catch (error) {
       console.warn(`[proof-worker] failed deleting artifact ${key}: ${safeErrorMessage(error)}`);
     }
+  }
+
+  private async unpinIpfsInput(job: ProofJobRecord): Promise<void> {
+    const cid = job.prover.ipfsCid;
+    if (!cid) {
+      return;
+    }
+
+    const pinataJwt = this.env.PINATA_JWT;
+    if (!pinataJwt) {
+      return;
+    }
+
+    // Fire-and-forget via waitUntil so it doesn't block the response
+    this.ctx.waitUntil(unpinInput(pinataJwt, cid));
   }
 
   private async pruneCompletedJobs(): Promise<void> {
@@ -664,6 +680,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     statusUrl: string,
     segmentLimitPo2: number,
     recoveryAttempts?: number,
+    ipfsCid?: string,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -680,6 +697,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.segmentLimitPo2 = segmentLimitPo2;
     job.prover.pollingErrors = 0;
     job.prover.recoveryAttempts = recoveryAttempts ?? job.prover.recoveryAttempts;
+    if (ipfsCid) {
+      job.prover.ipfsCid = ipfsCid;
+    }
     await this.saveJob(job);
 
     const pollIntervalMs = parseInteger(
@@ -721,6 +741,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
+    await this.unpinIpfsInput(job);
     await this.enqueueClaimJob(jobId);
     try {
       await this.pruneCompletedJobs();
@@ -755,6 +776,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.saveJob(job);
     await this.releaseActiveIfMatches(jobId);
+    await this.unpinIpfsInput(job);
     try {
       await this.pruneCompletedJobs();
     } catch (error) {
@@ -950,10 +972,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         if (scheduleNext) {
           // Boundless jobs cannot be re-submitted — the on-chain request already exists.
           if (this.isBoundlessJob(job)) {
-            await this.markFailed(
-              activeJobId,
-              `boundless proving failed: ${pollResult.message}`,
-            );
+            await this.markFailed(activeJobId, `boundless proving failed: ${pollResult.message}`);
             return;
           }
 
@@ -1147,10 +1166,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       // For Boundless jobs, there's no re-submit — Boundless handles retries internally.
       // Just fail if we somehow lost the prover job ID.
       if (isBoundless) {
-        await this.markFailed(
-          activeJobId,
-          "boundless request ID lost; cannot recover",
-        );
+        await this.markFailed(activeJobId, "boundless request ID lost; cannot recover");
         return;
       }
 

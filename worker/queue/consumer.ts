@@ -149,6 +149,8 @@ async function processQueueMessage(
     submitResult.jobId,
     submitResult.statusUrl,
     submitResult.segmentLimitPo2,
+    undefined, // recoveryAttempts
+    submitResult.ipfsCid,
   );
   message.ack();
 }
