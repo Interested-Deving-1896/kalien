@@ -2,7 +2,6 @@
 # regenerate-proofs.sh
 #
 # Regenerate mintable Groth16 proof fixtures from source tapes.
-# Zero-score tapes are expected to be rejected.
 # The prover is single-flight, so tapes are submitted sequentially.
 # Each generated proof is verified on-chain via the router.
 #
@@ -114,44 +113,10 @@ regenerate_fixture() {
 }
 
 # ---------------------------------------------------------------------------
-# Ensure zero-score tapes are rejected by the prover API
-# ---------------------------------------------------------------------------
-assert_reject_zero_score_tape() {
-  local tape_file="$FIXTURES_DIR/test-short.tape"
-  TOTAL=$((TOTAL + 1))
-
-  if [[ ! -f "$tape_file" ]]; then
-    err "Short tape not found: $tape_file"
-    FAILED=$((FAILED + 1))
-    return
-  fi
-
-  info "Checking zero-score rejection for short tape..."
-  local resp http_code body error_code
-  local query="receipt_kind=groth16&verify_mode=policy"
-  resp=$(curl -sS -X POST \
-    "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
-    -H "content-type: application/octet-stream" \
-    --data-binary "@${tape_file}" \
-    -w $'\n%{http_code}')
-  http_code=$(echo "$resp" | tail -1)
-  body=$(echo "$resp" | sed '$d')
-  error_code=$(echo "$body" | python3 -c "import sys, json; print((json.load(sys.stdin).get('error_code') or '').strip())" 2>/dev/null || true)
-
-  if [[ "$http_code" == "400" && "$error_code" == "zero_score_not_allowed" ]]; then
-    PASSED=$((PASSED + 1))
-    ok "short tape rejected with zero_score_not_allowed"
-  else
-    FAILED=$((FAILED + 1))
-    err "short tape rejection check failed (HTTP $http_code, error_code=${error_code:-<none>})"
-  fi
-}
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "================================================"
-echo "Regenerate Groth16 Proof Fixtures (Non-Zero Scores)"
+echo "Regenerate Groth16 Proof Fixtures"
 echo "Prover: $PROVER_URL"
 echo "$(date)"
 echo "================================================"
@@ -169,7 +134,7 @@ echo ""
 ensure_funded_key "$CALLER_NAME"
 echo ""
 
-assert_reject_zero_score_tape
+regenerate_fixture "short tape"     "test-short.tape"     "proof-short-groth16"
 echo ""
 regenerate_fixture "medium tape"    "test-medium.tape"    "proof-medium-groth16"
 echo ""

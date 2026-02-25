@@ -405,6 +405,40 @@ test_reject_fixture() {
 }
 
 # ---------------------------------------------------------------------------
+# Test: Reject a synthetic zero-score journal via mock verifier
+# ---------------------------------------------------------------------------
+test_reject_zero_score() {
+  info "--- Test: reject synthetic zero-score journal ---"
+
+  # Build a 24-byte journal with score=0: seed(u32 LE) + frames + score + rng + checksum + rules_digest
+  # seed=0xdeadbeef frames=100 score=0 rng=0 checksum=0 rules_digest=AST3(0x41535433)
+  local journal_hex="efbeadde6400000000000000000000000000000033545341"
+
+  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  local journal_digest_hex
+  journal_digest_hex=$(sha256_of_hex "$journal_hex")
+
+  info "Generating mock seal..."
+  local seal_hex
+  seal_hex=$(mock_seal "$IMAGE_ID_HEX" "$journal_digest_hex")
+
+  info "Submitting proof (expect rejection)..."
+  local result
+  result=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$PLAYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    submit_score \
+    --seal "$seal_hex" \
+    --journal_raw "$journal_hex" \
+    --claimant "$PLAYER_ADDR" \
+    2>&1) && exit_code=0 || exit_code=$?
+
+  assert_fail "zero-score journal rejected" "$exit_code"
+}
+
+# ---------------------------------------------------------------------------
 # Test: Check cumulative token balance
 # ---------------------------------------------------------------------------
 test_cumulative_balance() {
@@ -687,8 +721,12 @@ test_unclaimed_digest
 
 echo ""
 
-# 3. Reject zero-score fixture, then submit positive-score fixtures via mock verifier
-test_reject_fixture "short tape" "proof-short-groth16"
+# 3. Reject synthetic zero-score journal via mock verifier
+test_reject_zero_score
+echo ""
+
+# 4. Submit positive-score fixtures via mock verifier
+test_submit_fixture "short tape"     "proof-short-groth16"     1030
 echo ""
 test_submit_fixture "medium tape"    "proof-medium-groth16"    90
 echo ""
@@ -696,10 +734,10 @@ test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
 
 echo ""
 
-# 4. Check cumulative token balance (90 + 32860 = 32950)
-test_cumulative_balance "32950"
+# 5. Check cumulative token balance (1030 + 90 + 32860 = 33980)
+test_cumulative_balance "33980"
 
-# 5. Groth16 tests (if proof-mode=all)
+# 6. Groth16 tests (if proof-mode=all)
 if [[ "$PROOF_MODE" == "all" ]]; then
   echo ""
   echo "================================================"
@@ -709,7 +747,7 @@ if [[ "$PROOF_MODE" == "all" ]]; then
 
   deploy_groth16
 
-  test_reject_groth16_fixture "short tape" "proof-short-groth16"
+  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     1030
   echo ""
   test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
   echo ""
@@ -729,7 +767,7 @@ if [[ "$PROOF_MODE" == "all" ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "32950" "$grf1_balance"
+  assert_eq "Groth16 cumulative token balance" "33980" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------

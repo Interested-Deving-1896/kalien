@@ -501,45 +501,13 @@ fn test_submit_score_event_contains_journal_and_reward_context() {
 }
 
 #[test]
-fn test_fixture_short_tape_score_0_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let claimant = Address::generate(&env);
-    let sac = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = sac.address();
-    let router_addr = env.register(mock_router_ok::MockRouter, ());
-    let image_id = parse_image_id(
-        &env,
-        include_str!("../../../../test-fixtures/proof-short-groth16.image_id"),
-    );
-
-    let contract_id = env.register(
-        AsteroidsScoreContract,
-        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
-    );
-    StellarAssetClient::new(&env, &token_addr).set_admin(&contract_id);
-    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
-
-    let seal = hex_to_soroban_bytes(
-        &env,
+fn test_fixture_short_tape_score_1030() {
+    run_fixture_test(
         include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
+        include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
+        include_str!("../../../../test-fixtures/proof-short-groth16.image_id"),
+        1030,
     );
-    let journal_raw = force_ast3_rules_digest(
-        &env,
-        &hex_to_soroban_bytes(
-            &env,
-            include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
-        ),
-    );
-
-    let result = client.try_submit_score(&seal, &journal_raw, &claimant);
-    assert_eq!(result, Err(Ok(ScoreError::ZeroScoreNotAllowed)));
-    assert_eq!(TokenClient::new(&env, &token_addr).balance(&claimant), 0);
-
-    let digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
-    assert!(!client.is_claimed(&digest));
 }
 
 #[test]
@@ -585,7 +553,7 @@ fn test_fixture_all_three_cumulative() {
     let client = AsteroidsScoreContractClient::new(&env, &contract_id);
     let token = TokenClient::new(&env, &token_addr);
 
-    // short (score 0) rejected
+    // short (score 1030)
     let short_seal = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
@@ -598,10 +566,10 @@ fn test_fixture_all_three_cumulative() {
         ),
     );
     assert_eq!(
-        client.try_submit_score(&short_seal, &short_journal, &claimant),
-        Err(Ok(ScoreError::ZeroScoreNotAllowed))
+        client.submit_score(&short_seal, &short_journal, &claimant),
+        1030
     );
-    assert_eq!(token.balance(&claimant), 0);
+    assert_eq!(token.balance(&claimant), 1030);
 
     // medium (score 90)
     let medium_seal = hex_to_soroban_bytes(
@@ -637,7 +605,7 @@ fn test_fixture_all_three_cumulative() {
         client.submit_score(&real_seal, &real_journal, &claimant),
         32860
     );
-    assert_eq!(token.balance(&claimant), 90 + 32860);
+    assert_eq!(token.balance(&claimant), 1030 + 90 + 32860);
 }
 
 // ---------------------------------------------------------------------------
