@@ -94,6 +94,14 @@ export function ProofsPage() {
     return () => clearInterval(interval);
   }, [wallet.address, activeJobs]);
 
+  // Tick every 5s so the "Updated Xs ago" label stays current between fetches
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!lastRefreshAt) return;
+    const id = setInterval(() => tick((n) => n + 1), 5_000);
+    return () => clearInterval(id);
+  }, [lastRefreshAt]);
+
   return (
     <PageShell glow className="content-start">
       <PageHero title="My Proofs" subtitle="Track your proof jobs and verification status.">
