@@ -45,6 +45,7 @@ export interface ProverAttempt {
   error: string | null;
   proverJobId: string | null;
   statusUrl: string | null;
+  maxPriceUsd?: number | null;
 }
 
 export interface ProverTracking {

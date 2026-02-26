@@ -1,11 +1,16 @@
-import { DEFAULT_MAX_JOB_WALL_TIME_MS, MAX_QUEUE_RETRIES } from "../constants";
+import {
+  DEFAULT_MAX_JOB_WALL_TIME_MS,
+  MAX_QUEUE_RETRIES,
+  MAX_VAST_QUEUE_RETRIES,
+  VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
+} from "../constants";
 import { submitClaim } from "../claim/submit";
 import { resolveBoundlessConfig } from "../boundless/config";
 import { submitToBoundless } from "../boundless/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { submitToProver } from "../prover/client";
-import type { ClaimQueueMessage, ProofQueueMessage, ProofJournal } from "../types";
+import type { ClaimQueueMessage, ProofJobRecord, ProofQueueMessage, ProofJournal } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
 
 /**
@@ -44,14 +49,30 @@ async function sha256HexFromHex(hex: string): Promise<string> {
     .join("");
 }
 
-async function processQueueMessage(
+// ---------------------------------------------------------------------------
+// Shared pre-submission checks
+// ---------------------------------------------------------------------------
+
+interface PreparedJob {
+  jobId: string;
+  job: ProofJobRecord;
+  tapeBytes: Uint8Array;
+}
+
+/**
+ * Common validation that runs before any prover submission. Returns the job
+ * record and tape bytes if the job is ready for submission, or null if the
+ * message has already been ack'd/retried.
+ */
+async function prepareForSubmission(
   message: Message<ProofQueueMessage>,
   env: WorkerEnv,
-): Promise<void> {
+  _maxRetries: number,
+): Promise<PreparedJob | null> {
   const payload = message.body;
   if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
     message.ack();
-    return;
+    return null;
   }
 
   const jobId = payload.jobId;
@@ -65,20 +86,20 @@ async function processQueueMessage(
   const startedJob = await coordinator.beginQueueAttempt(jobId, message.attempts);
   if (!startedJob || isTerminalProofStatus(startedJob.status)) {
     message.ack();
-    return;
+    return null;
   }
 
   if (startedJob.tape.metadata.finalScore >>> 0 === 0) {
     await coordinator.markFailed(jobId, "zero-score runs are not accepted");
     message.ack();
-    return;
+    return null;
   }
 
   // If the prover job already exists (re-delivered message after crash),
   // beginQueueAttempt ensured the alarm is running. Just ack.
   if (startedJob.prover.jobId) {
     message.ack();
-    return;
+    return null;
   }
 
   const jobAgeMs = Date.now() - new Date(startedJob.createdAt).getTime();
@@ -89,50 +110,35 @@ async function processQueueMessage(
       `proof job timed out after ${ageMin} minutes (attempt ${message.attempts})`,
     );
     message.ack();
-    return;
+    return null;
   }
 
   const tapeObject = await env.PROOF_ARTIFACTS.get(startedJob.tape.key);
   if (!tapeObject) {
     await coordinator.markFailed(jobId, "missing tape artifact in R2");
     message.ack();
-    return;
+    return null;
   }
 
   const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
+  return { jobId, job: startedJob, tapeBytes };
+}
 
-  // Route to Boundless or Vast.ai based on configuration
-  const boundlessConfig = resolveBoundlessConfig(env);
-  const useBoundless = boundlessConfig !== null;
-
-  let submitResult: Awaited<ReturnType<typeof submitToProver>>;
-  try {
-    submitResult = useBoundless
-      ? await submitToBoundless(boundlessConfig, tapeBytes)
-      : await submitToProver(env, tapeBytes, {});
-  } catch (error) {
-    const reason = `submit error: ${safeErrorMessage(error)}`;
-    if (message.attempts >= MAX_QUEUE_RETRIES) {
-      await coordinator.markFailed(
-        jobId,
-        `${reason} (exhausted ${message.attempts} delivery attempts)`,
-      );
-      message.ack();
-      return;
-    }
-
-    const delaySeconds = retryDelaySeconds(message.attempts);
-    await coordinator.markRetry(
-      jobId,
-      reason,
-      new Date(Date.now() + delaySeconds * 1000).toISOString(),
-    );
-    message.retry({ delaySeconds });
-    return;
-  }
+/**
+ * Handle the result of a prover submission, updating coordinator state and
+ * ack/retrying the queue message.
+ */
+async function handleSubmitResult(
+  submitResult: Awaited<ReturnType<typeof submitToProver>>,
+  jobId: string,
+  message: Message<ProofQueueMessage>,
+  env: WorkerEnv,
+  maxRetries: number,
+): Promise<void> {
+  const coordinator = coordinatorStub(env);
 
   if (submitResult.type === "retry") {
-    if (message.attempts >= MAX_QUEUE_RETRIES) {
+    if (message.attempts >= maxRetries) {
       await coordinator.markFailed(
         jobId,
         `${submitResult.message} (exhausted ${message.attempts} delivery attempts)`,
@@ -162,9 +168,127 @@ async function processQueueMessage(
     submitResult.segmentLimitPo2,
     undefined, // recoveryAttempts
     submitResult.ipfsCid,
+    submitResult.maxPriceUsd,
   );
   message.ack();
 }
+
+// ---------------------------------------------------------------------------
+// Boundless queue consumer (PROOF_QUEUE — parallel)
+// ---------------------------------------------------------------------------
+
+async function processBoundlessMessage(
+  message: Message<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  const prepared = await prepareForSubmission(message, env, MAX_QUEUE_RETRIES);
+  if (!prepared) return;
+
+  const { jobId, tapeBytes } = prepared;
+  const coordinator = coordinatorStub(env);
+
+  const boundlessConfig = resolveBoundlessConfig(env);
+  if (!boundlessConfig) {
+    // Boundless not configured — this shouldn't happen in normal flow,
+    // but if it does, fail gracefully and let the coordinator handle fallback.
+    await coordinator.markFailed(jobId, "boundless backend not configured");
+    message.ack();
+    return;
+  }
+
+  let submitResult: Awaited<ReturnType<typeof submitToBoundless>>;
+  try {
+    submitResult = await submitToBoundless(boundlessConfig, tapeBytes);
+  } catch (error) {
+    const reason = `boundless submit error: ${safeErrorMessage(error)}`;
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+
+    const delaySeconds = retryDelaySeconds(message.attempts);
+    await coordinator.markRetry(
+      jobId,
+      reason,
+      new Date(Date.now() + delaySeconds * 1000).toISOString(),
+    );
+    message.retry({ delaySeconds });
+    return;
+  }
+
+  await handleSubmitResult(submitResult, jobId, message, env, MAX_QUEUE_RETRIES);
+}
+
+// ---------------------------------------------------------------------------
+// VastAI queue consumer (VAST_QUEUE — serial, 1-at-a-time)
+// ---------------------------------------------------------------------------
+
+async function processVastMessage(
+  message: Message<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  const payload = message.body;
+  if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
+    message.ack();
+    return;
+  }
+
+  const coordinator = coordinatorStub(env);
+
+  // Enforce 1-at-a-time: if a VastAI job is already running, re-queue.
+  const slotBusy = await coordinator.hasActiveVastJob();
+  if (slotBusy) {
+    if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        payload.jobId,
+        `vast slot busy for too long (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+    message.retry({ delaySeconds: VAST_SLOT_BUSY_RETRY_DELAY_SECONDS });
+    return;
+  }
+
+  const prepared = await prepareForSubmission(message, env, MAX_VAST_QUEUE_RETRIES);
+  if (!prepared) return;
+
+  const { jobId, tapeBytes } = prepared;
+
+  let submitResult: Awaited<ReturnType<typeof submitToProver>>;
+  try {
+    submitResult = await submitToProver(env, tapeBytes, {});
+  } catch (error) {
+    const reason = `vast submit error: ${safeErrorMessage(error)}`;
+    if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+
+    const delaySeconds = retryDelaySeconds(message.attempts);
+    await coordinator.markRetry(
+      jobId,
+      reason,
+      new Date(Date.now() + delaySeconds * 1000).toISOString(),
+    );
+    message.retry({ delaySeconds });
+    return;
+  }
+
+  await handleSubmitResult(submitResult, jobId, message, env, MAX_VAST_QUEUE_RETRIES);
+}
+
+// ---------------------------------------------------------------------------
+// Claim queue (unchanged)
+// ---------------------------------------------------------------------------
 
 async function processClaimQueueMessage(
   message: Message<ClaimQueueMessage>,
@@ -309,15 +433,36 @@ async function processClaimQueueMessage(
   message.ack();
 }
 
+// ---------------------------------------------------------------------------
+// Batch handlers (exported)
+// ---------------------------------------------------------------------------
+
+/**
+ * Boundless proof queue — processes in parallel (Cloudflare handles concurrency
+ * via max_concurrency in wrangler config).
+ */
 export async function handleQueueBatch(
   batch: MessageBatch<ProofQueueMessage>,
   env: WorkerEnv,
 ): Promise<void> {
-  // Processing one message at a time is intentional. Each message corresponds
-  // to the single active proof slot and must avoid concurrent dispatch/polling.
   /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
-    await processQueueMessage(message, env);
+    await processBoundlessMessage(message, env);
+  }
+  /* eslint-enable no-await-in-loop */
+}
+
+/**
+ * VastAI proof queue — serial, 1-at-a-time (max_concurrency=1 in wrangler).
+ * Consumer checks for an active VastAI slot before submitting.
+ */
+export async function handleVastQueueBatch(
+  batch: MessageBatch<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  /* eslint-disable no-await-in-loop */
+  for (const message of batch.messages) {
+    await processVastMessage(message, env);
   }
   /* eslint-enable no-await-in-loop */
 }
@@ -332,7 +477,6 @@ export async function handleDlqBatch(
   batch: MessageBatch<ProofQueueMessage>,
   env: WorkerEnv,
 ): Promise<void> {
-  // Sequential processing is intentional — each message must finish before the next.
   /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
     const payload = message.body;

@@ -287,6 +287,7 @@ export class BoundlessClient {
       statusUrl: `boundless:${requestIdHex}`,
       segmentLimitPo2: 0,
       ipfsCid,
+      maxPriceUsd: config.maxPriceUsd,
     };
   }
 

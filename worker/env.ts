@@ -4,6 +4,7 @@ import type { ClaimQueueMessage, ProofQueueMessage } from "./types";
 export interface WorkerEnv {
   ASSETS: Fetcher;
   PROOF_QUEUE: Queue<ProofQueueMessage>;
+  VAST_QUEUE: Queue<ProofQueueMessage>;
   CLAIM_QUEUE: Queue<ClaimQueueMessage>;
   PROOF_COORDINATOR: DurableObjectNamespace<ProofCoordinatorDO>;
   PROOF_ARTIFACTS: R2Bucket;

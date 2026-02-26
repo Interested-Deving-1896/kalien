@@ -7,8 +7,9 @@ import {
   Cpu,
   Zap,
   Trophy,
+  DollarSign,
 } from "lucide-react";
-import type { ProofJobPublic } from "@/proof/api";
+import type { ProofJobPublic, ProverAttempt } from "@/proof/api";
 import { getTapeDownloadUrl } from "@/proof/api";
 import { formatDuration } from "@/lib/format";
 import { timeAgo } from "@/time";
@@ -42,6 +43,21 @@ function getDisplayBackend(job: ProofJobPublic) {
   if (inProgress) return inProgress.backend;
   const last = job.proverAttempts[job.proverAttempts.length - 1];
   return last?.backend ?? null;
+}
+
+function getSuccessfulAttempt(job: ProofJobPublic): ProverAttempt | null {
+  return job.proverAttempts?.find((a) => a.outcome === "success") ?? null;
+}
+
+function computeWallClockMs(attempt: ProverAttempt): number | null {
+  if (!attempt.startedAt || !attempt.endedAt) return null;
+  const ms = new Date(attempt.endedAt).getTime() - new Date(attempt.startedAt).getTime();
+  return ms > 0 ? ms : null;
+}
+
+function formatCostUsd(usd: number): string {
+  if (usd < 0.01) return `<$0.01`;
+  return `$${usd.toFixed(2)}`;
 }
 
 export function ProofJobCard({ job }: { job: ProofJobPublic }) {
@@ -116,23 +132,48 @@ export function ProofJobCard({ job }: { job: ProofJobPublic }) {
             <StatItem label="Tape Size" value={formatBytes(job.tape.sizeBytes)} />
           </div>
 
-          {/* Proof results */}
-          {result && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <StatItem
-                icon={Cpu}
-                label="Total Cycles"
-                value={result.stats.total_cycles.toLocaleString()}
-              />
-              <StatItem label="Segments" value={result.stats.segments.toLocaleString()} />
-              <StatItem
-                icon={Zap}
-                label="Proved In"
-                value={formatDuration(result.elapsedMs)}
-                highlight
-              />
-            </div>
-          )}
+          {/* Proof results — VastAI provides cycles/segments/elapsed; Boundless does not */}
+          {result && (() => {
+            const hasProverStats = result.stats.total_cycles > 0 || result.stats.segments > 0;
+            const successAttempt = getSuccessfulAttempt(job);
+            const wallClockMs = successAttempt ? computeWallClockMs(successAttempt) : null;
+            const maxPriceUsd = successAttempt?.maxPriceUsd;
+
+            return hasProverStats ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <StatItem
+                  icon={Cpu}
+                  label="Total Cycles"
+                  value={result.stats.total_cycles.toLocaleString()}
+                />
+                <StatItem label="Segments" value={result.stats.segments.toLocaleString()} />
+                <StatItem
+                  icon={Zap}
+                  label="Proved In"
+                  value={formatDuration(result.elapsedMs)}
+                  highlight
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {wallClockMs != null && (
+                  <StatItem
+                    icon={Zap}
+                    label="Fulfilled In"
+                    value={formatDuration(wallClockMs)}
+                    highlight
+                  />
+                )}
+                {maxPriceUsd != null && (
+                  <StatItem
+                    icon={DollarSign}
+                    label="Max Cost"
+                    value={formatCostUsd(maxPriceUsd)}
+                  />
+                )}
+              </div>
+            );
+          })()}
 
           {/* Attempt history */}
           {job.proverAttempts && job.proverAttempts.length > 0 && (

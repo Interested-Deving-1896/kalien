@@ -9,6 +9,21 @@ mock.module("../../worker/durable/coordinator", () => ({
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
 
+mock.module("../../worker/boundless/config", () => ({
+  resolveBoundlessConfig: (env: WorkerEnv) =>
+    (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ?? null,
+}));
+
+mock.module("../../worker/boundless/client", () => ({
+  submitToBoundless: async (
+    _config: unknown,
+    _tape: Uint8Array,
+  ) => {
+    // The env isn't passed directly, so we use a module-level holder
+    return (globalThis as Record<string, unknown>).__boundlessSubmitResult;
+  },
+}));
+
 mock.module("../../worker/prover/client", () => ({
   submitToProver: async (
     env: WorkerEnv,
@@ -28,7 +43,7 @@ mock.module("../../worker/claim/submit", () => ({
   },
 }));
 
-const { handleQueueBatch, handleDlqBatch, handleClaimQueueBatch, handleClaimDlqBatch } =
+const { handleQueueBatch, handleVastQueueBatch, handleDlqBatch, handleClaimQueueBatch, handleClaimDlqBatch } =
   await import("../../worker/queue/consumer");
 
 function makeMessage<T>(body: T, attempts = 1): Message<T> {
@@ -77,6 +92,7 @@ function makeCoordinator(overrides: Record<string, unknown> = {}): Record<string
     markClaimFailed: async () => null,
     markClaimRetry: async () => null,
     markClaimSucceeded: async () => null,
+    hasActiveVastJob: async () => false,
   };
 
   const merged = { ...defaults, ...overrides };
@@ -103,12 +119,19 @@ function makeEnv(overrides: Record<string, unknown> = {}): WorkerEnv {
       delete: async () => undefined,
     },
     PROOF_QUEUE: { send: async () => undefined },
+    VAST_QUEUE: { send: async () => undefined },
     CLAIM_QUEUE: { send: async () => undefined },
+    // Provide a truthy boundless config by default for Boundless queue tests
+    __boundlessConfig: { rpcUrl: "https://rpc.test", privateKey: "0x1234" },
     ...overrides,
   } as unknown as WorkerEnv;
 }
 
-describe("handleQueueBatch", () => {
+// ---------------------------------------------------------------------------
+// Boundless queue (handleQueueBatch)
+// ---------------------------------------------------------------------------
+
+describe("handleQueueBatch (Boundless)", () => {
   it("acks message with invalid payload (missing jobId)", async () => {
     const msg = makeMessage({} as { jobId: string });
     await handleQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
@@ -124,7 +147,7 @@ describe("handleQueueBatch", () => {
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
-  it("marks job succeeded on successful prover flow", async () => {
+  it("marks job succeeded on successful boundless submission", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -138,15 +161,15 @@ describe("handleQueueBatch", () => {
       }),
       markProverAccepted: async () => null,
     });
+    (globalThis as Record<string, unknown>).__boundlessSubmitResult = {
+      type: "success",
+      jobId: "boundless-job-1",
+      statusUrl: "boundless:0x1234",
+      segmentLimitPo2: 21,
+    };
     const msg = makeMessage({ jobId: "job-1" });
     const env = makeEnv({
       __coordinator: coordinator,
-      __submitResult: {
-        type: "success",
-        jobId: "prover-job-1",
-        statusUrl: "/api/jobs/prover-job-1",
-        segmentLimitPo2: 21,
-      },
       PROOF_ARTIFACTS: {
         get: async () => ({
           arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -161,7 +184,7 @@ describe("handleQueueBatch", () => {
     expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
   });
 
-  it("retries when prover returns retry and attempts not exhausted", async () => {
+  it("retries when boundless returns retry and attempts not exhausted", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -174,10 +197,13 @@ describe("handleQueueBatch", () => {
         createdAt: new Date().toISOString(),
       }),
     });
+    (globalThis as Record<string, unknown>).__boundlessSubmitResult = {
+      type: "retry",
+      message: "rate limited",
+    };
     const msg = makeMessage({ jobId: "job-1" }, 1);
     const env = makeEnv({
       __coordinator: coordinator,
-      __submitResult: { type: "retry", message: "rate limited" },
       PROOF_ARTIFACTS: {
         get: async () => ({
           arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -188,7 +214,7 @@ describe("handleQueueBatch", () => {
     expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
   });
 
-  it("marks failed when prover returns fatal", async () => {
+  it("marks failed when boundless returns fatal", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -201,10 +227,13 @@ describe("handleQueueBatch", () => {
         createdAt: new Date().toISOString(),
       }),
     });
+    (globalThis as Record<string, unknown>).__boundlessSubmitResult = {
+      type: "fatal",
+      message: "invalid tape",
+    };
     const msg = makeMessage({ jobId: "job-1" });
     const env = makeEnv({
       __coordinator: coordinator,
-      __submitResult: { type: "fatal", message: "invalid tape" },
       PROOF_ARTIFACTS: {
         get: async () => ({
           arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -232,10 +261,13 @@ describe("handleQueueBatch", () => {
         createdAt: new Date().toISOString(),
       }),
     });
+    (globalThis as Record<string, unknown>).__boundlessSubmitResult = {
+      type: "retry",
+      message: "prover busy",
+    };
     const msg = makeMessage({ jobId: "job-1" }, 10); // MAX_QUEUE_RETRIES = 10
     const env = makeEnv({
       __coordinator: coordinator,
-      __submitResult: { type: "retry", message: "prover busy" },
       PROOF_ARTIFACTS: {
         get: async () => ({
           arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -249,7 +281,117 @@ describe("handleQueueBatch", () => {
     }>;
     expect(calls.some((c) => c.method === "markFailed")).toBe(true);
   });
+
+  it("marks failed when boundless config is missing", async () => {
+    const coordinator = makeCoordinator({
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100 },
+        },
+        prover: { jobId: null },
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      __boundlessConfig: null,
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        }),
+      },
+    });
+    await handleQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+      args: unknown[];
+    }>;
+    const failCall = calls.find((c) => c.method === "markFailed");
+    expect(failCall).toBeDefined();
+    expect(String(failCall!.args[1])).toContain("boundless backend not configured");
+  });
 });
+
+// ---------------------------------------------------------------------------
+// VastAI queue (handleVastQueueBatch)
+// ---------------------------------------------------------------------------
+
+describe("handleVastQueueBatch (VastAI)", () => {
+  it("acks message with invalid payload", async () => {
+    const msg = makeMessage({} as { jobId: string });
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+  });
+
+  it("retries when vast slot is busy", async () => {
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => true,
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
+  });
+
+  it("marks failed when vast slot busy and retries exhausted", async () => {
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => true,
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 30); // MAX_VAST_QUEUE_RETRIES = 30
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markFailed")).toBe(true);
+  });
+
+  it("submits to vast when slot is free", async () => {
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => false,
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100 },
+        },
+        prover: { jobId: null },
+        createdAt: new Date().toISOString(),
+      }),
+      markProverAccepted: async () => null,
+    });
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      __submitResult: {
+        type: "success",
+        jobId: "vast-job-1",
+        statusUrl: "https://prover.test/api/jobs/vast-job-1",
+        segmentLimitPo2: 21,
+      },
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        }),
+      },
+    });
+    await handleVastQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DLQ
+// ---------------------------------------------------------------------------
 
 describe("handleDlqBatch", () => {
   it("marks non-terminal jobs as failed", async () => {
@@ -284,6 +426,10 @@ describe("handleDlqBatch", () => {
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Claim queue
+// ---------------------------------------------------------------------------
 
 describe("handleClaimQueueBatch", () => {
   it("acks when job not succeeded", async () => {

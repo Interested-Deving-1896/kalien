@@ -93,21 +93,42 @@
 				"queue": "kalien-proof-jobs",
 			},
 			{
+				"binding": "VAST_QUEUE",
+				"queue": "kalien-vast-jobs",
+			},
+			{
 				"binding": "CLAIM_QUEUE",
 				"queue": "kalien-claim-jobs",
 			},
 		],
 		"consumers": [
 			{
+				// Boundless submissions — parallel, many concurrent
 				"queue": "kalien-proof-jobs",
 				"max_batch_size": 1,
 				"max_batch_timeout": 1,
 				"max_retries": 10,
-				"max_concurrency": 1,
+				"max_concurrency": 5,
 				"dead_letter_queue": "kalien-proof-jobs-dlq",
 			},
 			{
 				"queue": "kalien-proof-jobs-dlq",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"max_concurrency": 1,
+			},
+			{
+				// VastAI submissions — serial, 1 GPU at a time
+				"queue": "kalien-vast-jobs",
+				"max_batch_size": 1,
+				"max_batch_timeout": 1,
+				"max_retries": 30,
+				"max_concurrency": 1,
+				"dead_letter_queue": "kalien-vast-jobs-dlq",
+			},
+			{
+				"queue": "kalien-vast-jobs-dlq",
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
 				"max_retries": 3,

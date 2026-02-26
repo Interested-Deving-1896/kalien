@@ -9,6 +9,7 @@ export interface ProverAttempt {
   error: string | null;
   proverJobId: string | null;
   statusUrl: string | null; // "boundless:{requestId}" or Vast.ai job URL
+  maxPriceUsd?: number | null; // Boundless: max price offered (USD)
 }
 
 export type ProofJobStatus =
@@ -282,7 +283,7 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number; ipfsCid?: string }
+  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number; ipfsCid?: string; maxPriceUsd?: number }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 

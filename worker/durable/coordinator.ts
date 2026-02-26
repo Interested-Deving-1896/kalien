@@ -15,11 +15,11 @@ import {
   PROFILE_KEY_PREFIX,
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
-import { pollBoundless, pollBoundlessOnce, submitToBoundless } from "../boundless/client";
+import { pollBoundless, pollBoundlessOnce } from "../boundless/client";
 import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
-import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
+import { pollProver, pollProverOnce, summarizeProof } from "../prover/client";
 import type {
   CreateJobAccepted,
   LeaderboardEventRecord,
@@ -30,7 +30,6 @@ import type {
   ProverAttempt,
   ProverBackend,
   ProverPollResult,
-  ProverSubmitResult,
   PublicProofJob,
   ProofTapeInfo,
 } from "../types";
@@ -337,6 +336,26 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       }
     }
     return null;
+  }
+
+  /**
+   * Returns true if a VastAI prover job is currently running (submitted and
+   * being polled). Used by the VastAI queue consumer to enforce 1-at-a-time.
+   */
+  async hasActiveVastJob(): Promise<boolean> {
+    const activeJobIds = await this.getActiveJobIds();
+    for (const jobId of activeJobIds) {
+      const job = await this.loadJob(jobId);
+      if (
+        job &&
+        !isTerminalProofStatus(job.status) &&
+        job.prover.jobId &&
+        !this.isBoundlessJob(job)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async listSucceededJobs(): Promise<ProofJobRecord[]> {
@@ -672,6 +691,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     segmentLimitPo2: number,
     recoveryAttempts?: number,
     ipfsCid?: string,
+    maxPriceUsd?: number,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -693,11 +713,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
     await this.saveJob(job);
 
-    // Track the first attempt when proverAttempts is empty (set by queue consumer)
-    if (job.proverAttempts.length === 0) {
+    // Track the attempt. If no in_progress attempt exists, start a new one.
+    // This covers both the initial submission (proverAttempts empty) and
+    // retry submissions after failover to a different backend queue.
+    const hasInProgress = job.proverAttempts.some((a) => a.outcome === "in_progress");
+    if (!hasInProgress) {
       const backend: ProverBackend = statusUrl.startsWith("boundless:") ? "boundless" : "vast";
       const attempt: ProverAttempt = {
-        index: 0,
+        index: job.proverAttempts.length,
         backend,
         startedAt: nowIso(),
         endedAt: null,
@@ -705,6 +728,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         error: null,
         proverJobId,
         statusUrl,
+        maxPriceUsd: maxPriceUsd ?? null,
       };
       job.proverAttempts.push(attempt);
       await this.saveJob(job);
@@ -764,6 +788,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const job = await this.loadJob(jobId);
     if (!job) {
       return null;
+    }
+
+    // Close any lingering in-progress attempt so the UI shows it as failed
+    const openAttempt = job.proverAttempts.find((a) => a.outcome === "in_progress");
+    if (openAttempt) {
+      openAttempt.endedAt = nowIso();
+      openAttempt.outcome = "failed";
+      openAttempt.error = openAttempt.error ?? reason;
     }
 
     const now = nowIso();
@@ -930,26 +962,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
   }
 
-  private async startNewAttempt(
-    job: ProofJobRecord,
-    backend: ProverBackend,
-    proverJobId: string,
-    statusUrl: string,
-  ): Promise<void> {
-    const attempt: ProverAttempt = {
-      index: job.proverAttempts.length,
-      backend,
-      startedAt: nowIso(),
-      endedAt: null,
-      outcome: "in_progress",
-      error: null,
-      proverJobId,
-      statusUrl,
-    };
-    job.proverAttempts.push(attempt);
-    await this.saveJob(job);
-  }
-
+  /**
+   * After a prover attempt fails, enqueue the job to the next backend's queue
+   * instead of submitting directly. Boundless jobs go to PROOF_QUEUE (parallel),
+   * VastAI jobs go to VAST_QUEUE (serial, 1-at-a-time).
+   */
   private async tryNextProverBackend(
     jobId: string,
     job: ProofJobRecord,
@@ -967,8 +984,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     // Determine next backend (alternate starting from Boundless if available)
     const lastBackend =
       job.proverAttempts.filter((a) => a.outcome !== "in_progress").at(-1)?.backend ?? null;
-    const boundlessConfig = resolveBoundlessConfig(this.env);
-    const hasBoundless = boundlessConfig !== null;
+    const hasBoundless = resolveBoundlessConfig(this.env) !== null;
     const hasVast = Boolean(this.env.PROVER_BASE_URL?.trim());
 
     let nextBackend: ProverBackend;
@@ -985,15 +1001,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return;
     }
 
-    // Fetch tape
-    const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
-    if (!tapeObject) {
-      await this.markFailed(jobId, "missing tape artifact in R2 during prover fallback");
-      return;
-    }
-    const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-
-    // Clear current prover state
+    // Clear current prover state and mark as queued for the next backend
     job.prover.jobId = null;
     job.prover.status = null;
     job.prover.statusUrl = null;
@@ -1001,47 +1009,22 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.pollingErrors = 0;
     job.prover.lastPolledAt = null;
     job.prover.ipfsCid = null;
-    job.status = "retrying";
+    job.status = "queued";
     job.queue.lastError = reason;
     job.updatedAt = nowIso();
     await this.saveJob(job);
 
-    // Submit to next backend
-    let submitResult: ProverSubmitResult;
+    // Enqueue to the appropriate backend queue
+    const queue = nextBackend === "boundless" ? this.env.PROOF_QUEUE : this.env.VAST_QUEUE;
     try {
-      if (nextBackend === "boundless") {
-        submitResult = await submitToBoundless(boundlessConfig!, tapeBytes);
-      } else {
-        submitResult = await submitToProver(this.env, tapeBytes, {});
-      }
+      await queue.send({ jobId }, { contentType: "json" });
+      console.log(`[coordinator] enqueued ${jobId} to ${nextBackend} queue (attempt ${totalAttempts + 1})`);
     } catch (error) {
-      await this.tryNextProverBackend(
+      await this.markFailed(
         jobId,
-        job,
-        `${nextBackend} submit error: ${safeErrorMessage(error)}`,
+        `failed enqueueing to ${nextBackend} queue: ${safeErrorMessage(error)}`,
       );
-      return;
     }
-
-    if (submitResult.type === "success") {
-      await this.startNewAttempt(job, nextBackend, submitResult.jobId, submitResult.statusUrl);
-      await this.markProverAccepted(
-        jobId,
-        submitResult.jobId,
-        submitResult.statusUrl,
-        submitResult.segmentLimitPo2,
-        job.prover.recoveryAttempts,
-        submitResult.ipfsCid,
-      );
-      return;
-    }
-
-    // Submit failed — try again with next backend (recursion handles depth via totalAttempts check)
-    const errorMsg =
-      submitResult.type === "retry" || submitResult.type === "fatal"
-        ? submitResult.message
-        : "unknown submit error";
-    await this.tryNextProverBackend(jobId, job, `${nextBackend} submit failed: ${errorMsg}`);
   }
 
   /**
