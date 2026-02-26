@@ -90,11 +90,12 @@ mock.module("viem", () => {
 });
 
 // Import after mock is set up
-const { fetchEthPriceUsd } = await import("../../worker/boundless/pricing");
+const { fetchEthPriceUsd, resetEthPriceCache } = await import("../../worker/boundless/pricing");
 
 describe("fetchEthPriceUsd", () => {
   beforeEach(() => {
     mockReadContract!.mockReset();
+    resetEthPriceCache();
   });
 
   it("returns correct price from Chainlink response ($1,900)", async () => {

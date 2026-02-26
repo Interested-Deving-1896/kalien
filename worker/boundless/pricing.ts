@@ -26,11 +26,30 @@ const aggregatorV3Abi = [
   },
 ] as const;
 
+const PRICE_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+
+let cachedPrice: { chainId: number; price: number; fetchedAt: number } | null = null;
+
+/** Clear the in-memory price cache. Exported for tests. */
+export function resetEthPriceCache(): void {
+  cachedPrice = null;
+}
+
 /**
  * Fetch the current ETH/USD price from Chainlink on the given chain.
  * Returns the price in USD (e.g. 1900.50).
+ * Results are cached in memory for 5 minutes to avoid redundant RPC calls.
  */
 export async function fetchEthPriceUsd(rpcUrl: string, chainId: number): Promise<number> {
+  const now = Date.now();
+  if (
+    cachedPrice &&
+    cachedPrice.chainId === chainId &&
+    now - cachedPrice.fetchedAt < PRICE_CACHE_TTL_MS
+  ) {
+    return cachedPrice.price;
+  }
+
   const feedAddress = CHAINLINK_ETH_USD[chainId];
   if (!feedAddress) {
     throw new Error(`no Chainlink ETH/USD feed configured for chainId ${chainId}`);
@@ -56,6 +75,7 @@ export async function fetchEthPriceUsd(rpcUrl: string, chainId: number): Promise
     throw new Error(`Chainlink returned invalid ETH price: ${price}`);
   }
 
+  cachedPrice = { chainId, price, fetchedAt: now };
   return price;
 }
 

@@ -9,10 +9,7 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
   MIN_PROVER_POLL_INTERVAL_MS,
   JOB_KEY_PREFIX,
-  LEADERBOARD_EVENT_KEY_PREFIX,
-  LEADERBOARD_INGESTION_STATE_KEY,
   MAX_TOTAL_PROVER_ATTEMPTS,
-  PROFILE_KEY_PREFIX,
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
 import { pollBoundless, pollBoundlessOnce } from "../boundless/client";
@@ -22,9 +19,6 @@ import { jobKey, resultKey, tapeKey } from "../keys";
 import { pollProver, pollProverOnce, summarizeProof } from "../prover/client";
 import type {
   CreateJobAccepted,
-  LeaderboardEventRecord,
-  LeaderboardIngestionState,
-  PlayerProfileRecord,
   ProofJobRecord,
   ProofResultSummary,
   ProverAttempt,
@@ -246,14 +240,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
   }
 
-  private profileKey(claimantAddress: string): string {
-    return `${PROFILE_KEY_PREFIX}${claimantAddress}`;
-  }
-
-  private leaderboardEventKey(eventId: string): string {
-    return `${LEADERBOARD_EVENT_KEY_PREFIX}${eventId}`;
-  }
-
   private async saveJob(job: ProofJobRecord): Promise<void> {
     await this.ctx.storage.put(jobKey(job.jobId), job);
   }
@@ -390,243 +376,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     /* eslint-enable no-await-in-loop */
 
     return jobs;
-  }
-
-  async getProfile(claimantAddress: string): Promise<PlayerProfileRecord | null> {
-    return (
-      (await this.ctx.storage.get<PlayerProfileRecord>(this.profileKey(claimantAddress))) ?? null
-    );
-  }
-
-  async getProfiles(claimantAddresses: string[]): Promise<Record<string, PlayerProfileRecord>> {
-    const unique = Array.from(
-      new Set(claimantAddresses.filter((value) => value.trim().length > 0)),
-    );
-    const entries = await Promise.all(
-      unique.map(async (address) => [address, await this.getProfile(address)] as const),
-    );
-
-    const out: Record<string, PlayerProfileRecord> = {};
-    for (const [address, profile] of entries) {
-      if (profile) {
-        out[address] = profile;
-      }
-    }
-    return out;
-  }
-
-  async listLeaderboardProfiles(): Promise<PlayerProfileRecord[]> {
-    const listPageSize = 256;
-    const profiles: PlayerProfileRecord[] = [];
-    let startAfter: string | undefined;
-
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.listLeaderboardProfilesPage({
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.profiles.length === 0) {
-        break;
-      }
-
-      profiles.push(...page.profiles);
-      if (!page.nextStartAfter || page.done) {
-        break;
-      }
-      startAfter = page.nextStartAfter;
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return profiles;
-  }
-
-  async listLeaderboardProfilesPage(options?: {
-    startAfter?: string | null;
-    limit?: number | null;
-  }): Promise<{
-    profiles: PlayerProfileRecord[];
-    nextStartAfter: string | null;
-    done: boolean;
-  }> {
-    const limitRaw = options?.limit ?? 256;
-    const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 2000);
-    const startAfter = options?.startAfter ?? undefined;
-    const page = await this.ctx.storage.list<PlayerProfileRecord>({
-      prefix: PROFILE_KEY_PREFIX,
-      startAfter: startAfter ?? undefined,
-      limit,
-    });
-    if (page.size === 0) {
-      return {
-        profiles: [],
-        nextStartAfter: null,
-        done: true,
-      };
-    }
-
-    const profiles: PlayerProfileRecord[] = [];
-    for (const [, value] of page) {
-      if (value?.claimantAddress) {
-        profiles.push(value);
-      }
-    }
-
-    const pageKeys = Array.from(page.keys());
-    const lastKey = pageKeys[pageKeys.length - 1];
-    const done = !lastKey || page.size < limit;
-    return {
-      profiles,
-      nextStartAfter: done ? null : lastKey,
-      done,
-    };
-  }
-
-  async upsertProfile(
-    claimantAddress: string,
-    updates: { username: string | null; linkUrl: string | null },
-  ): Promise<PlayerProfileRecord> {
-    const profile: PlayerProfileRecord = {
-      claimantAddress,
-      username: updates.username,
-      linkUrl: updates.linkUrl,
-      updatedAt: nowIso(),
-    };
-
-    await this.ctx.storage.put(this.profileKey(claimantAddress), profile);
-    return profile;
-  }
-
-  async listLeaderboardEvents(): Promise<LeaderboardEventRecord[]> {
-    const listPageSize = 256;
-    const events: LeaderboardEventRecord[] = [];
-    let startAfter: string | undefined;
-
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.listLeaderboardEventsPage({
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.events.length === 0) {
-        break;
-      }
-
-      events.push(...page.events);
-      if (!page.nextStartAfter || page.done) {
-        break;
-      }
-      startAfter = page.nextStartAfter;
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return events;
-  }
-
-  async listLeaderboardEventsPage(options?: {
-    startAfter?: string | null;
-    limit?: number | null;
-  }): Promise<{
-    events: LeaderboardEventRecord[];
-    nextStartAfter: string | null;
-    done: boolean;
-  }> {
-    const limitRaw = options?.limit ?? 256;
-    const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 2000);
-    const startAfter = options?.startAfter ?? undefined;
-    const page = await this.ctx.storage.list<LeaderboardEventRecord>({
-      prefix: LEADERBOARD_EVENT_KEY_PREFIX,
-      startAfter: startAfter ?? undefined,
-      limit,
-    });
-    if (page.size === 0) {
-      return {
-        events: [],
-        nextStartAfter: null,
-        done: true,
-      };
-    }
-
-    const events: LeaderboardEventRecord[] = [];
-    for (const [, value] of page) {
-      if (value?.eventId) {
-        events.push(value);
-      }
-    }
-
-    const pageKeys = Array.from(page.keys());
-    const lastKey = pageKeys[pageKeys.length - 1];
-    const done = !lastKey || page.size < limit;
-    return {
-      events,
-      nextStartAfter: done ? null : lastKey,
-      done,
-    };
-  }
-
-  async upsertLeaderboardEvents(
-    events: LeaderboardEventRecord[],
-  ): Promise<{ inserted: number; updated: number }> {
-    let inserted = 0;
-    let updated = 0;
-
-    /* eslint-disable no-await-in-loop */
-    for (const event of events) {
-      const key = this.leaderboardEventKey(event.eventId);
-      const existing = await this.ctx.storage.get<LeaderboardEventRecord>(key);
-      if (!existing) {
-        inserted += 1;
-      } else if (JSON.stringify(existing) !== JSON.stringify(event)) {
-        updated += 1;
-      } else {
-        continue;
-      }
-
-      await this.ctx.storage.put(key, event);
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return { inserted, updated };
-  }
-
-  async getLeaderboardIngestionState(): Promise<LeaderboardIngestionState> {
-    const current =
-      (await this.ctx.storage.get<LeaderboardIngestionState>(LEADERBOARD_INGESTION_STATE_KEY)) ??
-      null;
-    if (current) {
-      return {
-        provider: current.provider === "rpc" ? "rpc" : "galexie",
-        sourceMode:
-          current.sourceMode === "rpc" ||
-          current.sourceMode === "events_api" ||
-          current.sourceMode === "datalake"
-            ? current.sourceMode
-            : current.provider === "rpc"
-              ? "rpc"
-              : "datalake",
-        cursor: current.cursor ?? null,
-        highestLedger: current.highestLedger ?? null,
-        lastSyncedAt: current.lastSyncedAt ?? null,
-        lastBackfillAt: current.lastBackfillAt ?? null,
-        totalEvents: current.totalEvents ?? 0,
-        lastError: current.lastError ?? null,
-      };
-    }
-
-    return {
-      provider: "galexie",
-      sourceMode: "datalake",
-      cursor: null,
-      highestLedger: null,
-      lastSyncedAt: null,
-      lastBackfillAt: null,
-      totalEvents: 0,
-      lastError: null,
-    };
-  }
-
-  async setLeaderboardIngestionState(state: LeaderboardIngestionState): Promise<void> {
-    await this.ctx.storage.put(LEADERBOARD_INGESTION_STATE_KEY, state);
   }
 
   async beginQueueAttempt(jobId: string, attempts: number): Promise<ProofJobRecord | null> {
@@ -1018,7 +767,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const queue = nextBackend === "boundless" ? this.env.PROOF_QUEUE : this.env.VAST_QUEUE;
     try {
       await queue.send({ jobId }, { contentType: "json" });
-      console.log(`[coordinator] enqueued ${jobId} to ${nextBackend} queue (attempt ${totalAttempts + 1})`);
+      console.log(
+        `[coordinator] enqueued ${jobId} to ${nextBackend} queue (attempt ${totalAttempts + 1})`,
+      );
     } catch (error) {
       await this.markFailed(
         jobId,

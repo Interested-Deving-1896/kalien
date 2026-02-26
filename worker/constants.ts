@@ -55,9 +55,6 @@ export const RETRYABLE_JOB_ERROR_CODES = new Set([
 export const ACTIVE_JOB_KEY = "active_job_id";
 export const ACTIVE_JOBS_KEY = "active_job_ids";
 export const JOB_KEY_PREFIX = "job:";
-export const PROFILE_KEY_PREFIX = "profile:";
-export const LEADERBOARD_EVENT_KEY_PREFIX = "lb:event:";
-export const LEADERBOARD_INGESTION_STATE_KEY = "lb:ingestion-state";
 
 // Boundless proving defaults
 export const DEFAULT_BOUNDLESS_POLL_INTERVAL_MS = 5_000;

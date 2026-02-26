@@ -80,6 +80,10 @@
 			"database_id": "3ca395d5-5de1-4d46-ac16-b9c2d9982e84",
 		},
 	],
+	// R2 bucket for proof tapes & results.
+	// IMPORTANT: Configure an R2 lifecycle rule "expire-proof-jobs" on this bucket
+	// to auto-delete objects after 7 days. Without it, proof artifacts accumulate indefinitely.
+	// Dashboard → R2 → kalien-proof-artifacts → Settings → Object lifecycle rules.
 	"r2_buckets": [
 		{
 			"binding": "PROOF_ARTIFACTS",

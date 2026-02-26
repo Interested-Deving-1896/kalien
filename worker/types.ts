@@ -283,7 +283,14 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number; ipfsCid?: string; maxPriceUsd?: number }
+  | {
+      type: "success";
+      jobId: string;
+      statusUrl: string;
+      segmentLimitPo2: number;
+      ipfsCid?: string;
+      maxPriceUsd?: number;
+    }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 

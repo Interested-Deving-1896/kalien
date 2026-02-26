@@ -167,26 +167,6 @@ function makeCoordinatorStub(overrides: Record<string, unknown> = {}): Record<st
     createJob: async () => ({ accepted: false, activeJob: null }),
     kickAlarm: async () => undefined,
     listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
-    getLeaderboardIngestionState: async () => ({
-      provider: "rpc",
-      sourceMode: "rpc",
-      cursor: null,
-      highestLedger: null,
-      lastSyncedAt: null,
-      lastBackfillAt: null,
-      totalEvents: 0,
-      lastError: null,
-    }),
-    listLeaderboardEventsPage: async () => ({
-      events: [],
-      nextStartAfter: null,
-      done: true,
-    }),
-    listLeaderboardProfilesPage: async () => ({
-      profiles: [],
-      nextStartAfter: null,
-      done: true,
-    }),
     ...overrides,
   };
 }

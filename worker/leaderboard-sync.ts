@@ -6,6 +6,7 @@ import {
 import {
   countLeaderboardEvents,
   getLeaderboardIngestionState,
+  purgeExpiredLeaderboardProfileAuthChallenges,
   setLeaderboardIngestionState,
   upsertLeaderboardEvents,
 } from "./leaderboard-store";
@@ -320,6 +321,9 @@ export async function runScheduledLeaderboardSync(
       });
     }
   }
+
+  // Purge expired/used auth challenges so they don't accumulate between user requests.
+  await purgeExpiredLeaderboardProfileAuthChallenges(env);
 
   return {
     enabled: true,

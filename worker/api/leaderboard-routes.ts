@@ -44,6 +44,7 @@ const WRITE_RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 60_000;
 
 const rateLimitCounters = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_PRUNE_THRESHOLD = 1_000;
 
 function checkRateLimit(ip: string, limit: number): boolean {
   const now = Date.now();
@@ -52,11 +53,23 @@ function checkRateLimit(ip: string, limit: number): boolean {
 
   if (!entry || now >= entry.resetAt) {
     rateLimitCounters.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    pruneExpiredRateLimits(now);
     return true;
   }
 
   entry.count += 1;
   return entry.count <= limit;
+}
+
+function pruneExpiredRateLimits(now: number): void {
+  if (rateLimitCounters.size <= RATE_LIMIT_PRUNE_THRESHOLD) {
+    return;
+  }
+  for (const [key, entry] of rateLimitCounters) {
+    if (now >= entry.resetAt) {
+      rateLimitCounters.delete(key);
+    }
+  }
 }
 
 function clientIp(c: { req: { raw: Request } }): string {

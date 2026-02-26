@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CompletedGameRun } from "../components/AsteroidsCanvas";
-import { getProofArtifact, getProofJob } from "../proof/api";
+import { getProofArtifact, isTerminalProofStatus, listProofJobs } from "../proof/api";
 import { extractGroth16SealFromArtifact, packJournalRaw } from "../proof/artifact";
 import {
   explainScoreSubmissionError,
@@ -9,7 +9,6 @@ import {
 } from "../chain/score";
 import { deserializeTape } from "../game/tape";
 import type { UseWalletReturn } from "./useWallet";
-import { useGatewayHealth, type UseGatewayHealthReturn } from "./useGatewayHealth";
 import { useProofJob, type UseProofJobReturn } from "./useProofJob";
 import type { UseTokenBalanceReturn } from "./useTokenBalance";
 
@@ -20,7 +19,6 @@ export interface UseGameFlowReturn {
   wallet: UseWalletReturn;
   proof: UseProofJobReturn;
   balance: UseTokenBalanceReturn;
-  health: UseGatewayHealthReturn;
   latestRun: CompletedGameRun | null;
   hasPositiveScore: boolean;
   handleGameOver: (run: CompletedGameRun) => void;
@@ -50,7 +48,6 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
   const [claimError, setClaimError] = useState<string | null>(null);
 
   const { wallet, balance } = deps;
-  const health = useGatewayHealth();
 
   const proof = useProofJob({
     onClaimSucceeded: balance.refresh,
@@ -59,27 +56,27 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
   const scoreContractId = getScoreContractIdFromEnv();
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
 
-  // Restore in-progress job discovered via gateway health.
-  // The health endpoint only returns the job ID (not the full record),
-  // so we fetch the full job to feed into the proof hook.
+  // Restore in-progress job on mount by fetching the user's most recent job.
   useEffect(() => {
-    if (!health.activeJobId) return;
+    if (!wallet.address || !wallet.isConnected) return;
 
     let cancelled = false;
-    getProofJob(health.activeJobId)
+    listProofJobs(wallet.address, { limit: 1 })
       .then((response) => {
-        if (!cancelled) {
-          proof.setJobFromExternal(response.job);
+        if (cancelled) return;
+        const latest = response.jobs[0];
+        if (latest && !isTerminalProofStatus(latest.status)) {
+          proof.setJobFromExternal(latest);
         }
       })
       .catch(() => {
-        // Job may have expired or been pruned — ignore.
+        // Job list may be empty or unavailable — ignore.
       });
 
     return () => {
       cancelled = true;
     };
-  }, [health.activeJobId, proof.setJobFromExternal]);
+  }, [wallet.address, wallet.isConnected, proof.setJobFromExternal]);
 
   // Reset claim state when proof job changes
   useEffect(() => {
@@ -243,7 +240,6 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     wallet,
     proof,
     balance,
-    health,
     latestRun,
     hasPositiveScore,
     handleGameOver,

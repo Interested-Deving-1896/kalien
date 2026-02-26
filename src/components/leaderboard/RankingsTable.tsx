@@ -92,9 +92,15 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
           <TableRow>
             <TableHead scope="col">Rank</TableHead>
             <TableHead scope="col">Player</TableHead>
-            <TableHead scope="col" className="text-right">Score</TableHead>
-            <TableHead scope="col" className="text-right">Frames</TableHead>
-            <TableHead scope="col" className="text-right">KALIEN Earned</TableHead>
+            <TableHead scope="col" className="text-right">
+              Score
+            </TableHead>
+            <TableHead scope="col" className="text-right">
+              Frames
+            </TableHead>
+            <TableHead scope="col" className="text-right">
+              KALIEN Earned
+            </TableHead>
             <TableHead scope="col">Seed</TableHead>
             <TableHead scope="col">Completed</TableHead>
             <TableHead scope="col">Claim</TableHead>
@@ -113,9 +119,15 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
         <TableRow>
           <TableHead scope="col">Rank</TableHead>
           <TableHead scope="col">Player</TableHead>
-          <TableHead scope="col" className="text-right">Score</TableHead>
-          <TableHead scope="col" className="text-right">Frames</TableHead>
-          <TableHead scope="col" className="text-right">KALIEN Earned</TableHead>
+          <TableHead scope="col" className="text-right">
+            Score
+          </TableHead>
+          <TableHead scope="col" className="text-right">
+            Frames
+          </TableHead>
+          <TableHead scope="col" className="text-right">
+            KALIEN Earned
+          </TableHead>
           <TableHead scope="col">Seed</TableHead>
           <TableHead scope="col">Completed</TableHead>
           <TableHead scope="col">Claim</TableHead>

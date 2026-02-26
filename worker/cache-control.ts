@@ -11,18 +11,15 @@ export const JOB_STATUS_CACHE_CONTROL = "public, max-age=2, s-maxage=3";
 export const JOB_STATUS_TERMINAL_CACHE_CONTROL =
   "public, max-age=30, s-maxage=60, stale-while-revalidate=30";
 
-export const JOB_LIST_CACHE_CONTROL =
-  "public, max-age=5, s-maxage=10, stale-while-revalidate=5";
+export const JOB_LIST_CACHE_CONTROL = "public, max-age=5, s-maxage=10, stale-while-revalidate=5";
 
 // ---- Immutable artifact routes (Hono Cache API middleware) -----------------
 
 // Tape binary — never changes once written to R2.
-export const TAPE_CACHE_CONTROL =
-  "public, max-age=86400, s-maxage=604800, immutable";
+export const TAPE_CACHE_CONTROL = "public, max-age=86400, s-maxage=604800, immutable";
 
 // Proof result JSON — never changes once written.
-export const RESULT_CACHE_CONTROL =
-  "public, max-age=3600, s-maxage=86400, immutable";
+export const RESULT_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, immutable";
 
 // ---- Leaderboard -----------------------------------------------------------
 

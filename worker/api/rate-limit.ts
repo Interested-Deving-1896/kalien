@@ -6,7 +6,7 @@
  * keep memory bounded under high-traffic conditions.
  */
 
-const PRUNE_THRESHOLD = 5_000;
+const PRUNE_THRESHOLD = 1_000;
 const buckets = new Map<string, number[]>();
 
 export const SUBMISSION_LIMIT = 10;

@@ -151,10 +151,7 @@ function HeaderWallet() {
         </span>
 
         <ChevronDown
-          className={cn(
-            "size-3 text-muted-foreground transition-transform",
-            open && "rotate-180",
-          )}
+          className={cn("size-3 text-muted-foreground transition-transform", open && "rotate-180")}
           aria-hidden="true"
         />
       </button>

@@ -132,12 +132,7 @@ export function ProofsPage() {
                 Updated {timeAgo(lastRefreshAt)}
               </span>
             )}
-            <Button
-              size="sm"
-              onClick={() => fetchJobs(false)}
-              disabled={loading}
-              title="Refresh"
-            >
+            <Button size="sm" onClick={() => fetchJobs(false)} disabled={loading} title="Refresh">
               <RefreshCw className="size-3.5" />
               Refresh
             </Button>

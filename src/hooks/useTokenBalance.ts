@@ -72,9 +72,7 @@ export function useTokenBalance(walletAddress: string): UseTokenBalanceReturn {
   }, [walletAddress, refresh]);
 
   const formattedBalance =
-    balance === null
-      ? "\u2014"
-      : `${formatWholeNumber(toDisplayKalien(balance))} KALIEN`;
+    balance === null ? "\u2014" : `${formatWholeNumber(toDisplayKalien(balance))} KALIEN`;
 
   return {
     balance,

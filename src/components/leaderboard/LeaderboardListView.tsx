@@ -114,10 +114,12 @@ export function LeaderboardListView() {
     };
   }, [findAddress, limit, offset, windowKey]);
 
-  // Auto-refresh
+  // Auto-refresh (paused when tab is hidden)
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchLeaderboardRef.current?.();
+      if (document.visibilityState === "visible") {
+        fetchLeaderboardRef.current?.();
+      }
     }, AUTO_REFRESH_MS);
     return () => clearInterval(interval);
   }, []);
@@ -177,8 +179,7 @@ export function LeaderboardListView() {
           {leaderboard?.ingestion?.last_synced_at ? (
             <StatusBadge
               variant={
-                Date.now() - new Date(leaderboard.ingestion.last_synced_at).getTime() <
-                30 * 60_000
+                Date.now() - new Date(leaderboard.ingestion.last_synced_at).getTime() < 30 * 60_000
                   ? "success"
                   : "muted"
               }
@@ -228,12 +229,15 @@ export function LeaderboardListView() {
         {leaderboard?.me ? (
           <div className="flex items-center gap-2 rounded-lg border border-secondary/25 bg-[rgba(26,108,71,0.12)] px-3 py-2">
             <span className="text-sm text-secondary">
-              Your Rank: <strong>#{leaderboard.me.rank}</strong> ({leaderboard.me.score.toLocaleString()} pts)
+              Your Rank: <strong>#{leaderboard.me.rank}</strong> (
+              {leaderboard.me.score.toLocaleString()} pts)
             </span>
           </div>
         ) : findAddress ? (
           <div className="rounded-lg border border-border/30 bg-[rgba(8,19,34,0.5)] px-3 py-2">
-            <span className="text-sm text-muted-foreground">Address not ranked in this window.</span>
+            <span className="text-sm text-muted-foreground">
+              Address not ranked in this window.
+            </span>
           </div>
         ) : null}
 
@@ -271,9 +275,7 @@ export function LeaderboardListView() {
             </Button>
           </div>
         ) : leaderboard && leaderboard.entries.length === 0 ? (
-          <p className="m-0 text-[rgba(186,210,241,0.92)]">
-            No proved runs in this window yet.
-          </p>
+          <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs in this window yet.</p>
         ) : leaderboard ? (
           <RankingsTable
             entries={leaderboard.entries}

@@ -1,6 +1,5 @@
 import {
   API_TIMEOUT_GET_ARTIFACT_MS,
-  API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
   API_TIMEOUT_GET_PROOF_MS,
   API_TIMEOUT_LIST_JOBS_MS,
   API_TIMEOUT_SUBMIT_PROOF_MS,
@@ -132,35 +131,6 @@ export interface StoredProofArtifactResponse {
   prover_response?: unknown;
 }
 
-export interface GatewayProverCompatibleHealth {
-  status: "compatible";
-  image_id: string;
-  rules_digest_hex: string;
-  ruleset: string;
-}
-
-export interface GatewayProverDegradedHealth {
-  status: "degraded";
-  error: string;
-}
-
-export type GatewayProverHealth = GatewayProverCompatibleHealth | GatewayProverDegradedHealth;
-
-export interface GatewayHealthResponse {
-  success: true;
-  service: string;
-  mode: string;
-  expected: {
-    rules_digest_hex: string;
-    ruleset: string;
-    image_id: string | null;
-  };
-  checked_at: string;
-  prover: GatewayProverHealth;
-  active_jobs: number;
-  active_job_id: string | null;
-}
-
 interface ApiErrorResponse {
   success: false;
   error?: string;
@@ -283,22 +253,6 @@ export async function getProofArtifact(jobId: string): Promise<StoredProofArtifa
   }
 
   return parseJson<StoredProofArtifactResponse>(response);
-}
-
-export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
-  const response = await fetchWithTimeout(
-    "/api/health",
-    {
-      method: "GET",
-    },
-    API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
-  );
-
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-
-  return parseJson<GatewayHealthResponse>(response);
 }
 
 export interface ListProofJobsResponse {

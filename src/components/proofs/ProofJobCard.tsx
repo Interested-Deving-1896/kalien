@@ -109,7 +109,9 @@ export function ProofJobCard({ job }: { job: ProofJobPublic }) {
         )}
 
         {/* Time */}
-        <span className="hidden text-xs text-muted-foreground sm:block">{timeAgo(job.createdAt)}</span>
+        <span className="hidden text-xs text-muted-foreground sm:block">
+          {timeAgo(job.createdAt)}
+        </span>
 
         {/* Expand */}
         <ChevronDown
@@ -128,52 +130,57 @@ export function ProofJobCard({ job }: { job: ProofJobPublic }) {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatItem icon={Trophy} label="Score" value={score.toLocaleString()} />
             <StatItem label="Seed" value={formatSeedHex(job.tape.metadata.seed)} />
-            <StatItem icon={Clock} label="Frames" value={job.tape.metadata.frameCount.toLocaleString()} />
+            <StatItem
+              icon={Clock}
+              label="Frames"
+              value={job.tape.metadata.frameCount.toLocaleString()}
+            />
             <StatItem label="Tape Size" value={formatBytes(job.tape.sizeBytes)} />
           </div>
 
           {/* Proof results — VastAI provides cycles/segments/elapsed; Boundless does not */}
-          {result && (() => {
-            const hasProverStats = result.stats.total_cycles > 0 || result.stats.segments > 0;
-            const successAttempt = getSuccessfulAttempt(job);
-            const wallClockMs = successAttempt ? computeWallClockMs(successAttempt) : null;
-            const maxPriceUsd = successAttempt?.maxPriceUsd;
+          {result &&
+            (() => {
+              const hasProverStats = result.stats.total_cycles > 0 || result.stats.segments > 0;
+              const successAttempt = getSuccessfulAttempt(job);
+              const wallClockMs = successAttempt ? computeWallClockMs(successAttempt) : null;
+              const maxPriceUsd = successAttempt?.maxPriceUsd;
 
-            return hasProverStats ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <StatItem
-                  icon={Cpu}
-                  label="Total Cycles"
-                  value={result.stats.total_cycles.toLocaleString()}
-                />
-                <StatItem label="Segments" value={result.stats.segments.toLocaleString()} />
-                <StatItem
-                  icon={Zap}
-                  label="Proved In"
-                  value={formatDuration(result.elapsedMs)}
-                  highlight
-                />
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {wallClockMs != null && (
+              return hasProverStats ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <StatItem
+                    icon={Cpu}
+                    label="Total Cycles"
+                    value={result.stats.total_cycles.toLocaleString()}
+                  />
+                  <StatItem label="Segments" value={result.stats.segments.toLocaleString()} />
                   <StatItem
                     icon={Zap}
-                    label="Fulfilled In"
-                    value={formatDuration(wallClockMs)}
+                    label="Proved In"
+                    value={formatDuration(result.elapsedMs)}
                     highlight
                   />
-                )}
-                {maxPriceUsd != null && (
-                  <StatItem
-                    icon={DollarSign}
-                    label="Max Cost"
-                    value={formatCostUsd(maxPriceUsd)}
-                  />
-                )}
-              </div>
-            );
-          })()}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {wallClockMs != null && (
+                    <StatItem
+                      icon={Zap}
+                      label="Fulfilled In"
+                      value={formatDuration(wallClockMs)}
+                      highlight
+                    />
+                  )}
+                  {maxPriceUsd != null && (
+                    <StatItem
+                      icon={DollarSign}
+                      label="Max Cost"
+                      value={formatCostUsd(maxPriceUsd)}
+                    />
+                  )}
+                </div>
+              );
+            })()}
 
           {/* Attempt history */}
           {job.proverAttempts && job.proverAttempts.length > 0 && (
