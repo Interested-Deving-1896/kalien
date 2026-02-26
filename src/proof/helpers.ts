@@ -5,7 +5,7 @@ export function boundlessExplorerUrl(statusUrl: string): string | null {
   const requestId = statusUrl.slice("boundless:".length);
   try {
     const hex = BigInt(requestId).toString(16);
-    return `https://explorer.beboundless.xyz/requests/0x${hex}`;
+    return `https://explorer.beboundless.xyz/orders/0x${hex}`;
   } catch {
     return null;
   }

@@ -77,10 +77,10 @@ export function uint8ArrayToHex0x(bytes: Uint8Array): `0x${string}` {
  * The Boundless proof request explorer base URL.
  *
  * Boundless uses https://explorer.beboundless.xyz as their explorer.
- * Request detail pages are at /requests/{requestId} where requestId is
+ * Order detail pages are at /orders/{requestId} where requestId is
  * the decimal representation of the uint256 request ID.
  *
- * Reference: https://explorer.beboundless.xyz/requests/{decimal-id}
+ * Reference: https://explorer.beboundless.xyz/orders/{decimal-id}
  */
 export const BOUNDLESS_EXPLORER_BASE_URL = "https://explorer.beboundless.xyz";
 
@@ -93,7 +93,7 @@ export const BOUNDLESS_EXPLORER_BASE_URL = "https://explorer.beboundless.xyz";
  * @param requestId - The bigint request ID
  */
 export function boundlessExplorerUrl(requestId: bigint): string {
-  return `${BOUNDLESS_EXPLORER_BASE_URL}/requests/${requestId.toString(10)}`;
+  return `${BOUNDLESS_EXPLORER_BASE_URL}/orders/${requestId.toString(10)}`;
 }
 
 /**

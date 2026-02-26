@@ -144,7 +144,7 @@ describe("boundlessExplorerUrl", () => {
   it("uses the decimal representation of the request ID", () => {
     const id = 1000n;
     const url = boundlessExplorerUrl(id);
-    expect(url).toBe(`${BOUNDLESS_EXPLORER_BASE_URL}/requests/1000`);
+    expect(url).toBe(`${BOUNDLESS_EXPLORER_BASE_URL}/orders/1000`);
   });
 
   it("produces a valid URL for a realistic request ID", () => {
@@ -153,9 +153,9 @@ describe("boundlessExplorerUrl", () => {
       99999,
     );
     const url = boundlessExplorerUrl(id);
-    expect(url).toMatch(/^https:\/\/explorer\.beboundless\.xyz\/requests\/\d+$/);
+    expect(url).toMatch(/^https:\/\/explorer\.beboundless\.xyz\/orders\/\d+$/);
     // The decimal in the URL should recover the original bigint
-    const decimalPart = url.split("/requests/")[1];
+    const decimalPart = url.split("/orders/")[1];
     expect(BigInt(decimalPart)).toBe(id);
   });
 
