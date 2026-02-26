@@ -4,6 +4,7 @@ import type {
   SmartAccountRelayerMode,
   SmartWalletSession,
 } from "../wallet/smartAccount";
+import { loadSmartWalletModule } from "../wallet/loader";
 import { TESTNET_NETWORK_PASSPHRASE } from "../consts";
 
 export type WalletAction = "idle" | "restoring" | "connecting" | "creating" | "disconnecting";
@@ -23,17 +24,6 @@ export interface UseWalletReturn {
   create: () => Promise<void>;
   disconnect: () => Promise<void>;
   clearError: () => void;
-}
-
-type SmartWalletModule = typeof import("../wallet/smartAccount");
-
-let smartWalletModulePromise: Promise<SmartWalletModule> | null = null;
-
-async function loadSmartWalletModule(): Promise<SmartWalletModule> {
-  if (!smartWalletModulePromise) {
-    smartWalletModulePromise = import("../wallet/smartAccount");
-  }
-  return smartWalletModulePromise;
 }
 
 export function useWallet(): UseWalletReturn {

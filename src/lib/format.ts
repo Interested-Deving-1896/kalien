@@ -2,6 +2,11 @@ export function formatHex32(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 export function abbreviateHex(value: string, keep = 8): string {
   if (value.length <= keep * 2) {
     return value;

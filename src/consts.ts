@@ -23,3 +23,9 @@ export const API_TIMEOUT_SUBMIT_PROOF_MS = 30_000;
 export const API_TIMEOUT_GET_PROOF_MS = 10_000;
 export const API_TIMEOUT_GET_ARTIFACT_MS = 15_000;
 export const API_TIMEOUT_LIST_JOBS_MS = 20_000;
+
+export const HIGH_SCORE_THRESHOLD = 5_000;
+export const AUTO_REFRESH_PROOFS_MS = 15_000;
+export const AUTO_REFRESH_LEADERBOARD_MS = 60_000;
+export const RELATIVE_TIME_REFRESH_MS = 15_000;
+export const STELLAR_EXPLORER_TESTNET_BASE = "https://stellar.expert/explorer/testnet";

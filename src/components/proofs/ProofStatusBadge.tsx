@@ -1,16 +1,6 @@
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { ProofJobPublic, ProofJobStatus, ClaimStatus, ProverBackend } from "@/proof/api";
-
-function getActiveBackend(job: ProofJobPublic): ProverBackend | null {
-  if (!job.proverAttempts || job.proverAttempts.length === 0) {
-    return null;
-  }
-  // Find the in-progress attempt first, then fall back to last attempt
-  const inProgress = job.proverAttempts.find((a) => a.outcome === "in_progress");
-  if (inProgress) return inProgress.backend;
-  const last = job.proverAttempts[job.proverAttempts.length - 1];
-  return last?.backend ?? null;
-}
+import { getActiveBackend } from "@/proof/helpers";
 
 function backendLabel(backend: ProverBackend): string {
   return backend === "boundless" ? "Boundless" : "Vast";

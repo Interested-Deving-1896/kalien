@@ -1,5 +1,5 @@
 import { Search, X, User } from "lucide-react";
-import type { LeaderboardWindow } from "./api";
+import type { LeaderboardWindow } from "@/leaderboard/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 

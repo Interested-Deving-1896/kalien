@@ -4,12 +4,9 @@ import {
   validateAddress,
   type ConnectWalletResult,
 } from "smart-account-kit";
-import {
-  ChannelsClient,
-  PluginExecutionError,
-  PluginTransportError,
-} from "@openzeppelin/relayer-plugin-channels/dist/client";
+import { ChannelsClient } from "@openzeppelin/relayer-plugin-channels/dist/client";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
+import { formatRelayerError } from "../lib/errors";
 import {
   DEFAULT_ACCOUNT_WASM_HASH,
   DEFAULT_RPC_URL,
@@ -93,27 +90,6 @@ function toWalletSession(result: ConnectWalletResult): SmartWalletSession {
     contractId: ensureClaimantAddress(result.contractId),
     credentialId: result.credentialId,
   };
-}
-
-function formatRelayerError(error: unknown): string {
-  if (error instanceof PluginExecutionError) {
-    const errorCode =
-      typeof error.errorDetails?.code === "string" ? ` (${error.errorDetails.code})` : "";
-    return `${error.message}${errorCode}`;
-  }
-
-  if (error instanceof PluginTransportError) {
-    if (typeof error.statusCode === "number") {
-      return `${error.message} (status ${error.statusCode})`;
-    }
-    return error.message;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
 }
 
 export function getSmartAccountConfig(): SmartAccountConfig {

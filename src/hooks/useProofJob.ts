@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getProofJob,
   isTerminalProofStatus,
@@ -9,7 +9,7 @@ import {
   type ProofJobStatus,
 } from "../proof/api";
 import { serializeTape } from "../game/tape";
-import type { CompletedGameRun } from "../components/AsteroidsCanvas";
+import type { CompletedGameRun } from "../game/types";
 import {
   PROOF_STATUS_CLAIM_RETRY_POLL_INTERVAL_MS,
   PROOF_STATUS_ERROR_POLL_INTERVAL_MS,
@@ -64,6 +64,9 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   const [job, setJob] = useState<ProofJobPublic | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const onClaimSucceededRef = useRef(options?.onClaimSucceeded);
+  onClaimSucceededRef.current = options?.onClaimSucceeded;
 
   const activeJobId = job?.jobId ?? null;
   const activeJobStatus = job?.status ?? null;
@@ -208,9 +211,9 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   // Notify when claim succeeds via polling
   useEffect(() => {
     if (job?.claim.status === "succeeded") {
-      options?.onClaimSucceeded?.();
+      onClaimSucceededRef.current?.();
     }
-  }, [job?.claim.status, options]);
+  }, [job?.claim.status]);
 
   return {
     job,

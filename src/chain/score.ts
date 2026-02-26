@@ -1,10 +1,8 @@
 import { Address, Asset, contract, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
-import {
-  ChannelsClient,
-  PluginExecutionError,
-  PluginTransportError,
-} from "@openzeppelin/relayer-plugin-channels/dist/client";
+import { ChannelsClient } from "@openzeppelin/relayer-plugin-channels/dist/client";
 import type { TransactionResult } from "smart-account-kit";
+import { formatRelayerError } from "../lib/errors";
+import { loadSmartWalletModule } from "../wallet/loader";
 
 export interface SubmitScoreTransactionInput {
   scoreContractId: string;
@@ -24,46 +22,9 @@ export interface TokenBalanceResult {
   balance: bigint;
 }
 
-type SmartWalletModule = typeof import("../wallet/smartAccount");
-
-let smartWalletModulePromise: Promise<SmartWalletModule> | null = null;
-
-async function loadSmartWalletModule(): Promise<SmartWalletModule> {
-  if (!smartWalletModulePromise) {
-    smartWalletModulePromise = import("../wallet/smartAccount");
-  }
-  return smartWalletModulePromise;
-}
-
 function asBuffer(bytes: Uint8Array): Buffer {
   // SDK typing requires Buffer, but runtime accepts Uint8Array-compatible bytes.
   return bytes as unknown as Buffer;
-}
-
-function normalizeErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  return String(error);
-}
-
-function formatRelayerError(error: unknown): string {
-  if (error instanceof PluginExecutionError) {
-    const code =
-      typeof error.errorDetails?.code === "string" && error.errorDetails.code.trim().length > 0
-        ? ` (${error.errorDetails.code.trim()})`
-        : "";
-    return `${error.message}${code}`;
-  }
-
-  if (error instanceof PluginTransportError) {
-    if (typeof error.statusCode === "number") {
-      return `${error.message} (status ${error.statusCode})`;
-    }
-    return error.message;
-  }
-
-  return normalizeErrorMessage(error);
 }
 
 function mapScoreContractError(errorMessage: string): string | null {

@@ -1,3 +1,11 @@
+import type { GameRunRecord } from "./AsteroidsGame";
+
+export interface CompletedGameRun {
+  record: GameRunRecord;
+  frameCount: number;
+  endedAtMs: number;
+}
+
 export type GameMode = "menu" | "playing" | "paused" | "game-over" | "replay";
 
 export type AsteroidSize = "large" | "medium" | "small";

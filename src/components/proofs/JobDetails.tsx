@@ -2,29 +2,11 @@ import type * as React from "react";
 import { ExternalLink, Download } from "lucide-react";
 import type { ProofJobPublic, ProverAttempt } from "@/proof/api";
 import { getTapeDownloadUrl } from "@/proof/api";
-import { formatDuration } from "@/lib/format";
-import { formatUtcDateTime, timeAgo } from "@/time";
+import { boundlessExplorerUrl } from "@/proof/helpers";
+import { formatBytes, formatDuration, formatHex32 } from "@/lib/format";
+import { formatUtcDateTime, timeAgo } from "@/lib/time";
+import { STELLAR_EXPLORER_TESTNET_BASE } from "@/consts";
 import { BackendBadge } from "./BackendBadge";
-
-function formatSeedHex(seed: number): string {
-  return `0x${(seed >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-function boundlessExplorerUrl(statusUrl: string): string | null {
-  if (!statusUrl.startsWith("boundless:")) return null;
-  const requestId = statusUrl.slice("boundless:".length);
-  try {
-    const hex = BigInt(requestId).toString(16);
-    return `https://explorer.beboundless.xyz/requests/0x${hex}`;
-  } catch {
-    return null;
-  }
-}
 
 function AttemptRow({ attempt }: { attempt: ProverAttempt }) {
   const explorerUrl = attempt.statusUrl ? boundlessExplorerUrl(attempt.statusUrl) : null;
@@ -81,7 +63,7 @@ export function JobDetails({ job }: { job: ProofJobPublic }) {
   const result = job.result?.summary ?? null;
 
   const stellarTxUrl = job.claim.txHash
-    ? `https://stellar.expert/explorer/testnet/tx/${job.claim.txHash}`
+    ? `${STELLAR_EXPLORER_TESTNET_BASE}/tx/${job.claim.txHash}`
     : null;
 
   return (
@@ -93,7 +75,7 @@ export function JobDetails({ job }: { job: ProofJobPublic }) {
         </h4>
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
           <DetailItem label="Score">{job.tape.metadata.finalScore.toLocaleString()}</DetailItem>
-          <DetailItem label="Seed">{formatSeedHex(seed)}</DetailItem>
+          <DetailItem label="Seed">{formatHex32(seed)}</DetailItem>
           <DetailItem label="Frames">{frameCount.toLocaleString()}</DetailItem>
           <DetailItem label="Tape Size">{formatBytes(tapeSize)}</DetailItem>
         </div>

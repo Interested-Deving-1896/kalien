@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo } from "react";
+import { Loader2 } from "lucide-react";
 import { SiteHeader } from "./components/SiteHeader";
 import { useGameFlow, type GameFlowStep } from "./hooks/useGameFlow";
 import { GamePanel } from "./components/game/GamePanel";
@@ -6,12 +7,14 @@ import { StepIndicator, type Step } from "./components/proof/StepIndicator";
 import { WalletConnect } from "./components/wallet/WalletConnect";
 import { SubmitScore } from "./components/submit/SubmitScore";
 import { PageShell } from "./components/shared/PageShell";
+import { ErrorBoundary } from "./components/shared/ErrorBoundary";
 import { WalletProvider, useWalletContext } from "./contexts/WalletContext";
 import { ProofProgress } from "./components/proof/ProofProgress";
 import { Button } from "./components/ui/button";
 import { CheckCircle2, ExternalLink, Trophy, Clock, X } from "lucide-react";
 import { formatFramesAsTime } from "./lib/format";
 import { cn } from "./lib/utils";
+import { HIGH_SCORE_THRESHOLD } from "./consts";
 
 const LazyLeaderboardPage = lazy(() =>
   import("./components/leaderboard/LeaderboardPage").then((m) => ({
@@ -31,6 +34,14 @@ const FLOW_STEPS: Step[] = [
   { key: "prove", label: "Prove" },
   { key: "earn", label: "Earn" },
 ];
+
+function SuspenseFallback() {
+  return (
+    <div className="flex min-h-[200px] items-center justify-center">
+      <Loader2 className="size-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
 
 function completedSteps(current: GameFlowStep): string[] {
   const order: GameFlowStep[] = ["play", "score", "wallet", "prove", "earn"];
@@ -53,7 +64,7 @@ function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
     flow.proof.job?.status === "succeeded" && flow.proof.job?.claim.status === "succeeded";
 
   const score = flow.latestRun?.record.finalScore ?? 0;
-  const isHighScore = score >= 5000;
+  const isHighScore = score >= HIGH_SCORE_THRESHOLD;
   const duration = flow.latestRun ? formatFramesAsTime(flow.latestRun.frameCount) : "";
 
   return (
@@ -203,15 +214,21 @@ function App() {
     <WalletProvider>
       <SiteHeader />
       {window.location.pathname.startsWith("/leaderboard") ? (
-        <Suspense>
-          <LazyLeaderboardPage />
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<SuspenseFallback />}>
+            <LazyLeaderboardPage />
+          </Suspense>
+        </ErrorBoundary>
       ) : window.location.pathname.startsWith("/proofs") ? (
-        <Suspense>
-          <LazyProofsPage />
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<SuspenseFallback />}>
+            <LazyProofsPage />
+          </Suspense>
+        </ErrorBoundary>
       ) : (
-        <GamePage />
+        <ErrorBoundary>
+          <GamePage />
+        </ErrorBoundary>
       )}
     </WalletProvider>
   );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CompletedGameRun } from "../components/AsteroidsCanvas";
+import type { CompletedGameRun } from "../game/types";
 import { getProofArtifact, isTerminalProofStatus, listProofJobs } from "../proof/api";
 import { extractGroth16SealFromArtifact, packJournalRaw } from "../proof/artifact";
 import {

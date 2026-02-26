@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { formatUtcDateTime, timeAgo } from "../../time";
+import { formatUtcDateTime, timeAgo } from "@/lib/time";
+import { RELATIVE_TIME_REFRESH_MS } from "@/consts";
 
 /**
  * Displays a human-readable relative timestamp (e.g. "3 min ago") that
@@ -13,7 +14,7 @@ export function RelativeTime({ value }: { value: string | null | undefined }) {
     if (!value) {
       return;
     }
-    const interval = setInterval(() => forceUpdate((n) => n + 1), 15_000);
+    const interval = setInterval(() => forceUpdate((n) => n + 1), RELATIVE_TIME_REFRESH_MS);
     return () => clearInterval(interval);
   }, [value]);
 

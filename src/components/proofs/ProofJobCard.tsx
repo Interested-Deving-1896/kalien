@@ -11,39 +11,13 @@ import {
 } from "lucide-react";
 import type { ProofJobPublic, ProverAttempt } from "@/proof/api";
 import { getTapeDownloadUrl } from "@/proof/api";
-import { formatDuration } from "@/lib/format";
-import { timeAgo } from "@/time";
+import { boundlessExplorerUrl, getActiveBackend } from "@/proof/helpers";
+import { formatBytes, formatDuration, formatHex32 } from "@/lib/format";
+import { timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { STELLAR_EXPLORER_TESTNET_BASE } from "@/consts";
 import { ProofStatusBadge } from "./ProofStatusBadge";
 import { BackendBadge } from "./BackendBadge";
-
-function formatSeedHex(seed: number): string {
-  return `0x${(seed >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-function boundlessExplorerUrl(statusUrl: string): string | null {
-  if (!statusUrl.startsWith("boundless:")) return null;
-  const requestId = statusUrl.slice("boundless:".length);
-  try {
-    const hex = BigInt(requestId).toString(16);
-    return `https://explorer.beboundless.xyz/requests/0x${hex}`;
-  } catch {
-    return null;
-  }
-}
-
-function getDisplayBackend(job: ProofJobPublic) {
-  if (!job.proverAttempts || job.proverAttempts.length === 0) return null;
-  const inProgress = job.proverAttempts.find((a) => a.outcome === "in_progress");
-  if (inProgress) return inProgress.backend;
-  const last = job.proverAttempts[job.proverAttempts.length - 1];
-  return last?.backend ?? null;
-}
 
 function getSuccessfulAttempt(job: ProofJobPublic): ProverAttempt | null {
   return job.proverAttempts?.find((a) => a.outcome === "success") ?? null;
@@ -64,10 +38,10 @@ export function ProofJobCard({ job }: { job: ProofJobPublic }) {
   const [expanded, setExpanded] = useState(false);
 
   const score = job.tape.metadata.finalScore;
-  const backend = getDisplayBackend(job);
+  const backend = getActiveBackend(job);
   const result = job.result?.summary ?? null;
   const stellarTxUrl = job.claim.txHash
-    ? `https://stellar.expert/explorer/testnet/tx/${job.claim.txHash}`
+    ? `${STELLAR_EXPLORER_TESTNET_BASE}/tx/${job.claim.txHash}`
     : null;
   const isClaimed = job.claim.status === "succeeded";
 
@@ -129,7 +103,7 @@ export function ProofJobCard({ job }: { job: ProofJobPublic }) {
           {/* Stats grid */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatItem icon={Trophy} label="Score" value={score.toLocaleString()} />
-            <StatItem label="Seed" value={formatSeedHex(job.tape.metadata.seed)} />
+            <StatItem label="Seed" value={formatHex32(job.tape.metadata.seed)} />
             <StatItem
               icon={Clock}
               label="Frames"

@@ -6,6 +6,7 @@ import "@fontsource/monaspace-krypton/600.css";
 import "@fontsource/monaspace-krypton/700.css";
 import "@fontsource/monaspace-neon/600.css";
 import "@fontsource/monaspace-neon/700.css";
+import { ErrorBoundary } from "./components/shared/ErrorBoundary";
 import App from "./App.tsx";
 import "./index.css";
 
@@ -13,7 +14,9 @@ const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   );
 }

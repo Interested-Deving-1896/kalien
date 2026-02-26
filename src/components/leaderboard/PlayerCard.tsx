@@ -1,20 +1,13 @@
 import { Link, Trophy, User } from "lucide-react";
-import type { LeaderboardPlayerResponse } from "./api";
+import type { LeaderboardPlayerResponse } from "@/leaderboard/api";
 import { abbreviateAddress, formatMetric } from "@/lib/format";
+import { isSafeUrl } from "@/lib/validation";
 import { Card } from "@/components/ui/card";
 import { StatCard, StatGrid } from "@/components/shared/StatCard";
 import { RelativeTime } from "./RelativeTime";
 
 export interface PlayerCardProps {
   player: LeaderboardPlayerResponse["player"];
-}
-
-function isSafeUrl(url: string | null | undefined): boolean {
-  if (!url) {
-    return false;
-  }
-  const trimmed = url.trim().toLowerCase();
-  return trimmed.startsWith("http://") || trimmed.startsWith("https://");
 }
 
 function RankValue({ rank }: { rank: number | null }) {

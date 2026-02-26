@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { abbreviateAddress } from "@/lib/format";
+import { toNullableTrimmed } from "@/lib/validation";
 import {
   getLeaderboardPlayer,
   LeaderboardApiError,
   type LeaderboardPlayerResponse,
   updateLeaderboardProfile,
-} from "./api";
+} from "@/leaderboard/api";
 import { Card } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/shared/Skeleton";
+import { Table, TableBody } from "@/components/ui/table";
+import { SkeletonRows } from "@/components/shared/Skeleton";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
 import { PlayerCard } from "./PlayerCard";
 import { EditProfile } from "./EditProfile";
 import { RecentRunsTable } from "./RecentRunsTable";
+import { PageHero } from "@/components/shared/PageHero";
+import { resolveSmartWalletSessionForClaimant } from "@/wallet/smartAccount";
 
 export interface LeaderboardPlayerViewProps {
   playerAddress: string;
@@ -21,27 +24,6 @@ export interface LeaderboardPlayerViewProps {
 
 function isSmartAccountContractAddress(address: string): boolean {
   return address.trim().startsWith("C");
-}
-
-function toNullableTrimmed(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function SkeletonRows({ count, cols }: { count: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <TableRow key={i}>
-          {Array.from({ length: cols }, (__, j) => (
-            <TableCell key={j}>
-              <Skeleton wide={j === 1 || j === cols - 2} />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
-  );
 }
 
 export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewProps) {
@@ -120,9 +102,8 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
     setProfileSavedAt(null);
 
     try {
-      const walletModule = await import("../../wallet/smartAccount");
       const walletSession =
-        await walletModule.resolveSmartWalletSessionForClaimant(claimantAddress);
+        await resolveSmartWalletSessionForClaimant(claimantAddress);
       const updated = await updateLeaderboardProfile(
         claimantAddress,
         {
@@ -159,16 +140,10 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
 
   return (
     <>
-      {/* Hero Header */}
-      <header className="animate-rise flex flex-col items-start justify-between gap-3 rounded-xl border border-[rgba(122,185,255,0.34)] bg-[radial-gradient(circle_at_110%_0%,rgba(102,231,196,0.12),transparent_40%),linear-gradient(160deg,rgba(7,14,25,0.8),rgba(5,11,20,0.95))] p-[clamp(0.95rem,2.6vw,1.2rem)] shadow-[0_22px_70px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.07)] sm:flex-row">
-        <div>
-          <h1 className="m-0 font-display text-[clamp(1.75rem,4.2vw,2.4rem)] tracking-[0.09em] uppercase [text-shadow:0_0_16px_rgba(79,196,255,0.26)]">
-            {playerData?.player.profile?.username?.trim() || abbreviateAddress(playerAddress)}
-          </h1>
-          <p className="m-0 mt-1 text-[rgba(205,238,226,0.92)]">
-            Profile, rankings, and recent proved runs.
-          </p>
-        </div>
+      <PageHero
+        title={playerData?.player.profile?.username?.trim() || abbreviateAddress(playerAddress)}
+        subtitle="Profile, rankings, and recent proved runs."
+      >
         <a
           className="inline-flex items-center gap-1.5 font-display text-sm uppercase tracking-wider text-[#9de0ff] no-underline hover:underline"
           href="/leaderboard"
@@ -176,7 +151,7 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
           <ChevronLeft className="size-4" />
           Back To Leaderboard
         </a>
-      </header>
+      </PageHero>
 
       {/* Loading state */}
       {playerLoading ? (

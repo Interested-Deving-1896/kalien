@@ -1,8 +1,9 @@
 import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
+import type { ClaimStatus } from "@/proof/api";
+
+export type { ClaimStatus };
 
 export type LeaderboardWindow = "10m" | "day" | "all";
-
-export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
 
 export interface PlayerProfile {
   claimantAddress: string;

@@ -5,8 +5,9 @@ import {
   LeaderboardApiError,
   type LeaderboardPageResponse,
   type LeaderboardWindow,
-} from "./api";
-import { formatUtcDateTime, timeAgo } from "../../time";
+} from "@/leaderboard/api";
+import { formatUtcDateTime, timeAgo } from "@/lib/time";
+import { toNullableTrimmed } from "@/lib/validation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -14,14 +15,9 @@ import { ErrorMessage } from "@/components/shared/ErrorMessage";
 import { RelativeTime } from "./RelativeTime";
 import { TimeWindowPicker, RankingsSearch } from "./LeaderboardFilters";
 import { RankingsTable } from "./RankingsTable";
+import { PageHero } from "@/components/shared/PageHero";
 import { useWalletContext } from "@/contexts/WalletContext";
-
-const AUTO_REFRESH_MS = 60_000;
-
-function toNullableTrimmed(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+import { AUTO_REFRESH_LEADERBOARD_MS } from "@/consts";
 
 export function LeaderboardListView() {
   const { wallet } = useWalletContext();
@@ -120,7 +116,7 @@ export function LeaderboardListView() {
       if (document.visibilityState === "visible") {
         fetchLeaderboardRef.current?.();
       }
-    }, AUTO_REFRESH_MS);
+    }, AUTO_REFRESH_LEADERBOARD_MS);
     return () => clearInterval(interval);
   }, []);
 
@@ -165,16 +161,10 @@ export function LeaderboardListView() {
 
   return (
     <>
-      {/* Hero Header — mirrors Proofs page style */}
-      <header className="animate-rise flex flex-col items-start justify-between gap-3 rounded-xl border border-[rgba(122,185,255,0.34)] bg-[radial-gradient(circle_at_110%_0%,rgba(102,231,196,0.12),transparent_40%),linear-gradient(160deg,rgba(7,14,25,0.8),rgba(5,11,20,0.95))] p-[clamp(0.95rem,2.6vw,1.2rem)] shadow-[0_22px_70px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.07)] sm:flex-row">
-        <div>
-          <h1 className="m-0 font-display text-[clamp(1.75rem,4.2vw,2.4rem)] tracking-[0.09em] uppercase [text-shadow:0_0_16px_rgba(79,196,255,0.26)]">
-            Leaderboard
-          </h1>
-          <p className="m-0 mt-1 text-[rgba(205,238,226,0.92)]">
-            Rolling 10m, 24h, and all-time rankings from proved runs.
-          </p>
-        </div>
+      <PageHero
+        title="Leaderboard"
+        subtitle="Rolling 10m, 24h, and all-time rankings from proved runs."
+      >
         <div className="flex items-center gap-2">
           {leaderboard?.ingestion?.last_synced_at ? (
             <StatusBadge
@@ -200,7 +190,7 @@ export function LeaderboardListView() {
             Refresh
           </Button>
         </div>
-      </header>
+      </PageHero>
 
       <ErrorMessage message={error} />
 

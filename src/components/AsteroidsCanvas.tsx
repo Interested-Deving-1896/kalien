@@ -1,12 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { GameRunRecord } from "../game/AsteroidsGame";
 import { AsteroidsGame } from "../game/AsteroidsGame";
+import type { CompletedGameRun } from "../game/types";
 
-export interface CompletedGameRun {
-  record: GameRunRecord;
-  frameCount: number;
-  endedAtMs: number;
-}
+export type { CompletedGameRun };
 
 interface AsteroidsCanvasProps {
   onGameOver?: (run: CompletedGameRun) => void;

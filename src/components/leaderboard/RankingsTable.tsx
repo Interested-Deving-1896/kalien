@@ -1,6 +1,7 @@
 import { Medal, Trophy } from "lucide-react";
-import type { ClaimStatus, LeaderboardEntry } from "./api";
+import type { LeaderboardEntry } from "@/leaderboard/api";
 import { abbreviateAddress, formatHex32, formatMetric } from "@/lib/format";
+import { isSafeUrl } from "@/lib/validation";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
@@ -11,8 +12,9 @@ import {
   TableRow,
   TableCell,
 } from "@/components/ui/table";
-import { Skeleton } from "@/components/shared/Skeleton";
+import { SkeletonRows } from "@/components/shared/Skeleton";
 import { RelativeTime } from "./RelativeTime";
+import { claimStatusBadgeVariant } from "./helpers";
 
 export interface RankingsTableProps {
   entries: LeaderboardEntry[];
@@ -20,27 +22,8 @@ export interface RankingsTableProps {
   isLoading?: boolean;
 }
 
-function isSafeUrl(url: string | null | undefined): boolean {
-  if (!url) {
-    return false;
-  }
-  const trimmed = url.trim().toLowerCase();
-  return trimmed.startsWith("http://") || trimmed.startsWith("https://");
-}
-
 function displayName(entry: LeaderboardEntry): string {
   return entry.profile?.username?.trim() || abbreviateAddress(entry.claimantAddress);
-}
-
-function claimStatusBadgeVariant(status: ClaimStatus): "success" | "error" | "info" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "error";
-    default:
-      return "info";
-  }
 }
 
 function RankBadge({ rank }: { rank: number }) {
@@ -66,22 +49,6 @@ function RankBadge({ rank }: { rank: number }) {
     );
   }
   return <span className="font-display tracking-wider">#{rank}</span>;
-}
-
-function SkeletonRows({ count, cols }: { count: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <TableRow key={i}>
-          {Array.from({ length: cols }, (__, j) => (
-            <TableCell key={j}>
-              <Skeleton wide={j === 1 || j === cols - 2} />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
-  );
 }
 
 export function RankingsTable({ entries, highlightAddress, isLoading }: RankingsTableProps) {

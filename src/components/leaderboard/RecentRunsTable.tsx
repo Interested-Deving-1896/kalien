@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { ClaimStatus, LeaderboardPlayerResponse } from "./api";
+import type { LeaderboardPlayerResponse } from "@/leaderboard/api";
 import { formatHex32, formatMetric } from "@/lib/format";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,9 @@ import {
   TableRow,
   TableCell,
 } from "@/components/ui/table";
-import { Skeleton } from "@/components/shared/Skeleton";
+import { SkeletonRows } from "@/components/shared/Skeleton";
 import { RelativeTime } from "./RelativeTime";
+import { claimStatusBadgeVariant } from "./helpers";
 
 export interface RecentRunsTableProps {
   runs: LeaderboardPlayerResponse["player"]["recent_runs"];
@@ -22,33 +23,6 @@ export interface RecentRunsTableProps {
   onOffsetChange: (offset: number) => void;
   isLoading: boolean;
   limit: number;
-}
-
-function claimStatusBadgeVariant(status: ClaimStatus): "success" | "error" | "info" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "failed":
-      return "error";
-    default:
-      return "info";
-  }
-}
-
-function SkeletonRows({ count, cols }: { count: number; cols: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <TableRow key={i}>
-          {Array.from({ length: cols }, (__, j) => (
-            <TableCell key={j}>
-              <Skeleton wide={j === 1 || j === cols - 2} />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
-  );
 }
 
 export function RecentRunsTable({

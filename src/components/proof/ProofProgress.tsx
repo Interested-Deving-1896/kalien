@@ -22,27 +22,6 @@ export interface ProofProgressProps {
   className?: string;
 }
 
-function friendlyStatusForDisplay(status: ProofJobStatus | "idle"): string {
-  switch (status) {
-    case "idle":
-      return "Ready";
-    case "queued":
-      return "Waiting in queue...";
-    case "dispatching":
-      return "Preparing proof...";
-    case "prover_running":
-      return "Generating proof...";
-    case "retrying":
-      return "Retrying...";
-    case "succeeded":
-      return "Proof complete!";
-    case "failed":
-      return "Proof failed";
-    default:
-      return "Processing...";
-  }
-}
-
 export function ProofProgress({
   status,
   friendlyStatus,
@@ -60,7 +39,7 @@ export function ProofProgress({
 }: ProofProgressProps) {
   const isSucceeded = status === "succeeded";
   const isFailed = status === "failed";
-  const displayStatus = friendlyStatus || friendlyStatusForDisplay(status);
+  const displayStatus = friendlyStatus || status;
 
   return (
     <Card
