@@ -16,8 +16,13 @@ function makeAttempt(overrides: Partial<ProverAttempt> = {}): ProverAttempt {
     endedAt: "2026-01-01T00:01:00.000Z",
     outcome: "success",
     error: null,
+    errorDetail: null,
+    errorCode: null,
     proverJobId: "req-0x1234",
     statusUrl: "boundless:0x1234",
+    actualCostUsd: null,
+    proverAddress: null,
+    fulfillmentTxHash: null,
     ...overrides,
   };
 }

@@ -29,7 +29,7 @@ import { MAX_INLINE_STDIN_BYTES } from "../config";
 import { boundlessMarketAbi, eip712Types } from "../abi";
 import { encodeStdin } from "../stdin";
 import { uploadInput } from "../storage";
-import { fetchEthPriceUsd, usdToWei } from "../pricing";
+import { fetchEthPriceUsd, usdToWei, weiToUsd } from "../pricing";
 import { adaptFulfillmentToProverResponse } from "../adapter";
 import { parseAndValidateTape } from "../../tape";
 import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../../constants";
@@ -380,12 +380,32 @@ export class BoundlessClient {
       };
     }
 
-    // 3. Convert fulfillment to the prover response format
+    // 3. Read settlement price from requestLocks (non-fatal if it fails)
+    let actualCostUsd: number | null = null;
+    try {
+      const [lockPrice] = await publicClient.readContract({
+        address: config.marketAddress,
+        abi: boundlessMarketAbi,
+        functionName: "requestLocks",
+        args: [requestId],
+      });
+      if (lockPrice > 0n) {
+        const ethPrice = await fetchEthPriceUsd(config.rpcUrl, Number(config.chainId));
+        actualCostUsd = weiToUsd(lockPrice, ethPrice);
+      }
+    } catch { /* non-fatal — settlement price is advisory */ }
+
+    // 4. Convert fulfillment to the prover response format
     const proverResponse = adaptFulfillmentToProverResponse(fulfillmentData);
 
     return {
       type: "success",
       response: proverResponse,
+      metadata: {
+        actualCostUsd,
+        proverAddress: fulfillmentData.proverAddress,
+        fulfillmentTxHash: fulfillmentData.fulfillmentTxHash,
+      },
     };
   }
 
@@ -562,7 +582,7 @@ export class BoundlessClient {
       ],
     });
 
-    const ourLog = (logs as Array<{ topics?: string[]; data?: string }>).find((log) => {
+    const ourLog = (logs as Array<{ topics?: string[]; data?: string; transactionHash?: string }>).find((log) => {
       const topic0 = log.topics?.[0]?.toLowerCase();
       const topic1 = log.topics?.[1]?.toLowerCase();
       return (
@@ -576,7 +596,14 @@ export class BoundlessClient {
       );
     }
 
-    return this.parseFulfillmentFromEventData(ourLog.data);
+    // Extract prover address from topics[2] (indexed address, left-padded to 32 bytes)
+    const proverAddress = ourLog.topics?.[2]
+      ? `0x${ourLog.topics[2].slice(-40)}`
+      : null;
+    const fulfillmentTxHash = ourLog.transactionHash ?? null;
+
+    const result = this.parseFulfillmentFromEventData(ourLog.data);
+    return { ...result, proverAddress, fulfillmentTxHash };
   }
 
   /**
@@ -659,7 +686,7 @@ export class BoundlessClient {
     );
     const journal = hexToUint8Array(journalHex);
 
-    return { seal, journal };
+    return { seal, journal, proverAddress: null, fulfillmentTxHash: null };
   }
 }
 

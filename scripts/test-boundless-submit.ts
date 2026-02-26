@@ -570,7 +570,7 @@ console.log("  PASS: seal and journal valid");
 
 // ── Step 6: Adapter pipeline round-trip ──────────────────────────────────
 console.log("\nStep 6: Testing adapter pipeline...");
-const adapted = adaptFulfillmentToProverResponse({ seal, journal });
+const adapted = adaptFulfillmentToProverResponse({ seal, journal, proverAddress: null, fulfillmentTxHash: null });
 
 // Verify the adapted response reconstructs the correct 260-byte seal
 const groth16 = (adapted.result!.proof.receipt as { inner: { Groth16: { seal: number[]; verifier_parameters: number[] } } }).inner.Groth16;

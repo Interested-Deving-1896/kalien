@@ -282,6 +282,24 @@ export function isRetryableDirectClaimMessage(rawMessage: string): boolean {
   );
 }
 
+function safeJsonStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function buildErrorDetail(parts: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(parts)) {
+    if (value == null) continue;
+    const str = typeof value === "string" ? value : safeJsonStringify(value) ?? String(value);
+    if (str.length > 0) lines.push(`${key}: ${str}`);
+  }
+  return lines.join("\n");
+}
+
 async function submitSorobanOperationViaChannels(
   config: ChannelsConfig,
   payload: SorobanInvokePayload,
@@ -309,6 +327,13 @@ async function submitSorobanOperationViaChannels(
       return {
         type: "retry",
         message: `channels relayer transport failed: ${error.message}`,
+        errorDetail: buildErrorDetail({
+          category: error.category,
+          statusCode: error.statusCode,
+          message: error.message,
+          errorDetails: error.errorDetails,
+          stack: error.stack,
+        }),
       };
     }
 
@@ -318,6 +343,13 @@ async function submitSorobanOperationViaChannels(
       return {
         type: isRetryableChannelsExecution(error.message, code) ? "retry" : "fatal",
         message: `channels relayer soroban submission failed: ${detail}`,
+        errorDetail: buildErrorDetail({
+          category: error.category,
+          code,
+          message: error.message,
+          errorDetails: error.errorDetails,
+          stack: error.stack,
+        }),
       };
     }
 
@@ -325,6 +357,10 @@ async function submitSorobanOperationViaChannels(
     return {
       type: isRetryableDirectClaimMessage(detail) ? "retry" : "fatal",
       message: `channels relayer soroban submission failed: ${detail}`,
+      errorDetail: buildErrorDetail({
+        message: detail,
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
     };
   }
 }
@@ -421,6 +457,11 @@ export async function submitClaimDirect(
     return {
       type: retryable ? "retry" : "fatal",
       message: `direct claim failed during ${phase}: ${detail}`,
+      errorDetail: buildErrorDetail({
+        phase,
+        message: detail,
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
     };
   }
 }

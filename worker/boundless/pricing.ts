@@ -89,3 +89,13 @@ export function usdToWei(usd: number, ethPriceUsd: number): bigint {
   const priceMicro = BigInt(Math.round(ethPriceUsd * 1e6));
   return (usdMicro * 10n ** 18n) / priceMicro;
 }
+
+/**
+ * Convert a wei amount to USD using the current ETH/USD price.
+ * Inverse of usdToWei. Uses scaled integer arithmetic.
+ */
+export function weiToUsd(wei: bigint, ethPriceUsd: number): number {
+  const priceMicro = BigInt(Math.round(ethPriceUsd * 1e6));
+  const usdMicro = (wei * priceMicro) / 10n ** 18n;
+  return Number(usdMicro) / 1e6;
+}

@@ -394,6 +394,24 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     });
   });
 
+  api.post("/proofs/jobs/:jobId/retry-claim", async (c) => {
+    const jobId = c.req.param("jobId");
+    if (!jobId) {
+      return jsonError(c, 400, "invalid job id in path");
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    try {
+      const job = await coordinator.retryFailedClaim(jobId);
+      if (!job) {
+        return jsonError(c, 404, `job not found: ${jobId}`);
+      }
+      return c.json({ success: true, job: asPublicJob(job) });
+    } catch (error) {
+      return jsonError(c, 409, safeErrorMessage(error));
+    }
+  });
+
   api.get(
     "/proofs/jobs/:jobId/result",
     cache({

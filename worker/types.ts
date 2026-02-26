@@ -7,9 +7,24 @@ export interface ProverAttempt {
   endedAt: string | null;
   outcome: "in_progress" | "success" | "failed";
   error: string | null;
+  errorDetail: string | null; // Rich structured error (parity with ClaimAttempt)
+  errorCode: string | null; // VastAI error_code or Boundless error category
   proverJobId: string | null;
   statusUrl: string | null; // "boundless:{requestId}" or Vast.ai job URL
   maxPriceUsd?: number | null; // Boundless: max price offered (USD)
+  actualCostUsd: number | null; // Boundless: actual settlement cost in USD
+  proverAddress: string | null; // Boundless: on-chain prover address from ProofDelivered event
+  fulfillmentTxHash: string | null; // Boundless: tx hash of the fulfillment
+}
+
+export interface ClaimAttempt {
+  index: number;
+  startedAt: string;
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  errorDetail: string | null;
+  txHash: string | null;
 }
 
 export type ProofJobStatus =
@@ -115,6 +130,7 @@ export interface ProofJobRecord {
   queue: QueueTracking;
   prover: ProverTracking;
   proverAttempts: ProverAttempt[];
+  claimAttempts: ClaimAttempt[];
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
@@ -212,6 +228,7 @@ export interface PublicProofJob {
   queue: QueueTracking;
   prover: ProverTracking;
   proverAttempts: ProverAttempt[];
+  claimAttempts: ClaimAttempt[];
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
@@ -294,8 +311,14 @@ export type ProverSubmitResult =
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 
+export interface ProverSuccessMetadata {
+  actualCostUsd: number | null;
+  proverAddress: string | null;
+  fulfillmentTxHash: string | null;
+}
+
 export type ProverPollResult =
   | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean }
-  | { type: "success"; response: ProverGetJobResponse }
-  | { type: "retry"; message: string; clearProverJob?: boolean }
-  | { type: "fatal"; message: string };
+  | { type: "success"; response: ProverGetJobResponse; metadata?: ProverSuccessMetadata }
+  | { type: "retry"; message: string; clearProverJob?: boolean; errorCode?: string; errorDetail?: string }
+  | { type: "fatal"; message: string; errorCode?: string; errorDetail?: string };

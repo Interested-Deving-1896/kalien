@@ -58,6 +58,8 @@ export interface BoundlessOffer {
 export interface BoundlessFulfillmentData {
   seal: Uint8Array;
   journal: Uint8Array;
+  proverAddress: string | null; // topics[2] from ProofDelivered event
+  fulfillmentTxHash: string | null; // transactionHash from log
 }
 
 // ── Submit / Poll results ─────────────────────────────────────────────────

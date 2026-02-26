@@ -82,6 +82,18 @@ export const boundlessMarketAbi = [
     stateMutability: "payable",
   },
   {
+    type: "function",
+    name: "requestLocks",
+    inputs: [{ name: "requestId", type: "uint256" }],
+    outputs: [
+      { name: "price", type: "uint96" },
+      { name: "prover", type: "address" },
+      { name: "collateral", type: "uint96" },
+      { name: "isPaid", type: "bool" },
+    ],
+    stateMutability: "view",
+  },
+  {
     type: "event",
     name: "ProofDelivered",
     inputs: [

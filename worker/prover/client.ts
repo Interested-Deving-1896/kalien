@@ -427,6 +427,7 @@ export async function pollProverOnce(
     return {
       type: "retry",
       message: `prover status endpoint returned ${response.status}${codePart}${detailPart}`,
+      errorCode: errorBody?.error_code ?? undefined,
     };
   }
 
@@ -485,6 +486,8 @@ export async function pollProverOnce(
         type: "retry",
         message: `prover job failed with retryable error_code=${payload.error_code}: ${payload.error ?? "unknown"}`,
         clearProverJob: true,
+        errorCode: payload.error_code,
+        errorDetail: payload.error ?? undefined,
       };
     }
     const codePart = payload.error_code ? ` (error_code=${payload.error_code})` : "";
@@ -493,6 +496,8 @@ export async function pollProverOnce(
       message: payload.error
         ? `prover marked job as failed${codePart}: ${payload.error}`
         : `prover marked job as failed${codePart}`,
+      errorCode: payload.error_code ?? undefined,
+      errorDetail: payload.error ?? undefined,
     };
   }
 

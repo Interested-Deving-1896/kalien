@@ -260,6 +260,8 @@ test("response has correct job_id and status", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   assert(resp.job_id === "boundless", "job_id: expected boundless, got " + resp.job_id);
@@ -270,6 +272,8 @@ test("Groth16 seal is exactly 256 bytes (proof without selector)", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   const groth16Seal = (resp.result as any).proof.receipt.inner.Groth16.seal;
@@ -280,6 +284,8 @@ test("Groth16 seal content matches proof bytes (selector stripped)", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   const groth16Seal = (resp.result as any).proof.receipt.inner.Groth16.seal;
@@ -295,6 +301,8 @@ test("verifier_parameters is 8-element u32 array with selector in first word", (
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   const vp = (resp.result as any).proof.receipt.inner.Groth16.verifier_parameters;
@@ -315,6 +323,8 @@ test("journal fields are parsed correctly from 24-byte input", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   const j = (resp.result as any).proof.journal;
@@ -331,6 +341,8 @@ test("receipt_kind fields are set to groth16", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   assert(
@@ -347,6 +359,8 @@ test("options.accelerator is set to boundless", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   const resp = adaptFulfillmentToProverResponse(fulfillment);
   assert(
@@ -359,6 +373,8 @@ test("throws on journal shorter than 24 bytes", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: new Uint8Array(20),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   let threw = false;
   try {
@@ -373,6 +389,8 @@ test("throws on seal shorter than 260 bytes", () => {
   const fulfillment: FulfillmentData = {
     seal: new Uint8Array(100),
     journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    proverAddress: null,
+    fulfillmentTxHash: null,
   };
   let threw = false;
   try {

@@ -18,6 +18,7 @@ import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
 import { pollProver, pollProverOnce, summarizeProof } from "../prover/client";
 import type {
+  ClaimAttempt,
   CreateJobAccepted,
   ProofJobRecord,
   ProofResultSummary,
@@ -43,7 +44,17 @@ export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordina
 export function asPublicJob(job: ProofJobRecord): PublicProofJob {
   // For legacy jobs that predate proverAttempts, synthesize a single attempt
   // from the prover tracking data so the UI can show meaningful backend/attempt info.
-  let proverAttempts = job.proverAttempts ?? [];
+  // Normalize old attempt records that predate the enrichment fields.
+  // Old records in Durable Object storage will have undefined (not null)
+  // for the new fields. Convert to null for consistent API responses.
+  let proverAttempts = (job.proverAttempts ?? []).map((a) => ({
+    ...a,
+    errorDetail: a.errorDetail ?? null,
+    errorCode: a.errorCode ?? null,
+    actualCostUsd: a.actualCostUsd ?? null,
+    proverAddress: a.proverAddress ?? null,
+    fulfillmentTxHash: a.fulfillmentTxHash ?? null,
+  }));
   if (proverAttempts.length === 0 && job.prover.jobId) {
     const backend: ProverBackend = job.prover.statusUrl?.startsWith("boundless:")
       ? "boundless"
@@ -62,8 +73,13 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
         endedAt: job.completedAt,
         outcome,
         error: job.error,
+        errorDetail: null,
+        errorCode: null,
         proverJobId: job.prover.jobId,
         statusUrl: job.prover.statusUrl,
+        actualCostUsd: null,
+        proverAddress: null,
+        fulfillmentTxHash: null,
       },
     ];
   }
@@ -81,6 +97,7 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     queue: job.queue,
     prover: job.prover,
     proverAttempts,
+    claimAttempts: job.claimAttempts ?? [],
     result: job.result,
     claim: job.claim,
     error: job.error,
@@ -286,6 +303,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         recoveryAttempts: 0,
       },
       proverAttempts: [],
+      claimAttempts: [],
       result: null,
       claim: {
         claimantAddress,
@@ -475,9 +493,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         endedAt: null,
         outcome: "in_progress",
         error: null,
+        errorDetail: null,
+        errorCode: null,
         proverJobId,
         statusUrl,
         maxPriceUsd: maxPriceUsd ?? null,
+        actualCostUsd: null,
+        proverAddress: null,
+        fulfillmentTxHash: null,
       };
       job.proverAttempts.push(attempt);
       await this.saveJob(job);
@@ -497,6 +520,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     summary: ProofResultSummary,
     artifactKey: string,
+    enrichment?: {
+      actualCostUsd?: number | null;
+      proverAddress?: string | null;
+      fulfillmentTxHash?: string | null;
+    },
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job) {
@@ -521,7 +549,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.nextRetryAt = null;
 
     await this.saveJob(job);
-    await this.recordAttemptEnd(job, "success", null);
+    await this.recordAttemptEnd(job, "success", null, enrichment);
     await this.removeActiveJobId(jobId);
     await this.unpinIpfsInput(job);
     await this.enqueueClaimJob(jobId);
@@ -533,7 +561,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return job;
   }
 
-  async markFailed(jobId: string, reason: string): Promise<ProofJobRecord | null> {
+  async markFailed(
+    jobId: string,
+    reason: string,
+    enrichment?: {
+      errorDetail?: string | null;
+      errorCode?: string | null;
+    },
+  ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job) {
       return null;
@@ -545,6 +580,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       openAttempt.endedAt = nowIso();
       openAttempt.outcome = "failed";
       openAttempt.error = openAttempt.error ?? reason;
+      if (enrichment) {
+        if (enrichment.errorDetail !== undefined) openAttempt.errorDetail = enrichment.errorDetail;
+        if (enrichment.errorCode !== undefined) openAttempt.errorCode = enrichment.errorCode;
+      }
     }
 
     const now = nowIso();
@@ -620,6 +659,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
     job.updatedAt = nowIso();
+
+    // Track individual claim attempt
+    const claimAttempts = job.claimAttempts ?? [];
+    const attempt: ClaimAttempt = {
+      index: claimAttempts.length,
+      startedAt: nowIso(),
+      endedAt: null,
+      outcome: "in_progress",
+      error: null,
+      errorDetail: null,
+      txHash: null,
+    };
+    claimAttempts.push(attempt);
+    job.claimAttempts = claimAttempts;
+
     await this.saveJob(job);
     return job;
   }
@@ -628,6 +682,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     reason: string,
     nextRetryAt: string,
+    errorDetail?: string,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || job.status !== "succeeded") {
@@ -641,6 +696,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = reason;
     job.claim.nextRetryAt = nextRetryAt;
     job.updatedAt = nowIso();
+
+    // End current in-progress claim attempt as failed
+    const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+    if (openClaimAttempt) {
+      openClaimAttempt.endedAt = nowIso();
+      openClaimAttempt.outcome = "failed";
+      openClaimAttempt.error = reason;
+      openClaimAttempt.errorDetail = errorDetail ?? null;
+    }
+
     await this.saveJob(job);
     return job;
   }
@@ -660,11 +725,24 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
     job.updatedAt = nowIso();
+
+    // End current in-progress claim attempt as success
+    const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+    if (openClaimAttempt) {
+      openClaimAttempt.endedAt = nowIso();
+      openClaimAttempt.outcome = "success";
+      openClaimAttempt.txHash = txHash;
+    }
+
     await this.saveJob(job);
     return job;
   }
 
-  async markClaimFailed(jobId: string, reason: string): Promise<ProofJobRecord | null> {
+  async markClaimFailed(
+    jobId: string,
+    reason: string,
+    errorDetail?: string,
+  ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || job.status !== "succeeded") {
       return job;
@@ -685,6 +763,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.claim.lastError = null;
       job.claim.nextRetryAt = null;
       job.updatedAt = nowIso();
+
+      const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+      if (openClaimAttempt) {
+        openClaimAttempt.endedAt = nowIso();
+        openClaimAttempt.outcome = "success";
+        openClaimAttempt.txHash = job.claim.txHash;
+      }
+
       await this.saveJob(job);
       return job;
     }
@@ -693,7 +779,47 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = reason;
     job.claim.nextRetryAt = null;
     job.updatedAt = nowIso();
+
+    const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+    if (openClaimAttempt) {
+      openClaimAttempt.endedAt = nowIso();
+      openClaimAttempt.outcome = "failed";
+      openClaimAttempt.error = reason;
+      openClaimAttempt.errorDetail = errorDetail ?? null;
+    }
+
     await this.saveJob(job);
+    return job;
+  }
+
+  /**
+   * Re-queues a claim that previously failed. Only allowed when the proof
+   * succeeded but the on-chain claim exhausted its retries.
+   */
+  async retryFailedClaim(jobId: string): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job) {
+      return null;
+    }
+    if (job.status !== "succeeded") {
+      throw new Error("cannot retry claim: proof has not succeeded");
+    }
+    if (job.claim.status === "succeeded") {
+      throw new Error("claim already succeeded");
+    }
+    if (job.claim.status !== "failed") {
+      throw new Error(`claim is not in failed state (current: ${job.claim.status})`);
+    }
+    if (!job.result?.summary) {
+      throw new Error("cannot retry claim: missing proof result");
+    }
+
+    job.claim.status = "queued";
+    job.claim.lastError = null;
+    job.claim.nextRetryAt = null;
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
+    await this.enqueueClaimJob(jobId);
     return job;
   }
 
@@ -701,12 +827,26 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job: ProofJobRecord,
     outcome: "success" | "failed",
     error: string | null,
+    enrichment?: {
+      errorDetail?: string | null;
+      errorCode?: string | null;
+      actualCostUsd?: number | null;
+      proverAddress?: string | null;
+      fulfillmentTxHash?: string | null;
+    },
   ): Promise<void> {
     const current = job.proverAttempts.find((a) => a.outcome === "in_progress");
     if (current) {
       current.endedAt = nowIso();
       current.outcome = outcome;
       current.error = error;
+      if (enrichment) {
+        if (enrichment.errorDetail !== undefined) current.errorDetail = enrichment.errorDetail;
+        if (enrichment.errorCode !== undefined) current.errorCode = enrichment.errorCode;
+        if (enrichment.actualCostUsd !== undefined) current.actualCostUsd = enrichment.actualCostUsd;
+        if (enrichment.proverAddress !== undefined) current.proverAddress = enrichment.proverAddress;
+        if (enrichment.fulfillmentTxHash !== undefined) current.fulfillmentTxHash = enrichment.fulfillmentTxHash;
+      }
       await this.saveJob(job);
     }
   }
@@ -850,16 +990,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         return;
       }
 
-      await this.markSucceeded(activeJobId, summary, artifactStorageKey);
+      await this.markSucceeded(activeJobId, summary, artifactStorageKey, pollResult.metadata ?? undefined);
       return;
     }
 
     if (pollResult.type === "retry") {
+      const retryEnrichment = {
+        errorCode: pollResult.errorCode ?? null,
+        errorDetail: pollResult.errorDetail ?? null,
+      };
+
       if (pollResult.clearProverJob) {
         if (scheduleNext) {
           // Record this attempt as failed and try the next backend
           if (this.isBoundlessJob(job)) {
-            await this.recordAttemptEnd(job, "failed", pollResult.message);
+            await this.recordAttemptEnd(job, "failed", pollResult.message, retryEnrichment);
             await this.tryNextProverBackend(
               activeJobId,
               job,
@@ -869,7 +1014,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           }
 
           // Vast.ai job failed — try next backend via fallback system
-          await this.recordAttemptEnd(job, "failed", pollResult.message);
+          await this.recordAttemptEnd(job, "failed", pollResult.message, retryEnrichment);
           await this.tryNextProverBackend(activeJobId, job, `vast failed: ${pollResult.message}`);
           return;
         }
@@ -906,7 +1051,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     // pollResult.type === "fatal"
-    await this.markFailed(activeJobId, pollResult.message);
+    await this.markFailed(activeJobId, pollResult.message, {
+      errorCode: pollResult.errorCode ?? null,
+      errorDetail: pollResult.errorDetail ?? null,
+    });
   }
 
   async alarm(): Promise<void> {

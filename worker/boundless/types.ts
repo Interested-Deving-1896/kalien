@@ -40,4 +40,6 @@ export interface Offer {
 export interface FulfillmentData {
   seal: Uint8Array;
   journal: Uint8Array;
+  proverAddress: string | null;
+  fulfillmentTxHash: string | null;
 }

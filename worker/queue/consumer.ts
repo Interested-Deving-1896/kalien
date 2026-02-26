@@ -9,6 +9,7 @@ import { resolveBoundlessConfig } from "../boundless/config";
 import { submitToBoundless } from "../boundless/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
+import { writeProofTapeMapping } from "../leaderboard-store";
 import { submitToProver } from "../prover/client";
 import type { ClaimQueueMessage, ProofJobRecord, ProofQueueMessage, ProofJournal } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
@@ -356,10 +357,12 @@ async function processClaimQueueMessage(
     });
   } catch (error) {
     const reason = `claim submit error: ${safeErrorMessage(error)}`;
+    const crashDetail = error instanceof Error ? error.stack ?? error.message : String(error);
     if (message.attempts >= MAX_QUEUE_RETRIES) {
       await coordinator.markClaimFailed(
         payload.jobId,
         `${reason} (exhausted ${message.attempts} delivery attempts)`,
+        crashDetail,
       );
       message.ack();
       return;
@@ -370,6 +373,7 @@ async function processClaimQueueMessage(
       payload.jobId,
       reason,
       new Date(Date.now() + delaySeconds * 1000).toISOString(),
+      crashDetail,
     );
     message.retry({ delaySeconds });
     return;
@@ -382,6 +386,11 @@ async function processClaimQueueMessage(
       txHash: relayResult.txHash,
     });
     await coordinator.markClaimSucceeded(payload.jobId, relayResult.txHash);
+    try {
+      await writeProofTapeMapping(env, relayResult.txHash, payload.jobId);
+    } catch (err) {
+      console.error("[claim-queue] failed to write tape mapping", err);
+    }
     message.ack();
     return;
   }
@@ -397,6 +406,7 @@ async function processClaimQueueMessage(
       await coordinator.markClaimFailed(
         payload.jobId,
         `${relayResult.message} (exhausted ${message.attempts} delivery attempts)`,
+        relayResult.errorDetail,
       );
       message.ack();
       return;
@@ -407,6 +417,7 @@ async function processClaimQueueMessage(
       payload.jobId,
       relayResult.message,
       new Date(Date.now() + delaySeconds * 1000).toISOString(),
+      relayResult.errorDetail,
     );
     message.retry({ delaySeconds });
     return;
@@ -429,7 +440,7 @@ async function processClaimQueueMessage(
     return;
   }
 
-  await coordinator.markClaimFailed(payload.jobId, relayResult.message);
+  await coordinator.markClaimFailed(payload.jobId, relayResult.message, relayResult.errorDetail);
   message.ack();
 }
 
@@ -516,11 +527,13 @@ export async function handleClaimQueueBatch(
       }
 
       const reason = `claim queue consumer crashed: ${safeErrorMessage(error)}`;
+      const crashDetail = error instanceof Error ? error.stack ?? error.message : String(error);
       const coordinator = coordinatorStub(env);
       if (message.attempts >= MAX_QUEUE_RETRIES) {
         await coordinator.markClaimFailed(
           payload.jobId,
           `${reason} (exhausted ${message.attempts} delivery attempts)`,
+          crashDetail,
         );
         message.ack();
       } else {
@@ -529,6 +542,7 @@ export async function handleClaimQueueBatch(
           payload.jobId,
           reason,
           new Date(Date.now() + delaySeconds * 1000).toISOString(),
+          crashDetail,
         );
         message.retry({ delaySeconds });
       }
