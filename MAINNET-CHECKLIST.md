@@ -120,8 +120,8 @@ Deploy the KALIEN token on mainnet and configure minting authority.
 - [ ] **Verify minting works** by submitting a real proof and confirming KALIEN
       balance increases for the player.
 - [ ] **Consider token metadata**: name, symbol, decimals. SAC tokens inherit
-      these from the classic asset. "KALIEN" is 6 characters, 0 decimals
-      (since scores are integers).
+      these from the classic asset. "KALIEN" is 6 characters, 7 decimals
+      (SAC default; contract scales mint amounts by 10^7).
 - [ ] **Decide on token supply governance**: Is there a max supply? Should
       minting be uncapped or should the contract enforce a ceiling? Currently
       there is no cap — every valid proof mints `final_score` KALIEN.

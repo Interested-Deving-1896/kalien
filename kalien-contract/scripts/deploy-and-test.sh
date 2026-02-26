@@ -726,16 +726,17 @@ test_reject_zero_score
 echo ""
 
 # 4. Submit positive-score fixtures via mock verifier
-test_submit_fixture "short tape"     "proof-short-groth16"     1030
-echo ""
+# medium first (score 90, seed 0xDEADBEEF), then short (score 1030, same seed — mints delta 940)
 test_submit_fixture "medium tape"    "proof-medium-groth16"    90
+echo ""
+test_submit_fixture "short tape"     "proof-short-groth16"     1030
 echo ""
 test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
 
 echo ""
 
-# 5. Check cumulative token balance (1030 + 90 + 32860 = 33980)
-test_cumulative_balance "33980"
+# 5. Check cumulative token balance (90 + 940 + 32860 = 33890, scaled by 10^7)
+test_cumulative_balance "338900000000"
 
 # 6. Groth16 tests (if proof-mode=all)
 if [[ "$PROOF_MODE" == "all" ]]; then
@@ -747,15 +748,16 @@ if [[ "$PROOF_MODE" == "all" ]]; then
 
   deploy_groth16
 
-  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     1030
-  echo ""
+  # medium first (same seed as short, lower score — must come first)
   test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
+  echo ""
+  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     1030
   echo ""
   test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 32860
 
   echo ""
 
-  # Check Groth16 cumulative token balance
+  # Check Groth16 cumulative token balance (90 + 940 + 32860 = 33890, scaled by 10^7)
   info "--- Test: Groth16 cumulative token balance ---"
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
   grf1_balance=$(stellar contract invoke -q \
@@ -767,7 +769,7 @@ if [[ "$PROOF_MODE" == "all" ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "33980" "$grf1_balance"
+  assert_eq "Groth16 cumulative token balance" "338900000000" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------

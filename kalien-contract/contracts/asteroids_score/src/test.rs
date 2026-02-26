@@ -11,6 +11,7 @@ use soroban_sdk::{
 };
 
 const RULES_DIGEST_AST3: u32 = 0x4153_5433;
+const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
 
 // ---------------------------------------------------------------------------
 // Mock router: always accepts verify
@@ -115,7 +116,7 @@ fn test_submit_score_success() {
     assert_eq!(client.best_score(&claimant, &1), 42);
 
     let token = TokenClient::new(&env, &token_addr);
-    assert_eq!(token.balance(&claimant), 42);
+    assert_eq!(token.balance(&claimant), 42 * TOKEN_DECIMALS_SCALE);
 
     let digest: BytesN<32> = env.crypto().sha256(&journal).into();
     assert!(client.is_claimed(&digest));
@@ -169,7 +170,7 @@ fn test_submit_score_not_improved_rejected() {
     assert_eq!(result, Err(Ok(ScoreError::ScoreNotImproved)));
 
     let token = TokenClient::new(&env, &token_addr);
-    assert_eq!(token.balance(&claimant), 80);
+    assert_eq!(token.balance(&claimant), 80 * TOKEN_DECIMALS_SCALE);
     assert_eq!(client.best_score(&claimant, &9), 80);
 }
 
@@ -190,7 +191,7 @@ fn test_submit_score_improvement_mints_delta() {
     assert_eq!(client.best_score(&claimant, &10), 25);
 
     let token = TokenClient::new(&env, &token_addr);
-    assert_eq!(token.balance(&claimant), 25); // 10 + (25 - 10)
+    assert_eq!(token.balance(&claimant), 25 * TOKEN_DECIMALS_SCALE); // 10 + (25 - 10)
 }
 
 #[test]
@@ -215,7 +216,7 @@ fn test_submit_score_different_seeds_track_independently() {
     assert_eq!(client.best_score(&claimant, &2), 20);
 
     let token = TokenClient::new(&env, &token_addr);
-    assert_eq!(token.balance(&claimant), 30);
+    assert_eq!(token.balance(&claimant), 30 * TOKEN_DECIMALS_SCALE);
 }
 
 #[test]
@@ -429,7 +430,7 @@ fn run_fixture_test(
     assert_eq!(score, expected_score);
 
     let token = TokenClient::new(&env, &token_addr);
-    assert_eq!(token.balance(&claimant), expected_score as i128);
+    assert_eq!(token.balance(&claimant), expected_score as i128 * TOKEN_DECIMALS_SCALE);
 
     let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
     assert!(client.is_claimed(&journal_digest));
@@ -553,25 +554,8 @@ fn test_fixture_all_three_cumulative() {
     let client = AsteroidsScoreContractClient::new(&env, &contract_id);
     let token = TokenClient::new(&env, &token_addr);
 
-    // short (score 1030)
-    let short_seal = hex_to_soroban_bytes(
-        &env,
-        include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
-    );
-    let short_journal = force_ast3_rules_digest(
-        &env,
-        &hex_to_soroban_bytes(
-            &env,
-            include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
-        ),
-    );
-    assert_eq!(
-        client.submit_score(&short_seal, &short_journal, &claimant),
-        1030
-    );
-    assert_eq!(token.balance(&claimant), 1030);
-
-    // medium (score 90)
+    // medium first (score 90, seed 0xDEADBEEF) — must come before short
+    // because both share the same seed and short's score (1030) is higher
     let medium_seal = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-medium-groth16.seal"),
@@ -587,9 +571,27 @@ fn test_fixture_all_three_cumulative() {
         client.submit_score(&medium_seal, &medium_journal, &claimant),
         90
     );
-    assert_eq!(token.balance(&claimant), 90);
+    assert_eq!(token.balance(&claimant), 90 * TOKEN_DECIMALS_SCALE);
 
-    // real game (score 32860, different seed)
+    // short (score 1030, same seed 0xDEADBEEF — mints delta 1030-90=940)
+    let short_seal = hex_to_soroban_bytes(
+        &env,
+        include_str!("../../../../test-fixtures/proof-short-groth16.seal"),
+    );
+    let short_journal = force_ast3_rules_digest(
+        &env,
+        &hex_to_soroban_bytes(
+            &env,
+            include_str!("../../../../test-fixtures/proof-short-groth16.journal_raw"),
+        ),
+    );
+    assert_eq!(
+        client.submit_score(&short_seal, &short_journal, &claimant),
+        1030
+    );
+    assert_eq!(token.balance(&claimant), (90 + 940) * TOKEN_DECIMALS_SCALE);
+
+    // real game (score 32860, different seed 0x43C9C6CD)
     let real_seal = hex_to_soroban_bytes(
         &env,
         include_str!("../../../../test-fixtures/proof-real-game-groth16.seal"),
@@ -605,7 +607,8 @@ fn test_fixture_all_three_cumulative() {
         client.submit_score(&real_seal, &real_journal, &claimant),
         32860
     );
-    assert_eq!(token.balance(&claimant), 1030 + 90 + 32860);
+    // 90 + 940 + 32860 = 33890 (not 33980: short only mints delta over medium)
+    assert_eq!(token.balance(&claimant), (90 + 940 + 32860) * TOKEN_DECIMALS_SCALE);
 }
 
 // ---------------------------------------------------------------------------

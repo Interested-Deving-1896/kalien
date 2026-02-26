@@ -54,3 +54,8 @@ export function formatFramesAsTime(frameCount: number, fps = 60): string {
   const seconds = totalSeconds % 60;
   return `${minutes}m ${seconds}s`;
 }
+
+export const KALIEN_SCALE = 10_000_000n;
+export function toDisplayKalien(rawBalance: bigint): bigint {
+  return rawBalance / KALIEN_SCALE;
+}

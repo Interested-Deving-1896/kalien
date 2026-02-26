@@ -45,8 +45,6 @@
         }
       ]
     ],
-    [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -57,7 +55,7 @@
               "function_name": "submit_score",
               "args": [
                 {
-                  "bytes": "73c457ba2b3d6e0a1ed6cdc4238344f88e3d5ba41d69e2d85ca54ec3a71812e58fbc014108c489fb26c949a12d143bc058ea0453ba6dd4079cf6b69e23745c967e3b2d6d104e24daab1fd880c5c1ecfe0a91f87d6694cb37bd7657365ea3b8b6624ac65702ae8403ec177b1a71c6cbc18189a1a89b1349c1abfd7ab805f306365694256a230e4dc86d9a43c70fc7e547b5f3a564a5f622eec33ddbc6e1e70f22a9e4e76d2280bf73b817f900102417a3027bf0bb05f1165336843c04d1cefd45bad83de52cb7da73417f250a29dc190acbeab312a0203956f1b4f7ea3ff694ecab20c4ab2fb1d105edf1428d7987f7030b5602d41677876cf1acf4ab5f8e803ad2166eaf"
+                  "bytes": "73c457ba00a3ee74ed8088dbe9ca41acc0763c849d323c5267ab2cb58151759454e675c602269e3013a2a7230bcb1fc718348c9e2523894fac3eef637d56baec5027054313b3a75e35db63691b0e7caf4027bb184cf4cb573c4fbf04c904b6db9d0bbe810e1c4a57c2763d840e3846054a41bb68cc47d92cf1415dcc5b7eecb85a6d661205ba83d5f6419acf9b5e0519c17cf0e5fd1b286f5f7be2ee8d7bef36ea70ec971bb930af6c98009eab6c05771a17f7f37ae5b11aba448ccbad9c9b63f29038491c961a40eb5de848be9d573bb45563713871083556af9f08901eca82d2f180021bab9b4f88317c23826f3598267371cfde13ca77b4970f4314993708130a6699"
                 },
                 {
                   "bytes": "efbeadde8c0f00005a000000ce1907ebe59d2e1133545341"
@@ -83,7 +81,33 @@
               "function_name": "submit_score",
               "args": [
                 {
-                  "bytes": "73c457ba227c3d66b13fd5d0f48ecd248187583766cce4976d72d493b3789622e538a8e0183607b412d0e612561985d95c45d12f54f59c455c3cb90487d3f0a8b600b04b26faaf21873c2883e51caadcadd553b42854850bcb0c3eb3a0874280e015cebf1d69ac76bc047ec3ce7816f66cff0227c1e6e43345a033e95721de5343cc97990e056615b82c3d8661fa7244d0b982bc2c21341bc3a0914227fccebbb53a6331259ea5319ac67faa03f9cd7633a38ba302e7b614c6bac567cadaf27eeb6895c82ce0357389d81209e4eb58d19e345e551e2f78dc4ab9eeec5fa734cd76b0e4dc21cce548cbe3adeebffb6f038265c69114eafb7035802cc7c48d6970b27e7cde"
+                  "bytes": "73c457ba2d827d7052c6e978c4cddf07bf6449e2dead59abdb4eb29c01f1cf76515ee2980437ca7f7d8334ad9648a8d9997ce380d7d538947ad65419461c852afd3cdb24250a6f82dc82bcadc91a6bbcb4b04f7446e0e5d71f6dab6d5845f369abd786ea2047f69e89ef97ec128173529843bc2555f6f6135cca0d8a7a01aba8c64af45f18685ce7520c8b840fd3ed0f56472665f27fcec38a6bda3ea68c6abaf70303a20b2212f67e67beb2ae3f5e43c9d6315c20e1bbcbb1ebd71ed23bb7bd33552b6a0098238405c54ac184b943f18a3920287a7c6a4057a789bc677b8c1bd70688cd2efef70b6bbee79dd5f4f267c580426990c43f68734e90ee77cb289972d779c7"
+                },
+                {
+                  "bytes": "efbeaddef401000006040000f8e6946bb4ca408733545341"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "function_name": "submit_score",
+              "args": [
+                {
+                  "bytes": "73c457ba0d370fb15575f54e8a9f82122c619d7e023dbd3367fdc3c77c48864bdacd799508a61c47562dea566f16d6101c313fddf1b585d15759884d479f3ce07db49cae0165ea5800f185f4cf6aa02d727e571c7f1d1b7559209a9aa1aa2ffa5b67c9ca2ff29b88e2a2535e20e486a50036e8e63efcd6270a7c3812ebd8ada90061218d27bf66c8675700febcf5d0a4a85d7adfd4fe857bbac13d3a7dfaf8280ae60606256f01056cd7ec71402b5bf461c8d03012863e16e12dd4d2813434853794d8ad154dedc1824840f28f7c78b67183c5a82f32765b6cdbac26557aa8a609a831c20874e0249c736944325184a06b905bb36883077632d8abecfd1db8278fd21459"
                 },
                 {
                   "bytes": "cdc6c943053600005c800000033c71a989bbeec833545341"
@@ -161,6 +185,26 @@
               "key": {
                 "ledger_key_nonce": {
                   "nonce": "5541220902715666415"
+                }
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "key": {
+                "ledger_key_nonce": {
+                  "nonce": "1033654523790656264"
                 }
               },
               "durability": "temporary",
@@ -286,7 +330,7 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 90
+                "u32": 1030
               }
             }
           },
@@ -351,6 +395,31 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "Claimed"
+                  },
+                  {
+                    "bytes": "f2f73e75ca95f81c1a1eea4a523758d72ddaf30d4842604453725f67ef2815b1"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 1036800
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -380,7 +449,7 @@
                         ]
                       },
                       "val": {
-                        "bytes": "30cb1dceaa1c626ed7eb906e1567347806eefed4b759b829a3ca3696573b7090"
+                        "bytes": "c2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5e3a0"
                       }
                     },
                     {
@@ -441,7 +510,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "32950"
+                      "i128": "338900000000"
                     }
                   },
                   {

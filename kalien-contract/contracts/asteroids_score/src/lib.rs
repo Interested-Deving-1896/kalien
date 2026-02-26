@@ -26,6 +26,7 @@ const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 14 days
 const INSTANCE_TTL_BUMP: u32 = 172_800; // 20 days
 const PERSISTENT_TTL_THRESHOLD: u32 = 518_400; // ~60 days
 const PERSISTENT_TTL_BUMP: u32 = 1_036_800; // ~120 days
+const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -159,7 +160,7 @@ impl AsteroidsScoreContract {
 
         // Mint only the improvement delta to the claimant.
         let token_client = token::StellarAssetClient::new(&env, &token_id);
-        token_client.mint(&claimant, &(minted_delta as i128));
+        token_client.mint(&claimant, &(minted_delta as i128 * TOKEN_DECIMALS_SCALE));
 
         // Emit event
         ScoreSubmitted {

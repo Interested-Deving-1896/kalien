@@ -4,7 +4,7 @@ import {
   getTokenContractIdFromEnv,
   readTokenBalance,
 } from "../chain/score";
-import { formatWholeNumber } from "../lib/format";
+import { formatWholeNumber, toDisplayKalien } from "../lib/format";
 
 export interface UseTokenBalanceReturn {
   balance: bigint | null;
@@ -74,7 +74,7 @@ export function useTokenBalance(walletAddress: string): UseTokenBalanceReturn {
   const formattedBalance =
     balance === null
       ? "\u2014"
-      : `${formatWholeNumber(balance)} KALIEN`;
+      : `${formatWholeNumber(toDisplayKalien(balance))} KALIEN`;
 
   return {
     balance,
