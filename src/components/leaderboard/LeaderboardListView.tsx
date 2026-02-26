@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   getLeaderboard,
   LeaderboardApiError,
@@ -12,14 +12,18 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
+import { Link } from "@/components/shared/Link";
+import { Pagination } from "@/components/shared/Pagination";
 import { RelativeTime } from "./RelativeTime";
 import { TimeWindowPicker, RankingsSearch } from "./LeaderboardFilters";
 import { RankingsTable } from "./RankingsTable";
 import { PageHero } from "@/components/shared/PageHero";
 import { useWalletContext } from "@/contexts/WalletContext";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { AUTO_REFRESH_LEADERBOARD_MS } from "@/consts";
 
 export function LeaderboardListView() {
+  useDocumentTitle("Leaderboard");
   const { wallet } = useWalletContext();
   const [windowKey, setWindowKey] = useState<LeaderboardWindow>("all");
   const [offset, setOffset] = useState(0);
@@ -30,8 +34,6 @@ export function LeaderboardListView() {
   const [error, setError] = useState<string | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardPageResponse | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
-
-  const fetchLeaderboardRef = useRef<(() => void) | undefined>(undefined);
 
   const fetchLeaderboard = useCallback(
     (silent: boolean) => {
@@ -71,50 +73,19 @@ export function LeaderboardListView() {
     [findAddress, limit, offset, windowKey],
   );
 
-  fetchLeaderboardRef.current = () => fetchLeaderboard(true);
+  const fetchLeaderboardRef = useRef(fetchLeaderboard);
+  fetchLeaderboardRef.current = fetchLeaderboard;
 
   // Primary data fetch
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    void (async () => {
-      try {
-        const response = await getLeaderboard({
-          window: windowKey,
-          limit,
-          offset,
-          address: findAddress,
-        });
-        if (!cancelled) {
-          setLeaderboard(response);
-          setLastRefreshAt(new Date().toISOString());
-        }
-      } catch (reason) {
-        if (cancelled) return;
-        const detail =
-          reason instanceof LeaderboardApiError || reason instanceof Error
-            ? reason.message
-            : "failed to load leaderboard";
-        setError(detail);
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    fetchLeaderboardRef.current(false);
   }, [findAddress, limit, offset, windowKey]);
 
   // Auto-refresh (paused when tab is hidden)
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
-        fetchLeaderboardRef.current?.();
+        fetchLeaderboardRef.current?.(true);
       }
     }, AUTO_REFRESH_LEADERBOARD_MS);
     return () => clearInterval(interval);
@@ -140,15 +111,6 @@ export function LeaderboardListView() {
   }, [wallet.address]);
 
   // Derived values
-  const showingStart = leaderboard
-    ? Math.min(leaderboard.pagination.total, leaderboard.pagination.offset + 1)
-    : 0;
-  const showingEnd = leaderboard
-    ? Math.min(
-        leaderboard.pagination.total,
-        leaderboard.pagination.offset + leaderboard.entries.length,
-      )
-    : 0;
   const hasHistoricalData =
     (leaderboard?.window !== "all" &&
       leaderboard?.entries.length === 0 &&
@@ -234,7 +196,7 @@ export function LeaderboardListView() {
         {/* Historical data nudge */}
         {hasHistoricalData ? (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] px-3 py-2">
-            <p className="m-0 text-sm text-[rgba(186,210,241,0.92)]">
+            <p className="m-0 text-sm text-text-soft">
               No proved runs landed in this short window. Historical rankings still exist.
             </p>
             <Button
@@ -254,18 +216,18 @@ export function LeaderboardListView() {
           <RankingsTable entries={[]} isLoading />
         ) : isEmptyAllTime ? (
           <div className="grid justify-items-center gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-6 text-center">
-            <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs yet.</p>
-            <p className="m-0 text-[rgba(186,210,241,0.92)]">
+            <p className="m-0 text-text-soft">No proved runs yet.</p>
+            <p className="m-0 text-text-soft">
               Play the game and prove your score to appear here.
             </p>
             <Button variant="active" asChild>
-              <a href="/" className="no-underline">
+              <Link href="/" className="no-underline">
                 Play Now
-              </a>
+              </Link>
             </Button>
           </div>
         ) : leaderboard && leaderboard.entries.length === 0 ? (
-          <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs in this window yet.</p>
+          <p className="m-0 text-text-soft">No proved runs in this window yet.</p>
         ) : leaderboard ? (
           <RankingsTable
             entries={leaderboard.entries}
@@ -275,31 +237,14 @@ export function LeaderboardListView() {
 
         {/* Pagination */}
         {leaderboard && leaderboard.entries.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              onClick={() => setOffset((current) => Math.max(0, current - limit))}
-              disabled={leaderboard.pagination.offset === 0 || loading}
-            >
-              <ChevronLeft className="size-3.5" />
-              Previous
-            </Button>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {showingStart}&ndash;{showingEnd} of {leaderboard.pagination.total.toLocaleString()}
-            </span>
-            <Button
-              size="sm"
-              onClick={() => {
-                if (leaderboard.pagination.next_offset !== null) {
-                  setOffset(leaderboard.pagination.next_offset);
-                }
-              }}
-              disabled={leaderboard.pagination.next_offset === null || loading}
-            >
-              Next
-              <ChevronRight className="size-3.5" />
-            </Button>
-          </div>
+          <Pagination
+            offset={leaderboard.pagination.offset}
+            limit={limit}
+            total={leaderboard.pagination.total}
+            nextOffset={leaderboard.pagination.next_offset}
+            onOffsetChange={setOffset}
+            disabled={loading}
+          />
         )}
       </Card>
     </>

@@ -13,6 +13,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { SkeletonRows } from "@/components/shared/Skeleton";
+import { Link } from "@/components/shared/Link";
 import { RelativeTime } from "./RelativeTime";
 import { claimStatusBadgeVariant } from "./helpers";
 
@@ -113,13 +114,13 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
             </TableCell>
             <TableCell>
               <div className="grid gap-1">
-                <a
+                <Link
                   href={`/leaderboard/${entry.claimantAddress}`}
-                  className="text-[#9ce8ff] no-underline hover:underline"
+                  className="text-link no-underline hover:underline"
                 >
                   {displayName(entry)}
-                </a>
-                <code className="text-[rgba(190,216,249,0.92)]">
+                </Link>
+                <code className="text-text-soft">
                   {abbreviateAddress(entry.claimantAddress)}
                 </code>
                 {entry.profile?.linkUrl && isSafeUrl(entry.profile.linkUrl) ? (
@@ -127,7 +128,7 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
                     href={entry.profile.linkUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-[#9ce8ff] no-underline hover:underline"
+                    className="text-link no-underline hover:underline"
                   >
                     Link
                   </a>

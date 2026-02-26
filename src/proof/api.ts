@@ -4,6 +4,7 @@ import {
   API_TIMEOUT_LIST_JOBS_MS,
   API_TIMEOUT_SUBMIT_PROOF_MS,
 } from "../consts";
+import { fetchWithTimeout as baseFetchWithTimeout, parseJson } from "../lib/api";
 
 export type ProofJobStatus =
   | "queued"
@@ -158,17 +159,13 @@ async function fetchWithTimeout(
   init: RequestInit | undefined,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await baseFetchWithTimeout(input, init, timeoutMs);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new ProofApiError("request timed out", 0);
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -190,10 +187,6 @@ async function parseError(response: Response): Promise<ProofApiError> {
   }
 
   return new ProofApiError(message, response.status, activeJob);
-}
-
-async function parseJson<T>(response: Response): Promise<T> {
-  return (await response.json()) as T;
 }
 
 export async function submitProofJob(

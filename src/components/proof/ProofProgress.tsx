@@ -3,6 +3,7 @@ import type { ProofJobStatus } from "@/proof/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
+import { Link } from "@/components/shared/Link";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/format";
 
@@ -148,10 +149,10 @@ export function ProofProgress({
               </Button>
             )}
             <Button variant="ghost" size="sm" asChild>
-              <a href="/proofs" className="no-underline">
+              <Link href="/proofs" className="no-underline">
                 <ExternalLink className="size-3.5" aria-hidden="true" />
                 View Proofs
-              </a>
+              </Link>
             </Button>
           </div>
         </>

@@ -1489,6 +1489,17 @@ export class AsteroidsGame {
   getMode(): GameMode {
     return this.mode;
   }
+
+  /** Toggle autopilot on/off (for mobile UI button). */
+  toggleAutopilot(): void {
+    if (this.mode === "playing") {
+      this.autopilot.toggle();
+    }
+  }
+
+  isAutopilotEnabled(): boolean {
+    return this.autopilot.isEnabled();
+  }
   getGameSeed(): number {
     return this.gameSeed;
   }

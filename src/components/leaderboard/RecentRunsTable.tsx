@@ -1,8 +1,6 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { LeaderboardPlayerResponse } from "@/leaderboard/api";
 import { formatHex32, formatMetric } from "@/lib/format";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Table,
@@ -13,6 +11,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { SkeletonRows } from "@/components/shared/Skeleton";
+import { Pagination } from "@/components/shared/Pagination";
 import { RelativeTime } from "./RelativeTime";
 import { claimStatusBadgeVariant } from "./helpers";
 
@@ -33,17 +32,14 @@ export function RecentRunsTable({
   isLoading,
   limit,
 }: RecentRunsTableProps) {
-  const showingStart = Math.min(pagination.total, offset + 1);
-  const showingEnd = Math.min(offset + runs.length, pagination.total);
-
   return (
     <Card>
       <h3 className="m-0 font-display tracking-[0.055em] uppercase">Recent Runs</h3>
-      <p className="m-0 text-sm text-[rgba(186,210,241,0.92)]">
+      <p className="m-0 text-sm text-text-soft">
         Recent runs includes every proved submission for this claimant (not just the best run).
       </p>
       {runs.length === 0 && offset === 0 ? (
-        <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs yet.</p>
+        <p className="m-0 text-text-soft">No proved runs yet.</p>
       ) : (
         <>
           <Table aria-label="Recent proved runs">
@@ -88,31 +84,14 @@ export function RecentRunsTable({
               )}
             </TableBody>
           </Table>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              onClick={() => onOffsetChange(Math.max(0, offset - limit))}
-              disabled={offset === 0 || isLoading}
-            >
-              <ChevronLeft className="size-3.5" />
-              Previous
-            </Button>
-            <span className="text-sm tabular-nums text-[rgba(186,210,241,0.92)]">
-              {showingStart}-{showingEnd} of {pagination.total}
-            </span>
-            <Button
-              size="sm"
-              onClick={() => {
-                if (pagination.next_offset !== null) {
-                  onOffsetChange(pagination.next_offset);
-                }
-              }}
-              disabled={pagination.next_offset === null || isLoading}
-            >
-              Next
-              <ChevronRight className="size-3.5" />
-            </Button>
-          </div>
+          <Pagination
+            offset={offset}
+            limit={limit}
+            total={pagination.total}
+            nextOffset={pagination.next_offset}
+            onOffsetChange={onOffsetChange}
+            disabled={isLoading}
+          />
         </>
       )}
     </Card>

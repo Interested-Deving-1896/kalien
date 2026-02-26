@@ -13,10 +13,14 @@ export function HeaderWallet() {
   const [copied, setCopied] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  const copyTimerRef = useRef<number>(undefined);
+  useEffect(() => () => clearTimeout(copyTimerRef.current), []);
+
   const copyAddress = useCallback(() => {
     void navigator.clipboard.writeText(wallet.address).then(() => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
     });
   }, [wallet.address]);
 
@@ -30,6 +34,16 @@ export function HeaderWallet() {
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Close dropdown on Escape key
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
   }, [open]);
 
   if (wallet.action === "restoring") {
@@ -47,7 +61,7 @@ export function HeaderWallet() {
         <button
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            "flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-[rgba(8,16,29,0.6)] px-2.5 py-1.5 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
+            "flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-2.5 py-1.5 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
             open && "border-primary/40",
           )}
           aria-expanded={open}
@@ -120,11 +134,12 @@ export function HeaderWallet() {
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-[rgba(8,16,29,0.6)] px-2.5 py-1.5 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
+          "flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-2.5 py-1.5 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
           open && "border-primary/40",
         )}
         aria-expanded={open}
         aria-haspopup="true"
+        aria-label="Account menu"
       >
         {/* Balance pill */}
         <span className="flex items-center gap-1.5">

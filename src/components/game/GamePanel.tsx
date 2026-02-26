@@ -1,6 +1,10 @@
 import type * as React from "react";
-import { AsteroidsCanvas, type CompletedGameRun } from "../AsteroidsCanvas";
+import { useCallback, useRef, useState } from "react";
+import { AsteroidsCanvas } from "../AsteroidsCanvas";
+import type { AsteroidsGame } from "@/game/AsteroidsGame";
+import type { CompletedGameRun } from "@/game/types";
 import { ControlsHint } from "./ControlsHint";
+import { MobileAutopilotButton } from "./MobileAutopilotButton";
 import { cn } from "@/lib/utils";
 
 export interface GamePanelProps {
@@ -10,6 +14,29 @@ export interface GamePanelProps {
 }
 
 export function GamePanel({ onGameOver, overlay, className }: GamePanelProps) {
+  const gameRef = useRef<AsteroidsGame | null>(null);
+  const [autopilotOn, setAutopilotOn] = useState(false);
+
+  const handleGameReady = useCallback((game: AsteroidsGame) => {
+    gameRef.current = game;
+    setAutopilotOn(false);
+  }, []);
+
+  const handleToggleAutopilot = useCallback(() => {
+    const game = gameRef.current;
+    if (!game) return;
+    game.toggleAutopilot();
+    setAutopilotOn(game.isAutopilotEnabled());
+  }, []);
+
+  const handleGameOver = useCallback(
+    (run: CompletedGameRun) => {
+      setAutopilotOn(false);
+      onGameOver(run);
+    },
+    [onGameOver],
+  );
+
   return (
     <section
       data-slot="game-panel"
@@ -24,7 +51,9 @@ export function GamePanel({ onGameOver, overlay, className }: GamePanelProps) {
           "shadow-[0_24px_80px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.08)]",
         )}
       >
-        <AsteroidsCanvas onGameOver={onGameOver} />
+        <AsteroidsCanvas onGameOver={handleGameOver} onGameReady={handleGameReady} />
+
+        <MobileAutopilotButton active={autopilotOn} onToggle={handleToggleAutopilot} />
 
         {/* Overlay renders on top of canvas, within the rounded border */}
         {overlay}

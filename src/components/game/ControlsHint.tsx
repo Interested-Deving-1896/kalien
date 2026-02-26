@@ -6,7 +6,7 @@ export function ControlsHint({ className }: { className?: string }) {
     <div
       data-slot="controls-hint"
       className={cn(
-        "flex items-center justify-center gap-2 rounded-lg border border-border/40 bg-[rgba(8,16,29,0.6)] px-4 py-2",
+        "flex items-center justify-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-4 py-2",
         className,
       )}
     >
@@ -29,7 +29,7 @@ export function ControlsHint({ className }: { className?: string }) {
 
       {/* Mobile: simplified hint */}
       <p className="m-0 text-xs tracking-wide text-muted-foreground sm:hidden">
-        Tap &amp; swipe to move. On-screen buttons to fire.
+        Tap to start. Use the Autopilot button to play.
       </p>
     </div>
   );

@@ -36,14 +36,14 @@ export function PlayerCard({ player }: PlayerCardProps) {
           {name}
         </h2>
         <p className="m-0">
-          <strong className="text-xs uppercase tracking-[0.04em] text-[rgba(146,182,233,0.9)]">
+          <strong className="text-xs uppercase tracking-[0.04em] text-text-dim">
             Address:
           </strong>{" "}
-          <code className="break-all text-[rgba(190,216,249,0.92)]">{player.claimant_address}</code>
+          <code className="break-all text-text-soft">{player.claimant_address}</code>
         </p>
         {player.profile?.linkUrl && isSafeUrl(player.profile.linkUrl) ? (
           <p className="m-0 flex items-center gap-1.5">
-            <Link className="size-3.5 text-[rgba(146,182,233,0.9)]" />
+            <Link className="size-3.5 text-text-dim" />
             <a href={player.profile.linkUrl} target="_blank" rel="noreferrer">
               {player.profile.linkUrl}
             </a>
@@ -62,7 +62,7 @@ export function PlayerCard({ player }: PlayerCardProps) {
         />
       </StatGrid>
 
-      <p className="m-0 text-sm text-[rgba(186,210,241,0.92)]">
+      <p className="m-0 text-sm text-text-soft">
         Leaderboard rank uses each claimant's single best proved run in the selected window; this
         page also shows your full recent run history and total minted.
       </p>

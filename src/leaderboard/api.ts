@@ -1,5 +1,6 @@
 import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
 import type { ClaimStatus } from "@/proof/api";
+import { fetchWithTimeout as baseFetchWithTimeout, parseJson } from "@/lib/api";
 
 export type { ClaimStatus };
 
@@ -108,17 +109,13 @@ async function fetchWithTimeout(
   init: RequestInit | undefined,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await baseFetchWithTimeout(input, init, timeoutMs);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new LeaderboardApiError("request timed out", 0);
     }
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -134,10 +131,6 @@ async function parseError(response: Response): Promise<LeaderboardApiError> {
   }
 
   return new LeaderboardApiError(message, response.status);
-}
-
-async function parseJson<T>(response: Response): Promise<T> {
-  return (await response.json()) as T;
 }
 
 export async function getLeaderboard({

@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useTick } from "@/hooks/useTick";
 import { formatUtcDateTime, timeAgo } from "@/lib/time";
-import { RELATIVE_TIME_REFRESH_MS } from "@/consts";
 
 /**
  * Displays a human-readable relative timestamp (e.g. "3 min ago") that
@@ -8,15 +7,7 @@ import { RELATIVE_TIME_REFRESH_MS } from "@/consts";
  * native browser tooltip via the `title` attribute.
  */
 export function RelativeTime({ value }: { value: string | null | undefined }) {
-  const [, forceUpdate] = useState(0);
-
-  useEffect(() => {
-    if (!value) {
-      return;
-    }
-    const interval = setInterval(() => forceUpdate((n) => n + 1), RELATIVE_TIME_REFRESH_MS);
-    return () => clearInterval(interval);
-  }, [value]);
+  useTick();
 
   if (!value) {
     return <span>n/a</span>;

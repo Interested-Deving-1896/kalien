@@ -11,11 +11,11 @@ export function StatCard({ label, value, className }: StatCardProps) {
   return (
     <div
       className={cn(
-        "rounded-lg border border-[rgba(108,159,230,0.24)] bg-[rgba(13,22,40,0.5)] px-3 py-2",
+        "rounded-lg border border-border-subtle bg-[rgba(13,22,40,0.5)] px-3 py-2",
         className,
       )}
     >
-      <dt className="m-0 text-xs uppercase tracking-[0.06em] text-[rgba(146,182,233,0.9)]">
+      <dt className="m-0 text-xs uppercase tracking-[0.06em] text-text-dim">
         {label}
       </dt>
       <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">{value}</dd>

@@ -36,7 +36,7 @@ export function EditProfile({
           <Edit3 className="size-4 text-muted-foreground" />
           Edit Profile
         </h3>
-        <p className="m-0 text-[rgba(186,210,241,0.92)]">
+        <p className="m-0 text-text-soft">
           Profile edits are available only for smart-account claimant contract addresses.
         </p>
       </Card>
@@ -49,7 +49,7 @@ export function EditProfile({
         <Edit3 className="size-4 text-primary" />
         Edit Profile
       </h3>
-      <p className="m-0 text-sm text-[rgba(186,210,241,0.92)]">
+      <p className="m-0 text-sm text-text-soft">
         Saving requires a passkey prompt for the claimant wallet tied to this address.
       </p>
       <div className="grid gap-2.5">
@@ -79,7 +79,7 @@ export function EditProfile({
           {isSaving ? "Saving..." : "Save Profile"}
         </Button>
         {savedAt ? (
-          <span className="text-sm text-[rgba(186,210,241,0.92)]">
+          <span className="text-sm text-text-soft">
             Saved <RelativeTime value={savedAt} />
           </span>
         ) : null}

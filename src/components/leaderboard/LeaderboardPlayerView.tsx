@@ -12,10 +12,12 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody } from "@/components/ui/table";
 import { SkeletonRows } from "@/components/shared/Skeleton";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
+import { Link } from "@/components/shared/Link";
 import { PlayerCard } from "./PlayerCard";
 import { EditProfile } from "./EditProfile";
 import { RecentRunsTable } from "./RecentRunsTable";
 import { PageHero } from "@/components/shared/PageHero";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { resolveSmartWalletSessionForClaimant } from "@/wallet/smartAccount";
 
 export interface LeaderboardPlayerViewProps {
@@ -27,6 +29,7 @@ function isSmartAccountContractAddress(address: string): boolean {
 }
 
 export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewProps) {
+  useDocumentTitle(`Player ${abbreviateAddress(playerAddress)}`);
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [playerData, setPlayerData] = useState<LeaderboardPlayerResponse | null>(null);
@@ -144,13 +147,13 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
         title={playerData?.player.profile?.username?.trim() || abbreviateAddress(playerAddress)}
         subtitle="Profile, rankings, and recent proved runs."
       >
-        <a
-          className="inline-flex items-center gap-1.5 font-display text-sm uppercase tracking-wider text-[#9de0ff] no-underline hover:underline"
+        <Link
+          className="inline-flex items-center gap-1.5 font-display text-sm uppercase tracking-wider text-link no-underline hover:underline"
           href="/leaderboard"
         >
           <ChevronLeft className="size-4" />
           Back To Leaderboard
-        </a>
+        </Link>
       </PageHero>
 
       {/* Loading state */}

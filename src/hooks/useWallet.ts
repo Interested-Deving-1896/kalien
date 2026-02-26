@@ -40,62 +40,55 @@ export function useWallet(): UseWalletReturn {
   const isConnected = address.trim().length > 0;
   const isBusy = action !== "idle";
 
-  const connect = useCallback(async () => {
-    setAction("connecting");
-    setError(null);
+  const withWalletAction = useCallback(
+    async (
+      actionName: Exclude<WalletAction, "idle" | "restoring">,
+      fallbackMsg: string,
+      perform: (mod: Awaited<ReturnType<typeof loadSmartWalletModule>>) => Promise<void>,
+    ) => {
+      setAction(actionName);
+      setError(null);
 
-    try {
-      const walletModule = await loadSmartWalletModule();
-      const nextConfig = walletModule.getSmartAccountConfig();
-      setConfig({ networkPassphrase: nextConfig.networkPassphrase });
-      setRelayerMode(walletModule.getSmartAccountRelayerMode());
-      const nextSession = await walletModule.connectSmartWallet();
-      setSession(nextSession);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : "failed to connect wallet";
-      setError(detail);
-    } finally {
-      setAction("idle");
-    }
-  }, []);
+      try {
+        const walletModule = await loadSmartWalletModule();
+        const nextConfig = walletModule.getSmartAccountConfig();
+        setConfig({ networkPassphrase: nextConfig.networkPassphrase });
+        setRelayerMode(walletModule.getSmartAccountRelayerMode());
+        await perform(walletModule);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : fallbackMsg;
+        setError(detail);
+      } finally {
+        setAction("idle");
+      }
+    },
+    [],
+  );
 
-  const create = useCallback(async () => {
-    setAction("creating");
-    setError(null);
+  const connect = useCallback(
+    () =>
+      withWalletAction("connecting", "failed to connect wallet", async (mod) => {
+        setSession(await mod.connectSmartWallet());
+      }),
+    [withWalletAction],
+  );
 
-    try {
-      const walletModule = await loadSmartWalletModule();
-      const nextConfig = walletModule.getSmartAccountConfig();
-      setConfig({ networkPassphrase: nextConfig.networkPassphrase });
-      setRelayerMode(walletModule.getSmartAccountRelayerMode());
-      const nextSession = await walletModule.createSmartWallet(userName);
-      setSession(nextSession);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : "failed to create wallet";
-      setError(detail);
-    } finally {
-      setAction("idle");
-    }
-  }, [userName]);
+  const create = useCallback(
+    () =>
+      withWalletAction("creating", "failed to create wallet", async (mod) => {
+        setSession(await mod.createSmartWallet(userName));
+      }),
+    [withWalletAction, userName],
+  );
 
-  const disconnect = useCallback(async () => {
-    setAction("disconnecting");
-    setError(null);
-
-    try {
-      const walletModule = await loadSmartWalletModule();
-      const nextConfig = walletModule.getSmartAccountConfig();
-      setConfig({ networkPassphrase: nextConfig.networkPassphrase });
-      setRelayerMode(walletModule.getSmartAccountRelayerMode());
-      await walletModule.disconnectSmartWallet();
-      setSession(null);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : "failed to disconnect wallet";
-      setError(detail);
-    } finally {
-      setAction("idle");
-    }
-  }, []);
+  const disconnect = useCallback(
+    () =>
+      withWalletAction("disconnecting", "failed to disconnect wallet", async (mod) => {
+        await mod.disconnectSmartWallet();
+        setSession(null);
+      }),
+    [withWalletAction],
+  );
 
   const clearError = useCallback(() => {
     setError(null);

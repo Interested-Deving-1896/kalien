@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { PageShell } from "@/components/shared/PageShell";
+import { useLocation } from "@/hooks/useLocation";
 import { LeaderboardListView } from "./LeaderboardListView";
 import { LeaderboardPlayerView } from "./LeaderboardPlayerView";
 
@@ -12,7 +13,7 @@ function getPlayerAddressFromPath(pathname: string): string | null {
 }
 
 export function LeaderboardPage() {
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "/leaderboard";
+  const pathname = useLocation();
   const playerAddress = useMemo(() => getPlayerAddressFromPath(pathname), [pathname]);
 
   return (
