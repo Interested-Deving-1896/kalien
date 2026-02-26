@@ -45,31 +45,7 @@
         }
       ]
     ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "function_name": "submit_score",
-              "args": [
-                {
-                  "bytes": "73c457ba0d370fb15575f54e8a9f82122c619d7e023dbd3367fdc3c77c48864bdacd799508a61c47562dea566f16d6101c313fddf1b585d15759884d479f3ce07db49cae0165ea5800f185f4cf6aa02d727e571c7f1d1b7559209a9aa1aa2ffa5b67c9ca2ff29b88e2a2535e20e486a50036e8e63efcd6270a7c3812ebd8ada90061218d27bf66c8675700febcf5d0a4a85d7adfd4fe857bbac13d3a7dfaf8280ae60606256f01056cd7ec71402b5bf461c8d03012863e16e12dd4d2813434853794d8ad154dedc1824840f28f7c78b67183c5a82f32765b6cdbac26557aa8a609a831c20874e0249c736944325184a06b905bb36883077632d8abecfd1db8278fd21459"
-                },
-                {
-                  "bytes": "cdc6c943053600005c800000033c71a989bbeec833545341"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
+    [],
     [],
     [],
     []
@@ -77,7 +53,7 @@
   "ledger": {
     "protocol_version": 25,
     "sequence_number": 0,
-    "timestamp": 0,
+    "timestamp": 682378260600,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -135,26 +111,6 @@
               "key": {
                 "ledger_key_nonce": {
                   "nonce": "5541220902715666415"
-                }
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 6311999
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-              "key": {
-                "ledger_key_nonce": {
-                  "nonce": "1033654523790656264"
                 }
               },
               "durability": "temporary",

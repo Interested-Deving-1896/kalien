@@ -46,14 +46,12 @@
       ]
     ],
     [],
-    [],
-    [],
     []
   ],
   "ledger": {
     "protocol_version": 25,
     "sequence_number": 0,
-    "timestamp": 600,
+    "timestamp": 600000,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -160,7 +158,7 @@
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 1
+                    "u32": 857
                   }
                 ]
               },
@@ -187,7 +185,7 @@
                     "symbol": "Claimed"
                   },
                   {
-                    "bytes": "0ec16b92682841a113d315e041804e6635ad66de94928103533855de9fee8b08"
+                    "bytes": "14f32e9ca7d45dcbad2503b625aaba7f1bfbc9f7f26e86b111fc7bc602a47f62"
                   }
                 ]
               },

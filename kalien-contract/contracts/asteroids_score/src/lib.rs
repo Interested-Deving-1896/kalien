@@ -27,6 +27,8 @@ const INSTANCE_TTL_BUMP: u32 = 172_800; // 20 days
 const PERSISTENT_TTL_THRESHOLD: u32 = 518_400; // ~60 days
 const PERSISTENT_TTL_BUMP: u32 = 1_036_800; // ~120 days
 const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
+const SEED_INTERVAL: u64 = 600; // 10 minutes in seconds
+const MAX_SEED_AGE: u32 = 143; // current bucket + 143 previous = 144 total (24h)
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -38,6 +40,7 @@ pub enum ScoreError {
     ZeroScoreNotAllowed = 4,
     ScoreNotImproved = 5,
     ContractPaused = 6,
+    SeedExpired = 7,
 }
 
 #[contractevent]
@@ -89,7 +92,6 @@ impl AsteroidsScoreContract {
         claimant: Address,
     ) -> Result<u32, ScoreError> {
         extend_instance_ttl(&env);
-        claimant.require_auth();
 
         if env
             .storage()
@@ -115,6 +117,13 @@ impl AsteroidsScoreContract {
         let rules_digest = read_u32_le(&journal_raw, 20);
         if rules_digest != RULES_DIGEST {
             return Err(ScoreError::InvalidRulesDigest);
+        }
+
+        // Validate seed is a recent 10-minute time bucket
+        let current_bucket = (env.ledger().timestamp() / SEED_INTERVAL) as u32;
+        let min_bucket = current_bucket.saturating_sub(MAX_SEED_AGE);
+        if seed > current_bucket || seed < min_bucket {
+            return Err(ScoreError::SeedExpired);
         }
 
         // Enforce non-zero minting.
@@ -258,6 +267,34 @@ impl AsteroidsScoreContract {
     /// Read the expected rules digest.
     pub fn rules_digest(_env: Env) -> u32 {
         RULES_DIGEST
+    }
+
+    /// Read the current seed bucket derived from the ledger timestamp.
+    pub fn current_seed(env: Env) -> u32 {
+        (env.ledger().timestamp() / SEED_INTERVAL) as u32
+    }
+
+    /// Verify a RISC Zero proof without minting or modifying state.
+    pub fn verify_score(env: Env, seal: Bytes, journal_raw: Bytes) -> Result<u32, ScoreError> {
+        if journal_raw.len() != JOURNAL_BASE_LEN {
+            return Err(ScoreError::InvalidJournalLength);
+        }
+
+        let rules_digest = read_u32_le(&journal_raw, 20);
+        if rules_digest != RULES_DIGEST {
+            return Err(ScoreError::InvalidRulesDigest);
+        }
+
+        let final_score = read_u32_le(&journal_raw, 8);
+
+        let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
+        let router_id: Address = env.storage().instance().get(&DataKey::RouterId).unwrap();
+        let image_id: BytesN<32> = env.storage().instance().get(&DataKey::ImageId).unwrap();
+
+        let router_client = risc0_router::Client::new(&env, &router_id);
+        router_client.verify(&seal, &image_id, &journal_digest);
+
+        Ok(final_score)
     }
 }
 

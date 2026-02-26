@@ -4,7 +4,7 @@ use crate::{
     AsteroidsScoreContract, AsteroidsScoreContractArgs, AsteroidsScoreContractClient, ScoreError,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Events as _},
+    testutils::{Address as _, Events as _, Ledger as _},
     token::StellarAssetClient,
     token::TokenClient,
     xdr, Address, Bytes, BytesN, Env,
@@ -12,6 +12,7 @@ use soroban_sdk::{
 
 const RULES_DIGEST_AST3: u32 = 0x4153_5433;
 const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
+const SEED_INTERVAL: u64 = 600;
 
 // ---------------------------------------------------------------------------
 // Mock router: always accepts verify
@@ -84,6 +85,20 @@ fn setup(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address, Address) {
     (client, admin, token_addr)
 }
 
+fn set_ledger_time(env: &Env, timestamp: u64) {
+    env.ledger().with_mut(|li| {
+        li.timestamp = timestamp;
+    });
+}
+
+fn read_seed_from_journal(journal: &Bytes) -> u32 {
+    let b0 = journal.get(0).unwrap() as u32;
+    let b1 = journal.get(1).unwrap() as u32;
+    let b2 = journal.get(2).unwrap() as u32;
+    let b3 = journal.get(3).unwrap() as u32;
+    b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -111,6 +126,7 @@ fn test_submit_score_success() {
     let journal = make_journal(&env, 1, 42);
     let seal = dummy_seal(&env);
 
+    set_ledger_time(&env, 1 * SEED_INTERVAL);
     let score = client.submit_score(&seal, &journal, &claimant);
     assert_eq!(score, 42);
     assert_eq!(client.best_score(&claimant, &1), 42);
@@ -132,6 +148,7 @@ fn test_submit_score_duplicate_journal_rejected_same_claimant() {
     let journal = make_journal(&env, 7, 77);
     let seal = dummy_seal(&env);
 
+    set_ledger_time(&env, 7 * SEED_INTERVAL);
     client.submit_score(&seal, &journal, &claimant);
     let result = client.try_submit_score(&seal, &journal, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::JournalAlreadyClaimed)));
@@ -148,6 +165,7 @@ fn test_submit_score_duplicate_journal_rejected_different_claimant() {
     let journal = make_journal(&env, 7, 77);
     let seal = dummy_seal(&env);
 
+    set_ledger_time(&env, 7 * SEED_INTERVAL);
     client.submit_score(&seal, &journal, &claimant_a);
     let result = client.try_submit_score(&seal, &journal, &claimant_b);
     assert_eq!(result, Err(Ok(ScoreError::JournalAlreadyClaimed)));
@@ -162,6 +180,7 @@ fn test_submit_score_not_improved_rejected() {
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
+    set_ledger_time(&env, 9 * SEED_INTERVAL);
     let journal_a = make_journal(&env, 9, 80);
     client.submit_score(&seal, &journal_a, &claimant);
 
@@ -183,6 +202,7 @@ fn test_submit_score_improvement_mints_delta() {
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
+    set_ledger_time(&env, 10 * SEED_INTERVAL);
     let journal_a = make_journal(&env, 10, 10);
     assert_eq!(client.submit_score(&seal, &journal_a, &claimant), 10);
 
@@ -203,6 +223,8 @@ fn test_submit_score_different_seeds_track_independently() {
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 
+    // bucket=2, min_bucket=0 — both seeds 1 and 2 are valid
+    set_ledger_time(&env, 2 * SEED_INTERVAL);
     assert_eq!(
         client.submit_score(&seal, &make_journal(&env, 1, 10), &claimant),
         10
@@ -261,6 +283,7 @@ fn test_submit_score_zero_rejected() {
     let seal = dummy_seal(&env);
     let journal = make_journal(&env, 1, 0);
 
+    set_ledger_time(&env, 1 * SEED_INTERVAL);
     let result = client.try_submit_score(&seal, &journal, &claimant);
     assert_eq!(result, Err(Ok(ScoreError::ZeroScoreNotAllowed)));
 
@@ -426,6 +449,10 @@ fn run_fixture_test(
     let seal = hex_to_soroban_bytes(&env, seal_hex);
     let journal_raw = force_ast3_rules_digest(&env, &hex_to_soroban_bytes(&env, journal_raw_hex));
 
+    // Set ledger time so the fixture seed is in the valid bucket window
+    let seed = read_seed_from_journal(&journal_raw);
+    set_ledger_time(&env, seed as u64 * SEED_INTERVAL);
+
     let score = client.submit_score(&seal, &journal_raw, &claimant);
     assert_eq!(score, expected_score);
 
@@ -450,6 +477,7 @@ fn test_submit_score_event_contains_journal_and_reward_context() {
     let journal = make_journal(&env, 123, 4_567);
     let digest: BytesN<32> = env.crypto().sha256(&journal).into();
 
+    set_ledger_time(&env, 123 * SEED_INTERVAL);
     let before = env.events().all().events().len();
     assert_eq!(client.submit_score(&seal, &journal, &claimant), 4_567);
     let all_events = env.events().all();
@@ -567,6 +595,7 @@ fn test_fixture_all_three_cumulative() {
             include_str!("../../../../test-fixtures/proof-medium-groth16.journal_raw"),
         ),
     );
+    set_ledger_time(&env, read_seed_from_journal(&medium_journal) as u64 * SEED_INTERVAL);
     assert_eq!(
         client.submit_score(&medium_seal, &medium_journal, &claimant),
         90
@@ -603,6 +632,7 @@ fn test_fixture_all_three_cumulative() {
             include_str!("../../../../test-fixtures/proof-real-game-groth16.journal_raw"),
         ),
     );
+    set_ledger_time(&env, read_seed_from_journal(&real_journal) as u64 * SEED_INTERVAL);
     assert_eq!(
         client.submit_score(&real_seal, &real_journal, &claimant),
         32860
@@ -623,6 +653,8 @@ fn test_pause_blocks_submissions() {
     let (client, _admin, _token_addr) = setup(&env);
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
+
+    set_ledger_time(&env, 1 * SEED_INTERVAL);
 
     // Pause the contract
     client.set_paused(&true);
@@ -693,29 +725,140 @@ fn test_set_router_id_admin_only() {
     assert!(result.is_err());
 }
 
+// ---------------------------------------------------------------------------
+// Seed bucket validation tests
+// ---------------------------------------------------------------------------
+
 #[test]
-fn test_claimant_auth_required() {
+fn test_submit_score_seed_expired_future() {
     let env = Env::default();
-    // NOTE: not calling mock_all_auths — we want real auth checks
+    env.mock_all_auths();
 
-    let admin = Address::generate(&env);
-    let sac = env.register_stellar_asset_contract_v2(admin.clone());
-    let token_addr = sac.address();
-    let router_addr = env.register(mock_router_ok::MockRouter, ());
-    let image_id = dummy_image_id(&env);
-
-    let contract_id = env.register(
-        AsteroidsScoreContract,
-        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
-    );
-    // Skip SAC set_admin — require_auth fires before minting
-    let client = AsteroidsScoreContractClient::new(&env, &contract_id);
-
+    let (client, _admin, _token_addr) = setup(&env);
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
-    let journal = make_journal(&env, 1, 42);
 
-    // Without claimant auth, submit should fail
+    let current_bucket = 1000u32;
+    set_ledger_time(&env, current_bucket as u64 * SEED_INTERVAL);
+
+    // seed one bucket in the future
+    let journal = make_journal(&env, current_bucket + 1, 42);
     let result = client.try_submit_score(&seal, &journal, &claimant);
-    assert!(result.is_err());
+    assert_eq!(result, Err(Ok(ScoreError::SeedExpired)));
+}
+
+#[test]
+fn test_submit_score_seed_expired_too_old() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+
+    let current_bucket = 1000u32;
+    set_ledger_time(&env, current_bucket as u64 * SEED_INTERVAL);
+
+    // seed 144 buckets old (max_age is 143, so this is just outside the window)
+    let journal = make_journal(&env, current_bucket - 144, 42);
+    let result = client.try_submit_score(&seal, &journal, &claimant);
+    assert_eq!(result, Err(Ok(ScoreError::SeedExpired)));
+}
+
+#[test]
+fn test_submit_score_seed_boundary_current() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+
+    let current_bucket = 1000u32;
+    set_ledger_time(&env, current_bucket as u64 * SEED_INTERVAL);
+
+    // seed = current bucket (should succeed)
+    let journal = make_journal(&env, current_bucket, 42);
+    let score = client.submit_score(&seal, &journal, &claimant);
+    assert_eq!(score, 42);
+
+    let token = TokenClient::new(&env, &token_addr);
+    assert_eq!(token.balance(&claimant), 42 * TOKEN_DECIMALS_SCALE);
+}
+
+#[test]
+fn test_submit_score_seed_boundary_oldest_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+
+    let current_bucket = 1000u32;
+    set_ledger_time(&env, current_bucket as u64 * SEED_INTERVAL);
+
+    // seed = current - 143 (oldest valid bucket)
+    let journal = make_journal(&env, current_bucket - 143, 42);
+    let score = client.submit_score(&seal, &journal, &claimant);
+    assert_eq!(score, 42);
+
+    let token = TokenClient::new(&env, &token_addr);
+    assert_eq!(token.balance(&claimant), 42 * TOKEN_DECIMALS_SCALE);
+}
+
+// ---------------------------------------------------------------------------
+// verify_score tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_verify_score_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _token_addr) = setup(&env);
+    let seal = dummy_seal(&env);
+    let journal = make_journal(&env, 999, 42);
+
+    let score = client.verify_score(&seal, &journal);
+    assert_eq!(score, 42);
+}
+
+#[test]
+fn test_verify_score_invalid_journal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _token_addr) = setup(&env);
+    let seal = dummy_seal(&env);
+    let short_journal = Bytes::from_slice(&env, &[0u8; 20]);
+
+    let result = client.try_verify_score(&seal, &short_journal);
+    assert_eq!(result, Err(Ok(ScoreError::InvalidJournalLength)));
+}
+
+#[test]
+fn test_verify_score_wrong_rules_digest() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _token_addr) = setup(&env);
+    let seal = dummy_seal(&env);
+    let bad = Bytes::from_slice(&env, &base_journal_24(1, 42, 0xBAAD_F00D));
+
+    let result = client.try_verify_score(&seal, &bad);
+    assert_eq!(result, Err(Ok(ScoreError::InvalidRulesDigest)));
+}
+
+#[test]
+fn test_current_seed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, _token_addr) = setup(&env);
+
+    set_ledger_time(&env, 6000);
+    assert_eq!(client.current_seed(), 10); // 6000 / 600 = 10
+
+    set_ledger_time(&env, 6599);
+    assert_eq!(client.current_seed(), 10); // 6599 / 600 = 10 (truncated)
+
+    set_ledger_time(&env, 6600);
+    assert_eq!(client.current_seed(), 11); // 6600 / 600 = 11
 }
