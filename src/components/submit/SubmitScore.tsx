@@ -26,10 +26,7 @@ export function SubmitScore({
       : null;
 
   return (
-    <div
-      data-slot="submit-score"
-      className={cn("grid gap-2 text-center", className)}
-    >
+    <div data-slot="submit-score" className={cn("grid gap-2 text-center", className)}>
       <Button
         variant={canSubmit ? "active" : "space"}
         size="lg"
@@ -56,9 +53,7 @@ export function SubmitScore({
       )}
 
       {isSubmitting && (
-        <p className="m-0 text-xs text-primary">
-          Submitting your game tape for verification...
-        </p>
+        <p className="m-0 text-xs text-primary">Submitting your game tape for verification...</p>
       )}
     </div>
   );

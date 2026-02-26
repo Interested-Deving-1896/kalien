@@ -1,19 +1,10 @@
 import { ChevronDown, FileText, Upload } from "lucide-react";
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
 import { StatCard, StatGrid } from "@/components/shared/StatCard";
 import { cn } from "@/lib/utils";
-import {
-  formatHex32,
-  abbreviateHex,
-  formatDuration,
-  abbreviateAddress,
-} from "@/lib/format";
+import { formatHex32, abbreviateHex, formatDuration, abbreviateAddress } from "@/lib/format";
 import { formatUtcDateTime } from "@/time";
 import { TAPE_HEADER_SIZE, TAPE_FOOTER_SIZE } from "@/game/tape";
 import type { ProofJobPublic, GatewayHealthResponse } from "@/proof/api";
@@ -77,18 +68,13 @@ export function AdvancedProofDetails({
             )}
           >
             <DetailRow label="Status">
-              {health
-                ? proverStatus === "compatible"
-                  ? "Compatible"
-                  : "Degraded"
-                : "Loading..."}
+              {health ? (proverStatus === "compatible" ? "Compatible" : "Degraded") : "Loading..."}
             </DetailRow>
 
             {health?.prover.status === "compatible" && (
               <>
                 <DetailRow label="Ruleset">
-                  {health.prover.ruleset} /{" "}
-                  {health.prover.rules_digest_hex.toUpperCase()}
+                  {health.prover.ruleset} / {health.prover.rules_digest_hex.toUpperCase()}
                 </DetailRow>
                 <DetailRow label="Prover Image">
                   <code className="text-card-foreground">
@@ -100,10 +86,7 @@ export function AdvancedProofDetails({
             )}
 
             {health?.prover.status === "degraded" && (
-              <ErrorMessage
-                message={health.prover.error}
-                severity="warning"
-              />
+              <ErrorMessage message={health.prover.error} severity="warning" />
             )}
 
             <ErrorMessage message={healthError} severity="warning" />
@@ -114,34 +97,15 @@ export function AdvancedProofDetails({
         {run && (
           <DetailSection title="Tape Metadata">
             <StatGrid columns={3}>
-              <StatCard
-                label="Score"
-                value={run.record.finalScore.toLocaleString()}
-              />
-              <StatCard
-                label="Frames"
-                value={run.frameCount.toLocaleString()}
-              />
-              <StatCard
-                label="Seed"
-                value={formatHex32(run.record.seed)}
-              />
-              <StatCard
-                label="Final RNG"
-                value={formatHex32(run.record.finalRngState)}
-              />
+              <StatCard label="Score" value={run.record.finalScore.toLocaleString()} />
+              <StatCard label="Frames" value={run.frameCount.toLocaleString()} />
+              <StatCard label="Seed" value={formatHex32(run.record.seed)} />
+              <StatCard label="Final RNG" value={formatHex32(run.record.finalRngState)} />
               <StatCard
                 label="Tape Bytes"
-                value={(
-                  TAPE_HEADER_SIZE +
-                  run.frameCount +
-                  TAPE_FOOTER_SIZE
-                ).toLocaleString()}
+                value={(TAPE_HEADER_SIZE + run.frameCount + TAPE_FOOTER_SIZE).toLocaleString()}
               />
-              <StatCard
-                label="Captured"
-                value={formatUtcDateTime(run.endedAtMs)}
-              />
+              <StatCard label="Captured" value={formatUtcDateTime(run.endedAtMs)} />
             </StatGrid>
           </DetailSection>
         )}
@@ -153,25 +117,14 @@ export function AdvancedProofDetails({
               <DetailRow label="Job ID">
                 <code className="break-all">{job.jobId}</code>
               </DetailRow>
-              <DetailRow label="Created">
-                {formatUtcDateTime(job.createdAt)}
-              </DetailRow>
-              <DetailRow label="Updated">
-                {formatUtcDateTime(job.updatedAt)}
-              </DetailRow>
+              <DetailRow label="Created">{formatUtcDateTime(job.createdAt)}</DetailRow>
+              <DetailRow label="Updated">{formatUtcDateTime(job.updatedAt)}</DetailRow>
               {job.completedAt && (
-                <DetailRow label="Completed">
-                  {formatUtcDateTime(job.completedAt)}
-                </DetailRow>
+                <DetailRow label="Completed">{formatUtcDateTime(job.completedAt)}</DetailRow>
               )}
-              <DetailRow label="Queue Attempts">
-                {job.queue.attempts}
-              </DetailRow>
+              <DetailRow label="Queue Attempts">{job.queue.attempts}</DetailRow>
               {job.queue.lastError && (
-                <ErrorMessage
-                  message={`Last retry: ${job.queue.lastError}`}
-                  severity="warning"
-                />
+                <ErrorMessage message={`Last retry: ${job.queue.lastError}`} severity="warning" />
               )}
               {job.result?.summary && (
                 <>
@@ -192,9 +145,7 @@ export function AdvancedProofDetails({
                   <DetailRow label="Segments">
                     {job.result.summary.stats.segments.toLocaleString()}
                   </DetailRow>
-                  <DetailRow label="Claim">
-                    {job.claim.status}
-                  </DetailRow>
+                  <DetailRow label="Claim">{job.claim.status}</DetailRow>
                   {job.claim.txHash && (
                     <DetailRow label="Tx Hash">
                       <code className="break-all">{job.claim.txHash}</code>
@@ -203,14 +154,9 @@ export function AdvancedProofDetails({
                 </>
               )}
               {job.claim.lastError && (
-                <ErrorMessage
-                  message={`Auto claim: ${job.claim.lastError}`}
-                  severity="warning"
-                />
+                <ErrorMessage message={`Auto claim: ${job.claim.lastError}`} severity="warning" />
               )}
-              {job.error && (
-                <ErrorMessage message={job.error} />
-              )}
+              {job.error && <ErrorMessage message={job.error} />}
             </div>
           </DetailSection>
         )}
@@ -220,22 +166,16 @@ export function AdvancedProofDetails({
           <div className="grid gap-1 text-sm text-muted-foreground">
             {walletAddress && (
               <DetailRow label="Address">
-                <code className="text-card-foreground">
-                  {abbreviateAddress(walletAddress)}
-                </code>
+                <code className="text-card-foreground">{abbreviateAddress(walletAddress)}</code>
               </DetailRow>
             )}
             <DetailRow label="Network">{networkPassphrase}</DetailRow>
             <DetailRow label="Relayer">
-              {relayerMode === "configured"
-                ? "Configured"
-                : "Not Configured"}
+              {relayerMode === "configured" ? "Configured" : "Not Configured"}
             </DetailRow>
             {credentialId && (
               <DetailRow label="Credential">
-                <code className="text-card-foreground">
-                  {abbreviateHex(credentialId, 10)}
-                </code>
+                <code className="text-card-foreground">{abbreviateHex(credentialId, 10)}</code>
               </DetailRow>
             )}
           </div>
@@ -259,9 +199,7 @@ export function AdvancedProofDetails({
               variant="ghost"
               size="sm"
               onClick={async () => {
-                const res = await fetch(
-                  `/api/proofs/jobs/${job.jobId}/result`,
-                );
+                const res = await fetch(`/api/proofs/jobs/${job.jobId}/result`);
                 const blob = new Blob([await res.text()], {
                   type: "application/json",
                 });
@@ -281,13 +219,7 @@ export function AdvancedProofDetails({
   );
 }
 
-function DetailSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1.5">
       <h3 className="m-0 font-display text-[0.7rem] uppercase tracking-[0.08em] text-muted-foreground">
@@ -298,13 +230,7 @@ function DetailSection({
   );
 }
 
-function DetailRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <p className="m-0 text-sm leading-relaxed">
       <strong className="text-[rgba(146,182,233,0.9)]">{label}:</strong>{" "}

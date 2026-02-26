@@ -186,7 +186,11 @@ export function LeaderboardListView() {
         <div className="grid justify-items-end gap-2">
           {leaderboard?.ingestion?.last_synced_at ? (
             <StatusBadge
-              variant="success"
+              variant={
+                Date.now() - new Date(leaderboard.ingestion.last_synced_at).getTime() < 30 * 60_000
+                  ? "success"
+                  : "muted"
+              }
               title={formatUtcDateTime(leaderboard.ingestion.last_synced_at)}
             >
               Synced <RelativeTime value={leaderboard.ingestion.last_synced_at} />

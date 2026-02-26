@@ -75,54 +75,57 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   const hasResult = Boolean(job?.result?.summary);
   const friendlyStatus = getFriendlyStatus(status);
 
-  const submitRun = useCallback(async (run: CompletedGameRun, claimantAddress: string): Promise<boolean> => {
-    if (!run) {
-      return false;
-    }
-    if (run.record.finalScore <= 0) {
-      setError("zero-score runs are not accepted for proving or token minting");
-      return false;
-    }
-    if (claimantAddress.trim().length === 0) {
-      setError("connect a smart wallet before submitting a proof");
-      return false;
-    }
-
-    let tapeBytes: Uint8Array;
-    try {
-      tapeBytes = serializeTape(
-        run.record.seed,
-        run.record.inputs,
-        run.record.finalScore,
-        run.record.finalRngState,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "failed to serialize tape";
-      setError(message);
-      return false;
-    }
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const response = await submitProofJob(tapeBytes, claimantAddress);
-      setJob(response.job);
-      return true;
-    } catch (err) {
-      if (err instanceof ProofApiError) {
-        if (err.activeJob) {
-          setJob(err.activeJob);
-        }
-        setError(err.message);
-      } else {
-        setError("failed to submit proof job");
+  const submitRun = useCallback(
+    async (run: CompletedGameRun, claimantAddress: string): Promise<boolean> => {
+      if (!run) {
+        return false;
       }
-      return false;
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, []);
+      if (run.record.finalScore <= 0) {
+        setError("zero-score runs are not accepted for proving or token minting");
+        return false;
+      }
+      if (claimantAddress.trim().length === 0) {
+        setError("connect a smart wallet before submitting a proof");
+        return false;
+      }
+
+      let tapeBytes: Uint8Array;
+      try {
+        tapeBytes = serializeTape(
+          run.record.seed,
+          run.record.inputs,
+          run.record.finalScore,
+          run.record.finalRngState,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "failed to serialize tape";
+        setError(message);
+        return false;
+      }
+
+      setIsSubmitting(true);
+      setError(null);
+
+      try {
+        const response = await submitProofJob(tapeBytes, claimantAddress);
+        setJob(response.job);
+        return true;
+      } catch (err) {
+        if (err instanceof ProofApiError) {
+          if (err.activeJob) {
+            setJob(err.activeJob);
+          }
+          setError(err.message);
+        } else {
+          setError("failed to submit proof job");
+        }
+        return false;
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [],
+  );
 
   const cancel = useCallback(async () => {
     if (!job || isTerminalProofStatus(job.status)) {
@@ -191,8 +194,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
             !isTerminalClaimStatus(response.job.claim.status));
         if (shouldContinuePolling) {
           const claimRetrying =
-            response.job.status === "succeeded" &&
-            response.job.claim.status === "retrying";
+            response.job.status === "succeeded" && response.job.claim.status === "retrying";
           const interval = claimRetrying
             ? PROOF_STATUS_CLAIM_RETRY_POLL_INTERVAL_MS
             : PROOF_STATUS_POLL_INTERVAL_MS;

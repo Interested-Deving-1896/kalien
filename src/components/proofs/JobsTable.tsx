@@ -53,13 +53,7 @@ function SkeletonRows() {
   );
 }
 
-export function JobsTable({
-  jobs,
-  isLoading,
-}: {
-  jobs: ProofJobPublic[];
-  isLoading: boolean;
-}) {
+export function JobsTable({ jobs, isLoading }: { jobs: ProofJobPublic[]; isLoading: boolean }) {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   const toggleExpand = (jobId: string) => {
@@ -100,7 +94,11 @@ export function JobsTable({
                     {job.tape.metadata.finalScore.toLocaleString()}
                   </TableCell>
                   <TableCell>
-                    {backend ? <BackendBadge backend={backend} /> : <span className="text-muted-foreground text-sm">—</span>}
+                    {backend ? (
+                      <BackendBadge backend={backend} />
+                    ) : (
+                      <span className="text-muted-foreground text-sm">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="tabular-nums text-sm text-muted-foreground">
                     {attempts}

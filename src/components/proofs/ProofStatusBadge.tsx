@@ -39,7 +39,7 @@ export function ProofStatusBadge({ job }: { job: ProofJobPublic }) {
       if (claimStatus === "failed") {
         return <StatusBadge variant="warning">Claim Failed</StatusBadge>;
       }
-      return <StatusBadge variant="warning">Claiming</StatusBadge>;
+      return <StatusBadge variant="info">Claiming</StatusBadge>;
     case "failed":
       return <StatusBadge variant="error">Failed</StatusBadge>;
     default:

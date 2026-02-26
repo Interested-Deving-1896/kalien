@@ -40,9 +40,7 @@ export function StepIndicator({
                 <div
                   className={cn(
                     "h-0.5 w-8 sm:w-12",
-                    isCompleted || isCurrent
-                      ? "bg-secondary/50"
-                      : "bg-border/40",
+                    isCompleted || isCurrent ? "bg-secondary/50" : "bg-border/40",
                   )}
                   aria-hidden="true"
                 />
@@ -53,8 +51,7 @@ export function StepIndicator({
                 <div
                   className={cn(
                     "flex size-8 items-center justify-center rounded-full border-2 transition-all",
-                    isCompleted &&
-                      "border-secondary bg-secondary/20 text-secondary",
+                    isCompleted && "border-secondary bg-secondary/20 text-secondary",
                     isCurrent &&
                       !isCompleted &&
                       "animate-pulse border-primary bg-primary/20 text-primary shadow-[0_0_12px_rgba(102,199,255,0.35)]",
@@ -67,9 +64,7 @@ export function StepIndicator({
                   {isCompleted ? (
                     <Check className="size-4" aria-hidden="true" />
                   ) : (
-                    <span className="font-display text-xs font-semibold">
-                      {i + 1}
-                    </span>
+                    <span className="font-display text-xs font-semibold">{i + 1}</span>
                   )}
                 </div>
 
@@ -93,9 +88,7 @@ export function StepIndicator({
       {/* Mobile: compact text */}
       <p className="m-0 text-center font-display text-xs uppercase tracking-[0.06em] text-muted-foreground sm:hidden">
         Step {currentIndex + 1} of {steps.length}:{" "}
-        <span className="text-primary">
-          {steps[currentIndex]?.label ?? ""}
-        </span>
+        <span className="text-primary">{steps[currentIndex]?.label ?? ""}</span>
       </p>
     </div>
   );

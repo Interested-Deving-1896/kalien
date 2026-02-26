@@ -81,11 +81,14 @@ export function useGameFlow(): UseGameFlowReturn {
     }
   }, [proof.job?.claim.status, proof.job?.claim.txHash, balance.refresh]);
 
-  const handleGameOver = useCallback((run: CompletedGameRun) => {
-    setLatestRun(run);
-    proof.clearError();
-    proof.clearIfTerminal();
-  }, [proof.clearError, proof.clearIfTerminal]);
+  const handleGameOver = useCallback(
+    (run: CompletedGameRun) => {
+      setLatestRun(run);
+      proof.clearError();
+      proof.clearIfTerminal();
+    },
+    [proof.clearError, proof.clearIfTerminal],
+  );
 
   const loadTapeFile = useCallback(() => {
     const input = document.createElement("input");

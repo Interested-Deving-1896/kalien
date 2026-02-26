@@ -10,10 +10,7 @@ export function ControlsHint({ className }: { className?: string }) {
         className,
       )}
     >
-      <Keyboard
-        className="hidden size-4 text-muted-foreground sm:block"
-        aria-hidden="true"
-      />
+      <Keyboard className="hidden size-4 text-muted-foreground sm:block" aria-hidden="true" />
 
       {/* Desktop: full key listing */}
       <p className="m-0 hidden text-xs tracking-wide text-muted-foreground sm:block">

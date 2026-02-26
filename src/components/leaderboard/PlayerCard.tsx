@@ -46,9 +46,7 @@ export function PlayerCard({ player }: PlayerCardProps) {
           <strong className="text-xs uppercase tracking-[0.04em] text-[rgba(146,182,233,0.9)]">
             Address:
           </strong>{" "}
-          <code className="break-all text-[rgba(190,216,249,0.92)]">
-            {player.claimant_address}
-          </code>
+          <code className="break-all text-[rgba(190,216,249,0.92)]">{player.claimant_address}</code>
         </p>
         {player.profile?.linkUrl && isSafeUrl(player.profile.linkUrl) ? (
           <p className="m-0 flex items-center gap-1.5">
@@ -65,12 +63,15 @@ export function PlayerCard({ player }: PlayerCardProps) {
         <StatCard label="Total Runs" value={player.stats.total_runs.toLocaleString()} />
         <StatCard label="Best Score" value={player.stats.best_score.toLocaleString()} />
         <StatCard label="Total Minted" value={formatMetric(player.stats.total_minted)} />
-        <StatCard label="Last Played" value={<RelativeTime value={player.stats.last_played_at} />} />
+        <StatCard
+          label="Last Played"
+          value={<RelativeTime value={player.stats.last_played_at} />}
+        />
       </StatGrid>
 
       <p className="m-0 text-sm text-[rgba(186,210,241,0.92)]">
-        Leaderboard rank uses each claimant's single best proved run in the selected window;
-        this page also shows your full recent run history and total minted.
+        Leaderboard rank uses each claimant's single best proved run in the selected window; this
+        page also shows your full recent run history and total minted.
       </p>
 
       {/* Rank badges */}

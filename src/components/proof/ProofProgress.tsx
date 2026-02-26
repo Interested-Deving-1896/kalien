@@ -113,11 +113,7 @@ export function ProofProgress({
           {/* Proof time + verified score after completion */}
           {isSucceeded && hasResult && (
             <p className="m-0 mt-0.5 text-xs text-muted-foreground">
-              {elapsedMs !== undefined && (
-                <span>
-                  Proved in {formatDuration(elapsedMs)}
-                </span>
-              )}
+              {elapsedMs !== undefined && <span>Proved in {formatDuration(elapsedMs)}</span>}
               {elapsedMs !== undefined && verifiedScore !== undefined && (
                 <span className="mx-1.5 text-border" aria-hidden="true">
                   |
@@ -126,9 +122,7 @@ export function ProofProgress({
               {verifiedScore !== undefined && (
                 <span>
                   Verified score:{" "}
-                  <strong className="text-secondary">
-                    {verifiedScore.toLocaleString()}
-                  </strong>
+                  <strong className="text-secondary">{verifiedScore.toLocaleString()}</strong>
                 </span>
               )}
             </p>
@@ -155,9 +149,7 @@ export function ProofProgress({
         </p>
       )}
       {claimStatus === "succeeded" && !claimTxHash && (
-        <p className="m-0 text-xs text-secondary">
-          Score successfully submitted on-chain!
-        </p>
+        <p className="m-0 text-xs text-secondary">Score successfully submitted on-chain!</p>
       )}
 
       {/* Error display */}
@@ -167,12 +159,7 @@ export function ProofProgress({
       <div className="flex flex-wrap items-center gap-2">
         {/* Cancel during active proof */}
         {isBusy && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onCancel}
-            aria-label="Cancel proof"
-          >
+          <Button variant="ghost" size="sm" onClick={onCancel} aria-label="Cancel proof">
             Cancel
           </Button>
         )}

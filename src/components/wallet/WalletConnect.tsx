@@ -37,10 +37,7 @@ export function WalletConnect({
     return (
       <Card
         data-slot="wallet-connect"
-        className={cn(
-          "flex-row items-center gap-3 border-secondary/30 py-3",
-          className,
-        )}
+        className={cn("flex-row items-center gap-3 border-secondary/30 py-3", className)}
         aria-label="Account connected"
       >
         <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary/15 text-secondary">
@@ -51,9 +48,7 @@ export function WalletConnect({
           <p className="m-0 font-display text-xs font-semibold uppercase tracking-[0.05em] text-secondary">
             Account Connected
           </p>
-          <p className="m-0 text-xs text-muted-foreground">
-            {abbreviateAddress(address)}
-          </p>
+          <p className="m-0 text-xs text-muted-foreground">{abbreviateAddress(address)}</p>
         </div>
 
         <Button
@@ -82,9 +77,7 @@ export function WalletConnect({
     >
       <CardHeader className="flex-col items-start gap-1">
         <CardTitle className="text-base">Create Your Account</CardTitle>
-        <CardDescription>
-          Create a free account to prove scores and earn tokens
-        </CardDescription>
+        <CardDescription>Create a free account to prove scores and earn tokens</CardDescription>
       </CardHeader>
 
       <div className="grid gap-3">
@@ -115,9 +108,7 @@ export function WalletConnect({
         </Button>
 
         <div className="flex items-center justify-center gap-1">
-          <span className="text-xs text-muted-foreground">
-            Already have an account?
-          </span>
+          <span className="text-xs text-muted-foreground">Already have an account?</span>
           <Button
             variant="link"
             size="sm"
@@ -126,9 +117,7 @@ export function WalletConnect({
             className="h-auto p-0 text-xs"
             aria-label="Sign in to existing account"
           >
-            {action === "connecting" || action === "restoring"
-              ? "Connecting..."
-              : "Sign In"}
+            {action === "connecting" || action === "restoring" ? "Connecting..." : "Sign In"}
           </Button>
         </div>
       </div>

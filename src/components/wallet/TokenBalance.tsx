@@ -33,10 +33,7 @@ export function TokenBalance({
       )}
       aria-label="Token balance"
     >
-      <Coins
-        className="size-4 shrink-0 text-secondary"
-        aria-hidden="true"
-      />
+      <Coins className="size-4 shrink-0 text-secondary" aria-hidden="true" />
 
       <span className="min-w-0 flex-1 font-display text-sm tracking-wide text-card-foreground">
         {formattedBalance}
@@ -51,21 +48,12 @@ export function TokenBalance({
         aria-label="Refresh balance"
       >
         <RefreshCw
-          className={cn(
-            "size-3.5 text-muted-foreground",
-            isRefreshing && "animate-spin",
-          )}
+          className={cn("size-3.5 text-muted-foreground", isRefreshing && "animate-spin")}
           aria-hidden="true"
         />
       </Button>
 
-      {error && (
-        <ErrorMessage
-          message={error}
-          severity="warning"
-          className="text-xs"
-        />
-      )}
+      {error && <ErrorMessage message={error} severity="warning" className="text-xs" />}
     </div>
   );
 }

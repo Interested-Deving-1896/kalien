@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import {
-  listProofJobs,
-  isTerminalProofStatus,
-  type ProofJobPublic,
-} from "@/proof/api";
+import { listProofJobs, isTerminalProofStatus, type ProofJobPublic } from "@/proof/api";
 import { timeAgo } from "@/time";
 import { useWallet } from "@/hooks/useWallet";
 import { PageShell } from "@/components/shared/PageShell";
@@ -55,8 +51,7 @@ export function ProofsPage() {
           }
         } catch (reason) {
           if (!silent) {
-            const detail =
-              reason instanceof Error ? reason.message : "failed to load proof jobs";
+            const detail = reason instanceof Error ? reason.message : "failed to load proof jobs";
             setError(detail);
           }
         } finally {
@@ -90,8 +85,7 @@ export function ProofsPage() {
         }
       } catch (reason) {
         if (cancelled) return;
-        const detail =
-          reason instanceof Error ? reason.message : "failed to load proof jobs";
+        const detail = reason instanceof Error ? reason.message : "failed to load proof jobs";
         setError(detail);
       } finally {
         if (!cancelled) {
@@ -131,17 +125,19 @@ export function ProofsPage() {
             Your submitted proof jobs and their verification status.
           </p>
         </div>
-        <div className="grid justify-items-end gap-2">
-          <Button
-            size="sm"
-            onClick={() => fetchJobs(false)}
-            disabled={loading || !wallet.isConnected}
-            title={lastRefreshAt ? `Last refreshed ${timeAgo(lastRefreshAt)}` : "Refresh"}
-          >
-            <RefreshCw className="size-3.5" />
-            Refresh
-          </Button>
-        </div>
+        {wallet.isConnected && (
+          <div className="grid justify-items-end gap-2">
+            <Button
+              size="sm"
+              onClick={() => fetchJobs(false)}
+              disabled={loading}
+              title={lastRefreshAt ? `Last refreshed ${timeAgo(lastRefreshAt)}` : "Refresh"}
+            >
+              <RefreshCw className="size-3.5" />
+              Refresh
+            </Button>
+          </div>
+        )}
       </header>
 
       <ErrorMessage message={error} />

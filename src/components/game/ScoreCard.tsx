@@ -29,9 +29,7 @@ export function ScoreCard({ run, className }: ScoreCardProps) {
       <div
         className={cn(
           "flex size-12 items-center justify-center rounded-full",
-          isHighScore
-            ? "bg-secondary/15 text-secondary"
-            : "bg-primary/15 text-primary",
+          isHighScore ? "bg-secondary/15 text-secondary" : "bg-primary/15 text-primary",
         )}
       >
         <Trophy className="size-6" aria-hidden="true" />

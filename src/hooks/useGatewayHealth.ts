@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
-import {
-  getGatewayHealth,
-  type GatewayHealthResponse,
-  type ProofJobPublic,
-} from "../proof/api";
-import {
-  GATEWAY_HEALTH_INITIAL_POLL_DELAY_MS,
-  GATEWAY_HEALTH_POLL_INTERVAL_MS,
-} from "../consts";
+import { getGatewayHealth, type GatewayHealthResponse, type ProofJobPublic } from "../proof/api";
+import { GATEWAY_HEALTH_INITIAL_POLL_DELAY_MS, GATEWAY_HEALTH_POLL_INTERVAL_MS } from "../consts";
 
 export interface UseGatewayHealthReturn {
   health: GatewayHealthResponse | null;

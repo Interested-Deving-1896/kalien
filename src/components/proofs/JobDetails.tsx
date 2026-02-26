@@ -27,8 +27,7 @@ function boundlessExplorerUrl(statusUrl: string): string | null {
 }
 
 function AttemptRow({ attempt }: { attempt: ProverAttempt }) {
-  const explorerUrl =
-    attempt.statusUrl ? boundlessExplorerUrl(attempt.statusUrl) : null;
+  const explorerUrl = attempt.statusUrl ? boundlessExplorerUrl(attempt.statusUrl) : null;
 
   return (
     <tr className="border-t border-[rgba(104,161,237,0.15)]">
@@ -56,9 +55,7 @@ function AttemptRow({ attempt }: { attempt: ProverAttempt }) {
         >
           {attempt.outcome === "in_progress" ? "In Progress" : attempt.outcome}
         </span>
-        {attempt.error && (
-          <p className="m-0 mt-0.5 text-xs text-destructive/80">{attempt.error}</p>
-        )}
+        {attempt.error && <p className="m-0 mt-0.5 text-xs text-destructive/80">{attempt.error}</p>}
       </td>
       <td className="py-1.5 text-sm">
         {explorerUrl && (
@@ -95,9 +92,7 @@ export function JobDetails({ job }: { job: ProofJobPublic }) {
           Game Info
         </h4>
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
-          <DetailItem label="Score">
-            {job.tape.metadata.finalScore.toLocaleString()}
-          </DetailItem>
+          <DetailItem label="Score">{job.tape.metadata.finalScore.toLocaleString()}</DetailItem>
           <DetailItem label="Seed">{formatSeedHex(seed)}</DetailItem>
           <DetailItem label="Frames">{frameCount.toLocaleString()}</DetailItem>
           <DetailItem label="Tape Size">{formatBytes(tapeSize)}</DetailItem>
@@ -114,15 +109,9 @@ export function JobDetails({ job }: { job: ProofJobPublic }) {
             <DetailItem label="Total Cycles">
               {result.stats.total_cycles.toLocaleString()}
             </DetailItem>
-            <DetailItem label="User Cycles">
-              {result.stats.user_cycles.toLocaleString()}
-            </DetailItem>
-            <DetailItem label="Segments">
-              {result.stats.segments.toLocaleString()}
-            </DetailItem>
-            <DetailItem label="Elapsed">
-              {formatDuration(result.elapsedMs)}
-            </DetailItem>
+            <DetailItem label="User Cycles">{result.stats.user_cycles.toLocaleString()}</DetailItem>
+            <DetailItem label="Segments">{result.stats.segments.toLocaleString()}</DetailItem>
+            <DetailItem label="Elapsed">{formatDuration(result.elapsedMs)}</DetailItem>
             <DetailItem label="Receipt Kind">
               {result.producedReceiptKind ?? result.requestedReceiptKind}
             </DetailItem>
