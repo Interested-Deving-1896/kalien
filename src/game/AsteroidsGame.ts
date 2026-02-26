@@ -41,7 +41,7 @@ import {
   WORLD_WIDTH_Q12_4,
 } from "./constants";
 import { AudioSystem } from "./AudioSystem";
-import { Autopilot, type GameStateSnapshot } from "./Autopilot";
+import { Autopilot, type AutopilotConfig, type GameStateSnapshot } from "./Autopilot";
 import {
   applyDrag,
   atan2BAM,
@@ -167,6 +167,7 @@ export interface GameConfig {
   canvas?: HTMLCanvasElement;
   headless?: boolean;
   seed?: number;
+  autopilotConfig?: Partial<AutopilotConfig>;
 }
 
 export interface GameRunRecord {
@@ -185,7 +186,7 @@ export class AsteroidsGame {
 
   private readonly audio = new AudioSystem();
 
-  private readonly autopilot = new Autopilot();
+  private readonly autopilot: Autopilot;
 
   private mode: GameMode = "menu";
 
@@ -303,6 +304,7 @@ export class AsteroidsGame {
   };
 
   constructor(config: GameConfig) {
+    this.autopilot = new Autopilot(config.autopilotConfig);
     this.canvas = config.canvas ?? null;
     this.ship = this.createShip();
 
@@ -527,7 +529,7 @@ export class AsteroidsGame {
 
   startNewGame(seed?: number): void {
     // Generate deterministic seed for ZK-friendly RNG
-    this.gameSeed = seed ?? Date.now();
+    this.gameSeed = seed ?? Math.floor(Date.now() / 1000 / 600);
     setGameSeed(this.gameSeed);
 
     this.mode = "playing";
@@ -1233,14 +1235,18 @@ export class AsteroidsGame {
         if (collidesQ12_4(bullet.x, bullet.y, bullet.radius, saucer.x, saucer.y, saucer.radius)) {
           bullet.alive = false;
           saucer.alive = false;
-          this.addScore(saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER);
+          const saucerScore = saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER;
+          this.addScore(saucerScore);
           if (this.renderer) {
             const sSize = saucer.small ? ("medium" as const) : ("large" as const);
-            this.renderer.onExplosion(fromQ12_4(saucer.x), fromQ12_4(saucer.y), sSize);
+            const sx = fromQ12_4(saucer.x);
+            const sy = fromQ12_4(saucer.y);
+            this.renderer.onExplosion(sx, sy, sSize);
             this.renderer.addScreenShake(
               saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE,
             );
             this.audio.playExplosion(sSize);
+            this.renderer.onScorePopup(sx, sy - 20, saucerScore);
           }
           break;
         }
@@ -1351,6 +1357,12 @@ export class AsteroidsGame {
             : SHAKE_INTENSITY_SMALL * 0.5,
       );
       this.audio.playExplosion(asteroid.size);
+      if (awardScore) {
+        const pts = asteroid.size === "large" ? SCORE_LARGE_ASTEROID
+          : asteroid.size === "medium" ? SCORE_MEDIUM_ASTEROID
+          : SCORE_SMALL_ASTEROID;
+        this.renderer.onScorePopup(px, py - asteroid.radius, pts);
+      }
     }
 
     if (asteroid.size === "small") {
