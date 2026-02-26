@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, Trophy, Clock, X } from "lucide-react";
 import { useGameFlow, type GameFlowStep } from "@/hooks/useGameFlow";
 import { GamePanel } from "@/components/game/GamePanel";
@@ -178,11 +178,19 @@ export function GamePageWrapper() {
   const { wallet, balance } = useWalletContext();
   const flow = useGameFlow({ wallet, balance });
 
+  const [replayJobId] = useState(() => {
+    const id = new URLSearchParams(window.location.search).get("replay");
+    if (id) {
+      window.history.replaceState(null, "", "/");
+    }
+    return id;
+  });
+
   const overlay = flow.latestRun ? <GameOverOverlay flow={flow} /> : null;
 
   return (
     <PageShell className="grid-rows-[auto_1fr] content-start">
-      <GamePanel onGameOver={flow.handleGameOver} overlay={overlay} />
+      <GamePanel onGameOver={flow.handleGameOver} overlay={overlay} replayJobId={replayJobId} />
     </PageShell>
   );
 }

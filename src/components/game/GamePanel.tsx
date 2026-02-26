@@ -1,8 +1,9 @@
 import type * as React from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AsteroidsCanvas } from "../AsteroidsCanvas";
 import type { AsteroidsGame } from "@/game/AsteroidsGame";
 import type { CompletedGameRun } from "@/game/types";
+import { getTapeDownloadUrl } from "@/proof/api";
 import { ControlsHint } from "./ControlsHint";
 import { MobileAutopilotButton } from "./MobileAutopilotButton";
 import { cn } from "@/lib/utils";
@@ -10,17 +11,37 @@ import { cn } from "@/lib/utils";
 export interface GamePanelProps {
   onGameOver: (run: CompletedGameRun) => void;
   overlay?: React.ReactNode;
+  replayJobId?: string | null;
   className?: string;
 }
 
-export function GamePanel({ onGameOver, overlay, className }: GamePanelProps) {
+export function GamePanel({ onGameOver, overlay, replayJobId, className }: GamePanelProps) {
   const gameRef = useRef<AsteroidsGame | null>(null);
+  const [game, setGame] = useState<AsteroidsGame | null>(null);
   const [autopilotOn, setAutopilotOn] = useState(false);
 
-  const handleGameReady = useCallback((game: AsteroidsGame) => {
-    gameRef.current = game;
+  const handleGameReady = useCallback((g: AsteroidsGame) => {
+    gameRef.current = g;
+    setGame(g);
     setAutopilotOn(false);
   }, []);
+
+  useEffect(() => {
+    if (!replayJobId || !game) return;
+
+    const controller = new AbortController();
+    fetch(getTapeDownloadUrl(replayJobId), { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`tape fetch failed: ${res.status}`);
+        return res.arrayBuffer();
+      })
+      .then((buf) => game.loadReplay(new Uint8Array(buf)))
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error("replay load failed:", err);
+      });
+
+    return () => controller.abort();
+  }, [replayJobId, game]);
 
   const handleToggleAutopilot = useCallback(() => {
     const game = gameRef.current;
