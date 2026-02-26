@@ -11,6 +11,7 @@ export const cursorRestore = "\x1b8";
 // Screen
 export const clearScreen = "\x1b[2J";
 export const clearLine = "\x1b[2K";
+export const clearToEol = "\x1b[K";
 export const clearDown = "\x1b[J";
 
 // Colors (foreground)

@@ -71,6 +71,11 @@ export async function replayCommand(tapePath: string): Promise<void> {
 
   process.stdout.write(ansi.clearScreen + ansi.cursorHide);
 
+  // Clear screen on terminal resize to avoid artifacts
+  process.stdout.on("resize", () => {
+    process.stdout.write(ansi.clearScreen);
+  });
+
   // Outer loop: supports restart
   while (!stopped) {
     const game = new AsteroidsGame({ headless: true, seed: tape.header.seed });
@@ -84,7 +89,7 @@ export async function replayCommand(tapePath: string): Promise<void> {
 
     while (frame < totalFrames && !stopped && !restart) {
       if (paused) {
-        // Render current frame with paused indicator, then wait
+        // Re-render current frame without advancing state
         const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
         const hud: ReplayHUD = {
           score: game.getScore(),
@@ -96,7 +101,7 @@ export async function replayCommand(tapePath: string): Promise<void> {
           paused: true,
         };
         process.stdout.write(renderAsciiFrame(snapshot, hud, replayState));
-        await sleep(baseFrameTime);
+        await sleep(100);
         continue;
       }
 

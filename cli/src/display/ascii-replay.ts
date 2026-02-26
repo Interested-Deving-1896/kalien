@@ -226,36 +226,38 @@ export function renderAsciiFrame(
     state.gridRows = rows;
   }
 
-  // --- Detect explosions from entity disappearances ---
-  const currentAsteroidIds = new Set<number>();
-  const currentSaucerIds = new Set<number>();
+  // --- Detect explosions from entity disappearances (skip when paused) ---
+  if (!hud.paused) {
+    const currentAsteroidIds = new Set<number>();
+    const currentSaucerIds = new Set<number>();
 
-  for (const ast of snapshot.asteroids) {
-    currentAsteroidIds.add(ast.id);
-  }
-  for (const s of snapshot.saucers) {
-    currentSaucerIds.add(s.id);
-  }
-
-  // Check which previous asteroids disappeared
-  for (const [id, pos] of state.prevAsteroidPos) {
-    if (!currentAsteroidIds.has(id)) {
-      const ttl = pos.size === "large" ? 8 : pos.size === "medium" ? 6 : 4;
-      state.explosions.push({ col: pos.col, row: pos.row, ttl, maxTtl: ttl });
+    for (const ast of snapshot.asteroids) {
+      currentAsteroidIds.add(ast.id);
     }
-  }
-  // Check which previous saucers disappeared
-  for (const [id, pos] of state.prevSaucerPos) {
-    if (!currentSaucerIds.has(id)) {
-      state.explosions.push({ col: pos.col, row: pos.row, ttl: 7, maxTtl: 7 });
+    for (const s of snapshot.saucers) {
+      currentSaucerIds.add(s.id);
     }
-  }
 
-  // Age and prune explosions
-  state.explosions = state.explosions.filter((e) => {
-    e.ttl--;
-    return e.ttl > 0;
-  });
+    // Check which previous asteroids disappeared
+    for (const [id, pos] of state.prevAsteroidPos) {
+      if (!currentAsteroidIds.has(id)) {
+        const ttl = pos.size === "large" ? 8 : pos.size === "medium" ? 6 : 4;
+        state.explosions.push({ col: pos.col, row: pos.row, ttl, maxTtl: ttl });
+      }
+    }
+    // Check which previous saucers disappeared
+    for (const [id, pos] of state.prevSaucerPos) {
+      if (!currentSaucerIds.has(id)) {
+        state.explosions.push({ col: pos.col, row: pos.row, ttl: 7, maxTtl: 7 });
+      }
+    }
+
+    // Age and prune explosions
+    state.explosions = state.explosions.filter((e) => {
+      e.ttl--;
+      return e.ttl > 0;
+    });
+  }
 
   // --- Build grid ---
   const grid: string[][] = Array.from({ length: rows }, () =>
@@ -318,16 +320,18 @@ export function renderAsciiFrame(
     paintCell(grid, colorGrid, row, col, shipChar(snapshot.ship.angle), ansi.brightCyan, cols, rows);
   }
 
-  // --- Save entity positions for next frame's explosion detection ---
-  state.prevAsteroidPos.clear();
-  for (const ast of snapshot.asteroids) {
-    const { col, row } = worldToTerm(ast.x, ast.y, cols, rows);
-    state.prevAsteroidPos.set(ast.id, { col, row, size: ast.size });
-  }
-  state.prevSaucerPos.clear();
-  for (const s of snapshot.saucers) {
-    const { col, row } = worldToTerm(s.x, s.y, cols, rows);
-    state.prevSaucerPos.set(s.id, { col, row, small: s.small });
+  // --- Save entity positions for next frame's explosion detection (skip when paused) ---
+  if (!hud.paused) {
+    state.prevAsteroidPos.clear();
+    for (const ast of snapshot.asteroids) {
+      const { col, row } = worldToTerm(ast.x, ast.y, cols, rows);
+      state.prevAsteroidPos.set(ast.id, { col, row, size: ast.size });
+    }
+    state.prevSaucerPos.clear();
+    for (const s of snapshot.saucers) {
+      const { col, row } = worldToTerm(s.x, s.y, cols, rows);
+      state.prevSaucerPos.set(s.id, { col, row, small: s.small });
+    }
   }
 
   // --- Build output string ---
@@ -394,5 +398,5 @@ export function renderAsciiFrame(
     `  ${ansi.color(ansi.dim, "[Esc/Q]")} ${ansi.color(ansi.gray, "Quit")}`
   );
 
-  return ansi.cursorTo(0, 0) + lines.join("\n");
+  return ansi.cursorTo(0, 0) + lines.map((l) => l + ansi.clearToEol).join("\n");
 }
