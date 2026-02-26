@@ -166,7 +166,7 @@
                   }
                 ]
               },
-              "durability": "persistent",
+              "durability": "temporary",
               "val": {
                 "u32": 32860
               }
@@ -174,7 +174,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 1036800
+        "live_until": 34560
       },
       {
         "entry": {
@@ -196,7 +196,7 @@
                   }
                 ]
               },
-              "durability": "persistent",
+              "durability": "temporary",
               "val": {
                 "u32": 1030
               }
@@ -204,7 +204,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 1036800
+        "live_until": 34560
       },
       {
         "entry": {
@@ -223,13 +223,13 @@
                   }
                 ]
               },
-              "durability": "persistent",
+              "durability": "temporary",
               "val": "void"
             }
           },
           "ext": "v0"
         },
-        "live_until": 1036800
+        "live_until": 34560
       },
       {
         "entry": {
@@ -248,13 +248,13 @@
                   }
                 ]
               },
-              "durability": "persistent",
+              "durability": "temporary",
               "val": "void"
             }
           },
           "ext": "v0"
         },
-        "live_until": 1036800
+        "live_until": 34560
       },
       {
         "entry": {
@@ -273,13 +273,13 @@
                   }
                 ]
               },
-              "durability": "persistent",
+              "durability": "temporary",
               "val": "void"
             }
           },
           "ext": "v0"
         },
-        "live_until": 1036800
+        "live_until": 34560
       },
       {
         "entry": {

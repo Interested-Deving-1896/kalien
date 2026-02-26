@@ -24,8 +24,8 @@ const RULES_DIGEST: u32 = 0x4153_5433; // "AST3"
 const JOURNAL_BASE_LEN: u32 = 24; // 6 x u32 (seed..rules_digest)
 const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 14 days
 const INSTANCE_TTL_BUMP: u32 = 172_800; // 20 days
-const PERSISTENT_TTL_THRESHOLD: u32 = 518_400; // ~60 days
-const PERSISTENT_TTL_BUMP: u32 = 1_036_800; // ~120 days
+const TEMP_TTL_THRESHOLD: u32 = 25_920; // ~36h
+const TEMP_TTL_BUMP: u32 = 34_560; // ~48h
 const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
 const SEED_INTERVAL: u64 = 600; // 10 minutes in seconds
 const MAX_SEED_AGE: u32 = 143; // current bucket + 143 previous = 144 total (24h)
@@ -136,13 +136,13 @@ impl AsteroidsScoreContract {
 
         // Replay protection: reject duplicate journal digests
         let claimed_key = DataKey::Claimed(journal_digest.clone());
-        if env.storage().persistent().has(&claimed_key) {
+        if env.storage().temporary().has(&claimed_key) {
             return Err(ScoreError::JournalAlreadyClaimed);
         }
 
         // Per-claimant per-seed best score policy.
         let best_key = DataKey::Best(claimant.clone(), seed);
-        let previous_best = env.storage().persistent().get(&best_key).unwrap_or(0u32);
+        let previous_best = env.storage().temporary().get(&best_key).unwrap_or(0u32);
         if final_score <= previous_best {
             return Err(ScoreError::ScoreNotImproved);
         }
@@ -158,14 +158,14 @@ impl AsteroidsScoreContract {
         router_client.verify(&seal, &image_id, &journal_digest);
 
         // Mark journal as claimed
-        env.storage().persistent().set(&claimed_key, &());
-        env.storage().persistent().set(&best_key, &final_score);
+        env.storage().temporary().set(&claimed_key, &());
+        env.storage().temporary().set(&best_key, &final_score);
         env.storage()
-            .persistent()
-            .extend_ttl(&claimed_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_BUMP);
+            .temporary()
+            .extend_ttl(&claimed_key, TEMP_TTL_THRESHOLD, TEMP_TTL_BUMP);
         env.storage()
-            .persistent()
-            .extend_ttl(&best_key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_BUMP);
+            .temporary()
+            .extend_ttl(&best_key, TEMP_TTL_THRESHOLD, TEMP_TTL_BUMP);
 
         // Mint only the improvement delta to the claimant.
         let token_client = token::StellarAssetClient::new(&env, &token_id);
@@ -193,14 +193,14 @@ impl AsteroidsScoreContract {
     /// Check whether a journal digest has already been claimed.
     pub fn is_claimed(env: Env, journal_digest: BytesN<32>) -> bool {
         env.storage()
-            .persistent()
+            .temporary()
             .has(&DataKey::Claimed(journal_digest))
     }
 
     /// Read a claimant's best score for a seed.
     pub fn best_score(env: Env, claimant: Address, seed: u32) -> u32 {
         env.storage()
-            .persistent()
+            .temporary()
             .get(&DataKey::Best(claimant, seed))
             .unwrap_or(0u32)
     }
