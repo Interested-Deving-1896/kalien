@@ -1,0 +1,11 @@
+{
+  "name": "kalien-cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "kalien": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts"
+  }
+}
