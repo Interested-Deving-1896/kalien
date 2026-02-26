@@ -9,7 +9,9 @@ import type {
   GameMode,
   Particle,
   Saucer,
+  ScorePopup,
   Ship,
+  Shockwave,
   Star,
 } from "./types";
 
@@ -87,6 +89,8 @@ export class GameRenderer {
   private stars: Star[] = [];
   private particles: Particle[] = [];
   private debris: Debris[] = [];
+  private shockwaves: Shockwave[] = [];
+  private scorePopups: ScorePopup[] = [];
 
   // Screen shake
   private shakeX = 0;
@@ -136,6 +140,8 @@ export class GameRenderer {
   reset(): void {
     this.particles = [];
     this.debris = [];
+    this.shockwaves = [];
+    this.scorePopups = [];
     this.shakeIntensity = 0;
     this.shakeX = 0;
     this.shakeY = 0;
@@ -173,12 +179,16 @@ export class GameRenderer {
   updateVisuals(dt: number): void {
     this.updateParticles(dt);
     this.updateDebris(dt);
+    this.updateShockwaves(dt);
+    this.updateScorePopups(dt);
     this.updateScreenShake();
   }
 
   pruneVisuals(): void {
     this.particles = this.particles.filter((p) => p.life > 0).slice(-MAX_PARTICLES);
     this.debris = this.debris.filter((d) => d.life > 0).slice(-MAX_DEBRIS);
+    this.shockwaves = this.shockwaves.filter((s) => s.life > 0);
+    this.scorePopups = this.scorePopups.filter((p) => p.life > 0);
   }
 
   private updateParticles(dt: number): void {
@@ -198,6 +208,21 @@ export class GameRenderer {
       d.y = wrapY(d.y + d.vy * dt);
       d.angle += d.spin * dt;
       d.life -= dt;
+    }
+  }
+
+  private updateShockwaves(dt: number): void {
+    for (const s of this.shockwaves) {
+      s.life -= dt;
+      const progress = 1 - s.life / s.maxLife;
+      s.radius = s.maxRadius * progress;
+    }
+  }
+
+  private updateScorePopups(dt: number): void {
+    for (const p of this.scorePopups) {
+      p.y += p.vy * dt;
+      p.life -= dt;
     }
   }
 
@@ -230,6 +255,25 @@ export class GameRenderer {
       this.spawnParticle(x, y, "spark", colors[visualRandomInt(0, colors.length)]);
     }
     this.spawnParticle(x, y, "smoke", "#555555", 5);
+
+    // Shockwave ring
+    const maxRadius = size === "large" ? 80 : size === "medium" ? 50 : 30;
+    const life = size === "large" ? 0.5 : size === "medium" ? 0.35 : 0.25;
+    const color = size === "large" ? "#ffd700" : size === "medium" ? "#f7931e" : "#ff6b35";
+    this.shockwaves.push({
+      x, y, radius: 0, maxRadius, life, maxLife: life,
+      color, lineWidth: size === "large" ? 3 : 2,
+    });
+  }
+
+  onScorePopup(x: number, y: number, points: number): void {
+    this.scorePopups.push({
+      text: `+${points}`,
+      x, y,
+      life: 1.0, maxLife: 1.0,
+      vy: -50,
+      color: points >= 200 ? "#ff6b6b" : points >= 100 ? "#ffd700" : "#b8ffe3",
+    });
   }
 
   onShipDestroyed(x: number, y: number): void {
@@ -381,7 +425,9 @@ export class GameRenderer {
     this.drawBullets(ctx, state.bullets, alpha);
     this.drawSaucers(ctx, state.saucers, alpha);
     this.drawBullets(ctx, state.saucerBullets, alpha);
+    this.drawShockwaves(ctx);
     this.drawParticles(ctx);
+    this.drawScorePopups(ctx);
     this.drawHud(ctx, state);
 
     // Reset shadow for overlay
@@ -496,7 +542,32 @@ export class GameRenderer {
       }
 
       ctx.closePath();
+
+      // Dark fill for visual mass
+      ctx.fillStyle = "rgba(15, 25, 35, 0.7)";
+      ctx.fill();
       ctx.stroke();
+
+      // Internal crack lines (seeded from vertex data for determinism)
+      ctx.strokeStyle = "rgba(184, 255, 227, 0.15)";
+      ctx.lineWidth = 1;
+      const crackCount = vertexCount >= 12 ? 3 : 2;
+      for (let c = 0; c < crackCount; c++) {
+        const fromIdx = Math.floor(vertices[c] * vertexCount) % vertexCount;
+        const fromAngle = (fromIdx / vertexCount) * Math.PI * 2;
+        const fromR = asteroid.radius * vertices[fromIdx] * 0.9;
+        const toAngle = fromAngle + Math.PI * (0.6 + vertices[(c + 1) % vertexCount] * 0.8);
+        const toR = asteroid.radius * vertices[(fromIdx + Math.floor(vertexCount / 2)) % vertexCount] * 0.7;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(fromAngle) * fromR, Math.sin(fromAngle) * fromR);
+        ctx.lineTo(Math.cos(toAngle) * toR, Math.sin(toAngle) * toR);
+        ctx.stroke();
+      }
+
+      // Reset stroke for next asteroid
+      ctx.strokeStyle = "#b8ffe3";
+      ctx.lineWidth = 2;
+
       ctx.restore();
     }
 
@@ -514,6 +585,25 @@ export class GameRenderer {
       const renderX = lerpWrap(fromQ12_4(bullet.prevX), fromQ12_4(bullet.x), alpha, WORLD_WIDTH);
       const renderY = lerpWrap(fromQ12_4(bullet.prevY), fromQ12_4(bullet.y), alpha, WORLD_HEIGHT);
 
+      // Trail: 3 fading afterimages behind the bullet
+      const dx = fromQ12_4(bullet.x) - fromQ12_4(bullet.prevX);
+      const dy = fromQ12_4(bullet.y) - fromQ12_4(bullet.prevY);
+      // Only draw trail if not wrapping (avoid long streaks across screen)
+      const wrapThreshold = WORLD_WIDTH * 0.3;
+      if (Math.abs(dx) < wrapThreshold && Math.abs(dy) < wrapThreshold) {
+        for (let t = 1; t <= 3; t++) {
+          const trailAlpha = 0.3 - t * 0.08;
+          ctx.globalAlpha = trailAlpha;
+          ctx.fillStyle = "#fbbf24";
+          const tx = renderX - dx * t * 0.35;
+          const ty = renderY - dy * t * 0.35;
+          const sz = 2.4 - t * 0.4;
+          ctx.fillRect(tx - sz * 0.5, ty - sz * 0.5, sz, sz);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Main bullet
       ctx.fillStyle = "#fef3c7";
       ctx.fillRect(renderX - 1.2, renderY - 1.2, 2.4, 2.4);
     }
@@ -612,6 +702,45 @@ export class GameRenderer {
     }
 
     ctx.globalAlpha = 1;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "#4ade80";
+  }
+
+  private drawShockwaves(ctx: CanvasRenderingContext2D): void {
+    for (const s of this.shockwaves) {
+      if (s.life <= 0) continue;
+      const alpha = s.life / s.maxLife;
+      ctx.globalAlpha = alpha * 0.6;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.lineWidth * alpha;
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = s.color;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#b8ffe3";
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = "#4ade80";
+  }
+
+  private drawScorePopups(ctx: CanvasRenderingContext2D): void {
+    ctx.shadowBlur = 0;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 16px 'Monaspace Neon', 'Monaspace Krypton', monospace";
+
+    for (const p of this.scorePopups) {
+      if (p.life <= 0) continue;
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.fillStyle = p.color;
+      ctx.fillText(p.text, p.x, p.y);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "start";
     ctx.shadowBlur = 8;
     ctx.shadowColor = "#4ade80";
   }

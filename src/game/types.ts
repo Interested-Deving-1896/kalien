@@ -91,3 +91,24 @@ export interface Debris {
   size: number;
   vertices: number[];
 }
+
+export interface Shockwave {
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  lineWidth: number;
+}
+
+export interface ScorePopup {
+  text: string;
+  x: number;
+  y: number;
+  life: number;
+  maxLife: number;
+  vy: number;
+  color: string;
+}
