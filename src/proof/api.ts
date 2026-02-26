@@ -43,9 +43,24 @@ export interface ProverAttempt {
   endedAt: string | null;
   outcome: "in_progress" | "success" | "failed";
   error: string | null;
+  errorDetail: string | null;
+  errorCode: string | null;
   proverJobId: string | null;
   statusUrl: string | null;
   maxPriceUsd?: number | null;
+  actualCostUsd: number | null;
+  proverAddress: string | null;
+  fulfillmentTxHash: string | null;
+}
+
+export interface ClaimAttempt {
+  index: number;
+  startedAt: string;
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  errorDetail: string | null;
+  txHash: string | null;
 }
 
 export interface ProverTracking {
@@ -114,6 +129,7 @@ export interface ProofJobPublic {
   claim: ClaimTracking;
   error: string | null;
   proverAttempts: ProverAttempt[];
+  claimAttempts: ClaimAttempt[];
 }
 
 export interface SubmitProofJobResponse {
@@ -272,6 +288,16 @@ export async function listProofJobs(
   );
   if (!response.ok) throw await parseError(response);
   return parseJson<ListProofJobsResponse>(response);
+}
+
+export async function retryFailedClaim(jobId: string): Promise<GetProofJobResponse> {
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs/${jobId}/retry-claim`,
+    { method: "POST" },
+    API_TIMEOUT_GET_PROOF_MS,
+  );
+  if (!response.ok) throw await parseError(response);
+  return parseJson<GetProofJobResponse>(response);
 }
 
 export function getTapeDownloadUrl(jobId: string): string {

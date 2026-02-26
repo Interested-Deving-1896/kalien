@@ -15,7 +15,13 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { AUTO_REFRESH_PROOFS_MS } from "@/consts";
 
 function hasActiveJobs(jobs: ProofJobPublic[]): boolean {
-  return jobs.some((job) => !isTerminalProofStatus(job.status));
+  return jobs.some(
+    (job) =>
+      !isTerminalProofStatus(job.status) ||
+      (job.status === "succeeded" &&
+        job.claim.status !== "succeeded" &&
+        job.claim.status !== "failed"),
+  );
 }
 
 export function ProofsPage() {
@@ -189,7 +195,11 @@ export function ProofsPage() {
           {jobs.length > 0 && (
             <div className="grid gap-3">
               {jobs.map((job) => (
-                <ProofJobCard key={job.jobId} job={job} />
+                <ProofJobCard
+                  key={job.jobId}
+                  job={job}
+                  onJobUpdate={() => fetchJobs(true)}
+                />
               ))}
             </div>
           )}
