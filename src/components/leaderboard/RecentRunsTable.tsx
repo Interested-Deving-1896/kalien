@@ -1,3 +1,4 @@
+import { Play } from "lucide-react";
 import type { LeaderboardPlayerResponse } from "@/leaderboard/api";
 import { formatHex32, formatMetric } from "@/lib/format";
 import { Card } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { SkeletonRows } from "@/components/shared/Skeleton";
 import { Pagination } from "@/components/shared/Pagination";
 import { RelativeTime } from "./RelativeTime";
 import { claimStatusBadgeVariant } from "./helpers";
+import { navigate } from "@/hooks/useLocation";
 
 export interface RecentRunsTableProps {
   runs: LeaderboardPlayerResponse["player"]["recent_runs"];
@@ -51,11 +53,12 @@ export function RecentRunsTable({
                 <TableHead scope="col">Seed</TableHead>
                 <TableHead scope="col">Completed</TableHead>
                 <TableHead scope="col">Claim</TableHead>
+                <TableHead scope="col" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <SkeletonRows count={3} cols={6} />
+                <SkeletonRows count={3} cols={7} />
               ) : (
                 runs.map((run) => (
                   <TableRow key={run.jobId}>
@@ -78,6 +81,18 @@ export function RecentRunsTable({
                       <StatusBadge variant={claimStatusBadgeVariant(run.claimStatus)}>
                         {run.claimStatus}
                       </StatusBadge>
+                    </TableCell>
+                    <TableCell>
+                      {run.proofJobId && (
+                        <button
+                          onClick={() => navigate(`/?replay=${run.proofJobId}`)}
+                          className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/10"
+                          title="Replay this run"
+                        >
+                          <Play className="size-3" />
+                          <span className="hidden sm:inline">Replay</span>
+                        </button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

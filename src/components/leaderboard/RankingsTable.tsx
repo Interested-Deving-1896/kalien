@@ -1,4 +1,4 @@
-import { Medal, Trophy } from "lucide-react";
+import { Medal, Play, Trophy } from "lucide-react";
 import type { LeaderboardEntry } from "@/leaderboard/api";
 import { abbreviateAddress, formatHex32, formatMetric } from "@/lib/format";
 import { isSafeUrl } from "@/lib/validation";
@@ -16,6 +16,7 @@ import { SkeletonRows } from "@/components/shared/Skeleton";
 import { Link } from "@/components/shared/Link";
 import { RelativeTime } from "./RelativeTime";
 import { claimStatusBadgeVariant } from "./helpers";
+import { navigate } from "@/hooks/useLocation";
 
 export interface RankingsTableProps {
   entries: LeaderboardEntry[];
@@ -72,10 +73,11 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
             <TableHead scope="col">Seed</TableHead>
             <TableHead scope="col">Completed</TableHead>
             <TableHead scope="col">Claim</TableHead>
+            <TableHead scope="col" />
           </TableRow>
         </TableHeader>
         <TableBody>
-          <SkeletonRows count={5} cols={8} />
+          <SkeletonRows count={5} cols={9} />
         </TableBody>
       </Table>
     );
@@ -99,6 +101,7 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
           <TableHead scope="col">Seed</TableHead>
           <TableHead scope="col">Completed</TableHead>
           <TableHead scope="col">Claim</TableHead>
+          <TableHead scope="col" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -154,6 +157,18 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
               <StatusBadge variant={claimStatusBadgeVariant(entry.claimStatus)}>
                 {entry.claimStatus}
               </StatusBadge>
+            </TableCell>
+            <TableCell>
+              {entry.proofJobId && (
+                <button
+                  onClick={() => navigate(`/?replay=${entry.proofJobId}`)}
+                  className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/10"
+                  title="Replay this run"
+                >
+                  <Play className="size-3" />
+                  <span className="hidden sm:inline">Replay</span>
+                </button>
+              )}
             </TableCell>
           </TableRow>
         ))}

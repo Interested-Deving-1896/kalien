@@ -28,6 +28,7 @@ export interface LeaderboardEntry {
   completedAt: string;
   claimStatus: ClaimStatus;
   claimTxHash: string | null;
+  proofJobId: string | null;
 }
 
 export interface LeaderboardPageResponse {

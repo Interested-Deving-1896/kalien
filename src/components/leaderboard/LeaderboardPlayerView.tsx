@@ -18,6 +18,7 @@ import { EditProfile } from "./EditProfile";
 import { RecentRunsTable } from "./RecentRunsTable";
 import { PageHero } from "@/components/shared/PageHero";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useWalletContext } from "@/contexts/WalletContext";
 import { resolveSmartWalletSessionForClaimant } from "@/wallet/smartAccount";
 
 export interface LeaderboardPlayerViewProps {
@@ -30,6 +31,7 @@ function isSmartAccountContractAddress(address: string): boolean {
 
 export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewProps) {
   useDocumentTitle(`Player ${abbreviateAddress(playerAddress)}`);
+  const { wallet } = useWalletContext();
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [playerData, setPlayerData] = useState<LeaderboardPlayerResponse | null>(null);
@@ -173,18 +175,20 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
         <>
           <PlayerCard player={playerData.player} />
 
-          <EditProfile
-            claimantAddress={playerData.player.claimant_address}
-            username={profileUsername}
-            linkUrl={profileLinkUrl}
-            onUsernameChange={setProfileUsername}
-            onLinkUrlChange={setProfileLinkUrl}
-            onSave={saveProfile}
-            isSaving={savingProfile}
-            saveError={profileSaveError}
-            savedAt={profileSavedAt}
-            supported={supportsProfileAuth}
-          />
+          {wallet.address === playerData.player.claimant_address && (
+            <EditProfile
+              claimantAddress={playerData.player.claimant_address}
+              username={profileUsername}
+              linkUrl={profileLinkUrl}
+              onUsernameChange={setProfileUsername}
+              onLinkUrlChange={setProfileLinkUrl}
+              onSave={saveProfile}
+              isSaving={savingProfile}
+              saveError={profileSaveError}
+              savedAt={profileSavedAt}
+              supported={supportsProfileAuth}
+            />
+          )}
 
           <RecentRunsTable
             runs={playerData.player.recent_runs}
