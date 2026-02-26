@@ -14,7 +14,7 @@ export function useLocation(): string {
 }
 
 export function navigate(to: string) {
-  if (to !== window.location.pathname) {
+  if (to !== window.location.pathname + window.location.search) {
     window.history.pushState(null, "", to);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }

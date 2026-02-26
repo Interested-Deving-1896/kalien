@@ -48,6 +48,9 @@ function mapScoreContractError(errorMessage: string): string | null {
   if (normalized.includes("error(contract, #1)")) {
     return "journal payload length is invalid (expected 24 bytes)";
   }
+  if (normalized.includes("error(contract, #7)")) {
+    return "seed has expired; start a new game to get a fresh seed (seeds are valid for 24 hours)";
+  }
 
   return "contract rejected the proof submission";
 }
