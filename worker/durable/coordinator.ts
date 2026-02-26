@@ -48,6 +48,33 @@ export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordina
 }
 
 export function asPublicJob(job: ProofJobRecord): PublicProofJob {
+  // For legacy jobs that predate proverAttempts, synthesize a single attempt
+  // from the prover tracking data so the UI can show meaningful backend/attempt info.
+  let proverAttempts = job.proverAttempts ?? [];
+  if (proverAttempts.length === 0 && job.prover.jobId) {
+    const backend: ProverBackend = job.prover.statusUrl?.startsWith("boundless:")
+      ? "boundless"
+      : "vast";
+    const outcome: ProverAttempt["outcome"] =
+      job.status === "succeeded"
+        ? "success"
+        : isTerminalProofStatus(job.status)
+          ? "failed"
+          : "in_progress";
+    proverAttempts = [
+      {
+        index: 0,
+        backend,
+        startedAt: job.createdAt,
+        endedAt: job.completedAt,
+        outcome,
+        error: job.error,
+        proverJobId: job.prover.jobId,
+        statusUrl: job.prover.statusUrl,
+      },
+    ];
+  }
+
   return {
     jobId: job.jobId,
     status: job.status,
@@ -60,7 +87,7 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     },
     queue: job.queue,
     prover: job.prover,
-    proverAttempts: job.proverAttempts ?? [],
+    proverAttempts,
     result: job.result,
     claim: job.claim,
     error: job.error,
@@ -212,7 +239,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   private async removeActiveJobId(jobId: string): Promise<void> {
     const current = await this.getActiveJobIds();
-    const updated = current.filter(id => id !== jobId);
+    const updated = current.filter((id) => id !== jobId);
     await this.ctx.storage.put(ACTIVE_JOBS_KEY, updated);
   }
 
@@ -873,8 +900,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return job;
   }
 
-  private async recordAttemptEnd(job: ProofJobRecord, outcome: "success" | "failed", error: string | null): Promise<void> {
-    const current = job.proverAttempts.find(a => a.outcome === "in_progress");
+  private async recordAttemptEnd(
+    job: ProofJobRecord,
+    outcome: "success" | "failed",
+    error: string | null,
+  ): Promise<void> {
+    const current = job.proverAttempts.find((a) => a.outcome === "in_progress");
     if (current) {
       current.endedAt = nowIso();
       current.outcome = outcome;
@@ -883,7 +914,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
   }
 
-  private async startNewAttempt(job: ProofJobRecord, backend: ProverBackend, proverJobId: string, statusUrl: string): Promise<void> {
+  private async startNewAttempt(
+    job: ProofJobRecord,
+    backend: ProverBackend,
+    proverJobId: string,
+    statusUrl: string,
+  ): Promise<void> {
     const attempt: ProverAttempt = {
       index: job.proverAttempts.length,
       backend,
@@ -898,15 +934,23 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     await this.saveJob(job);
   }
 
-  private async tryNextProverBackend(jobId: string, job: ProofJobRecord, reason: string): Promise<void> {
-    const totalAttempts = job.proverAttempts.filter(a => a.outcome !== "in_progress").length;
+  private async tryNextProverBackend(
+    jobId: string,
+    job: ProofJobRecord,
+    reason: string,
+  ): Promise<void> {
+    const totalAttempts = job.proverAttempts.filter((a) => a.outcome !== "in_progress").length;
     if (totalAttempts >= MAX_TOTAL_PROVER_ATTEMPTS) {
-      await this.markFailed(jobId, `all ${MAX_TOTAL_PROVER_ATTEMPTS} prover attempts exhausted. Last: ${reason}`);
+      await this.markFailed(
+        jobId,
+        `all ${MAX_TOTAL_PROVER_ATTEMPTS} prover attempts exhausted. Last: ${reason}`,
+      );
       return;
     }
 
     // Determine next backend (alternate starting from Boundless if available)
-    const lastBackend = job.proverAttempts.filter(a => a.outcome !== "in_progress").at(-1)?.backend ?? null;
+    const lastBackend =
+      job.proverAttempts.filter((a) => a.outcome !== "in_progress").at(-1)?.backend ?? null;
     const boundlessConfig = resolveBoundlessConfig(this.env);
     const hasBoundless = boundlessConfig !== null;
     const hasVast = Boolean(this.env.PROVER_BASE_URL?.trim());
@@ -955,18 +999,32 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         submitResult = await submitToProver(this.env, tapeBytes, {});
       }
     } catch (error) {
-      await this.tryNextProverBackend(jobId, job, `${nextBackend} submit error: ${safeErrorMessage(error)}`);
+      await this.tryNextProverBackend(
+        jobId,
+        job,
+        `${nextBackend} submit error: ${safeErrorMessage(error)}`,
+      );
       return;
     }
 
     if (submitResult.type === "success") {
       await this.startNewAttempt(job, nextBackend, submitResult.jobId, submitResult.statusUrl);
-      await this.markProverAccepted(jobId, submitResult.jobId, submitResult.statusUrl, submitResult.segmentLimitPo2, job.prover.recoveryAttempts, submitResult.ipfsCid);
+      await this.markProverAccepted(
+        jobId,
+        submitResult.jobId,
+        submitResult.statusUrl,
+        submitResult.segmentLimitPo2,
+        job.prover.recoveryAttempts,
+        submitResult.ipfsCid,
+      );
       return;
     }
 
     // Submit failed — try again with next backend (recursion handles depth via totalAttempts check)
-    const errorMsg = submitResult.type === "retry" || submitResult.type === "fatal" ? submitResult.message : "unknown submit error";
+    const errorMsg =
+      submitResult.type === "retry" || submitResult.type === "fatal"
+        ? submitResult.message
+        : "unknown submit error";
     await this.tryNextProverBackend(jobId, job, `${nextBackend} submit failed: ${errorMsg}`);
   }
 
@@ -1052,7 +1110,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           // Record this attempt as failed and try the next backend
           if (this.isBoundlessJob(job)) {
             await this.recordAttemptEnd(job, "failed", pollResult.message);
-            await this.tryNextProverBackend(activeJobId, job, `boundless failed: ${pollResult.message}`);
+            await this.tryNextProverBackend(
+              activeJobId,
+              job,
+              `boundless failed: ${pollResult.message}`,
+            );
             return;
           }
 
@@ -1098,12 +1160,53 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async alarm(): Promise<void> {
-    const activeJobIds = await this.getActiveJobIds();
+    let activeJobIds = await this.getActiveJobIds();
+    const maxWallTimeMs = parseInteger(
+      this.env.MAX_JOB_WALL_TIME_MS,
+      DEFAULT_MAX_JOB_WALL_TIME_MS,
+      60_000,
+    );
+
+    // Recover orphaned non-terminal jobs that predate ACTIVE_JOBS_KEY.
+    // These jobs were created before we started tracking active job IDs, so
+    // the alarm would never pick them up. We scan once to adopt them.
+    {
+      const activeSet = new Set(activeJobIds);
+      let orphanFound = false;
+      const listPageSize = 128;
+      let startAfter: string | undefined;
+      /* eslint-disable no-await-in-loop */
+      while (true) {
+        const page = await this.ctx.storage.list<ProofJobRecord>({
+          prefix: JOB_KEY_PREFIX,
+          startAfter,
+          limit: listPageSize,
+        });
+        if (page.size === 0) break;
+        for (const [, value] of page) {
+          if (value && !isTerminalProofStatus(value.status) && !activeSet.has(value.jobId)) {
+            activeJobIds = [...activeJobIds, value.jobId];
+            activeSet.add(value.jobId);
+            await this.addActiveJobId(value.jobId);
+            orphanFound = true;
+          }
+        }
+        const pageKeys = Array.from(page.keys());
+        const lastKey = pageKeys[pageKeys.length - 1];
+        if (!lastKey || page.size < listPageSize) break;
+        startAfter = lastKey;
+      }
+      /* eslint-enable no-await-in-loop */
+      if (orphanFound) {
+        console.log(
+          `[proof-worker] adopted ${activeJobIds.length} orphaned job(s) into active set`,
+        );
+      }
+    }
+
     if (activeJobIds.length === 0) {
       return;
     }
-
-    const maxWallTimeMs = parseInteger(this.env.MAX_JOB_WALL_TIME_MS, DEFAULT_MAX_JOB_WALL_TIME_MS, 60_000);
     let anyStillActive = false;
 
     /* eslint-disable no-await-in-loop */
@@ -1133,14 +1236,19 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
       // Poll prover
       let pollResult: ProverPollResult;
+      let boundlessConfig: ReturnType<typeof resolveBoundlessConfig> = null;
       try {
         if (this.isBoundlessJob(job)) {
-          const boundlessConfig = resolveBoundlessConfig(this.env);
+          boundlessConfig = resolveBoundlessConfig(this.env);
           if (!boundlessConfig) {
             await this.markFailed(jobId, "boundless config missing during alarm poll");
             continue;
           }
-          pollResult = await pollBoundless(boundlessConfig, job.prover.jobId, DEFAULT_BOUNDLESS_POLL_BUDGET_MS);
+          pollResult = await pollBoundless(
+            boundlessConfig,
+            job.prover.jobId,
+            DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
+          );
         } else {
           pollResult = await pollProver(this.env, job.prover.jobId);
         }
@@ -1156,6 +1264,48 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         continue;
       }
 
+      // Boundless fallback: two-tier timeout based on lock status.
+      //
+      // Tier 1 — Poll timeout (BOUNDLESS_POLL_TIMEOUT_MS, default 10 min):
+      //   If no prover has locked the order, bail to Vast.ai. No point waiting
+      //   for the full lock window if nobody is interested.
+      //
+      // Tier 2 — Lock deadline (flat period + lock timeout, default 30 min):
+      //   If a prover HAS locked the order, give them until the lock deadline
+      //   to deliver. Only bail if they fail to deliver by then.
+      //
+      // If lock status is unknown (RPC error → undefined), treat as unlocked
+      // and use the poll timeout (tier 1).
+      if (pollResult.type === "running" && boundlessConfig) {
+        const currentAttempt = job.proverAttempts.find((a) => a.outcome === "in_progress");
+        if (currentAttempt) {
+          const attemptAgeMs = Date.now() - new Date(currentAttempt.startedAt).getTime();
+          const isLocked = pollResult.locked === true;
+
+          // If locked, extend wait up to the full lock deadline; otherwise use poll timeout
+          const deadlineMs = isLocked
+            ? (boundlessConfig.flatPeriodSec + boundlessConfig.lockTimeoutSec) * 1000
+            : boundlessConfig.pollTimeoutMs;
+
+          if (attemptAgeMs > deadlineMs) {
+            const elapsedSec = Math.round(attemptAgeMs / 1000);
+            const reason = isLocked
+              ? `prover locked order but did not deliver after ${elapsedSec}s`
+              : `no prover locked the order after ${elapsedSec}s`;
+            console.log(
+              `[coordinator] boundless order ${job.prover.jobId} — ${reason}, falling back`,
+            );
+            await this.recordAttemptEnd(job, "failed", reason);
+            await this.tryNextProverBackend(jobId, job, reason);
+            const fallbackJob = await this.loadJob(jobId);
+            if (fallbackJob && !isTerminalProofStatus(fallbackJob.status)) {
+              anyStillActive = true;
+            }
+            continue;
+          }
+        }
+      }
+
       await this.applyPollResult(jobId, job, pollResult, true);
 
       const updatedJob = await this.loadJob(jobId);
@@ -1166,7 +1316,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     /* eslint-enable no-await-in-loop */
 
     if (anyStillActive) {
-      const pollIntervalMs = parseInteger(this.env.PROVER_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, MIN_PROVER_POLL_INTERVAL_MS);
+      const pollIntervalMs = parseInteger(
+        this.env.PROVER_POLL_INTERVAL_MS,
+        DEFAULT_POLL_INTERVAL_MS,
+        MIN_PROVER_POLL_INTERVAL_MS,
+      );
       await this.scheduleAlarm(pollIntervalMs);
     }
   }

@@ -1,9 +1,9 @@
 export type ProverBackend = "boundless" | "vast";
 
 export interface ProverAttempt {
-  index: number;            // 0-based attempt index
+  index: number; // 0-based attempt index
   backend: ProverBackend;
-  startedAt: string;        // ISO timestamp
+  startedAt: string; // ISO timestamp
   endedAt: string | null;
   outcome: "in_progress" | "success" | "failed";
   error: string | null;
@@ -287,7 +287,7 @@ export type ProverSubmitResult =
   | { type: "fatal"; message: string };
 
 export type ProverPollResult =
-  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running"> }
+  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean }
   | { type: "success"; response: ProverGetJobResponse }
   | { type: "retry"; message: string; clearProverJob?: boolean }
   | { type: "fatal"; message: string };

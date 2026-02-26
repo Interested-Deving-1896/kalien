@@ -69,6 +69,13 @@ export const boundlessMarketAbi = [
   },
   {
     type: "function",
+    name: "requestIsLocked",
+    inputs: [{ name: "requestId", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
     name: "deposit",
     inputs: [],
     outputs: [],

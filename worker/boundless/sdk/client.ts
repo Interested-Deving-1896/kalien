@@ -29,9 +29,16 @@ import { MAX_INLINE_STDIN_BYTES } from "../config";
 import { boundlessMarketAbi, eip712Types } from "../abi";
 import { encodeStdin } from "../stdin";
 import { uploadInput } from "../storage";
+import { fetchEthPriceUsd, usdToWei } from "../pricing";
 import { adaptFulfillmentToProverResponse } from "../adapter";
+import { parseAndValidateTape } from "../../tape";
+import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../../constants";
 import type { ProverPollResult, ProverSubmitResult } from "../../types";
-import type { BoundlessClientConfig, BoundlessFulfillmentData, BoundlessProofRequest } from "./types";
+import type {
+  BoundlessClientConfig,
+  BoundlessFulfillmentData,
+  BoundlessProofRequest,
+} from "./types";
 import {
   buildRequestId,
   boundlessExplorerUrl,
@@ -72,7 +79,29 @@ export class BoundlessClient {
     const config = this.config;
     const account = privateKeyToAccount(config.privateKey);
 
-    // 1. Encode stdin into GuestEnv V1 msgpack format
+    // 1. Resolve USD pricing to wei via Chainlink ETH/USD feed
+    let ethPriceUsd: number;
+    let minPrice: bigint;
+    let maxPrice: bigint;
+    try {
+      ethPriceUsd = await fetchEthPriceUsd(config.rpcUrl, Number(config.chainId));
+      minPrice = usdToWei(config.minPriceUsd, ethPriceUsd);
+      maxPrice = usdToWei(config.maxPriceUsd, ethPriceUsd);
+      console.log("[boundless] ETH price", {
+        ethPriceUsd: ethPriceUsd.toFixed(2),
+        maxPriceUsd: config.maxPriceUsd,
+        maxPriceWei: maxPrice.toString(),
+        minPriceUsd: config.minPriceUsd,
+        minPriceWei: minPrice.toString(),
+      });
+    } catch (error) {
+      return {
+        type: "retry",
+        message: `failed fetching ETH price for USD pricing: ${safeErrorMessage(error)}`,
+      };
+    }
+
+    // 2. Encode stdin into GuestEnv V1 msgpack format
     const stdinBytes = encodeStdin(tapeBytes);
 
     // 2. Determine input type: upload to IPFS if too large for inline
@@ -118,6 +147,26 @@ export class BoundlessClient {
     const nowSec = BigInt(Math.floor(Date.now() / 1000));
     const rampUpStart = nowSec + BigInt(config.flatPeriodSec);
 
+    // Compute DigestMatch predicate: bind proof request to this exact tape by
+    // precomputing the expected journal (all 6 fields are known from the tape)
+    // and using sha256(journal) as the predicate data.
+    const tapeMeta = parseAndValidateTape(tapeBytes, DEFAULT_MAX_TAPE_BYTES);
+    const expectedJournal = new Uint8Array(24);
+    const jv = new DataView(expectedJournal.buffer);
+    jv.setUint32(0, tapeMeta.seed, true);
+    jv.setUint32(4, tapeMeta.frameCount, true);
+    jv.setUint32(8, tapeMeta.finalScore, true);
+    jv.setUint32(12, tapeMeta.finalRngState, true);
+    jv.setUint32(16, tapeMeta.checksum, true);
+    jv.setUint32(20, EXPECTED_RULES_DIGEST, true);
+    const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", expectedJournal));
+    // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
+    const imageIdBytes = hexToUint8Array(config.imageId as Hex);
+    const predicateData = new Uint8Array(64);
+    predicateData.set(imageIdBytes, 0);
+    predicateData.set(journalDigest, 32);
+    const predicateDataHex = `0x${uint8ArrayToHex(predicateData)}` as Hex;
+
     const proofRequest: BoundlessProofRequest = {
       id: requestId,
       requirements: {
@@ -126,8 +175,8 @@ export class BoundlessClient {
           gasLimit: 0n,
         },
         predicate: {
-          predicateType: 1, // PrefixMatch — match any journal from this image
-          data: config.imageId,
+          predicateType: 0, // DigestMatch — proof must produce this exact journal from this image
+          data: predicateDataHex,
         },
         selector: "0x73c457ba", // Groth16V3_0 — Stellar requires standalone Groth16 proofs
       },
@@ -137,8 +186,8 @@ export class BoundlessClient {
         data: inputData,
       },
       offer: {
-        minPrice: config.minPrice,
-        maxPrice: config.maxPrice,
+        minPrice,
+        maxPrice,
         rampUpStart,
         rampUpPeriod: config.rampPeriodSec,
         lockTimeout: config.lockTimeoutSec,
@@ -192,7 +241,7 @@ export class BoundlessClient {
         abi: boundlessMarketAbi,
         functionName: "submitRequest",
         args: [proofRequest, signature],
-        value: config.maxPrice,
+        value: maxPrice,
       });
     } catch (error) {
       const msg = safeErrorMessage(error);
@@ -215,7 +264,9 @@ export class BoundlessClient {
       txHash,
       stdinBytes: stdinBytes.length,
       inputType: inputType === 1 ? "url" : "inline",
-      maxPrice: config.maxPrice.toString(),
+      maxPriceWei: maxPrice.toString(),
+      maxPriceUsd: config.maxPriceUsd,
+      predicateData: predicateDataHex,
       chainId: config.chainId.toString(),
     });
 
@@ -224,7 +275,10 @@ export class BoundlessClient {
       await this.submitToOrderStream(proofRequest, signature, domain);
       console.log("[boundless] submitted to order stream");
     } catch (error) {
-      console.log("[boundless] order stream submission failed (non-fatal):", safeErrorMessage(error));
+      console.log(
+        "[boundless] order stream submission failed (non-fatal):",
+        safeErrorMessage(error),
+      );
     }
 
     return {
@@ -275,9 +329,23 @@ export class BoundlessClient {
     }
 
     if (!fulfilled) {
+      // Check if a prover has locked the order
+      let locked: boolean | undefined;
+      try {
+        locked = await publicClient.readContract({
+          address: config.marketAddress,
+          abi: boundlessMarketAbi,
+          functionName: "requestIsLocked",
+          args: [requestId],
+        });
+      } catch {
+        // Non-fatal — lock status is advisory; default to undefined (unknown)
+      }
+
       return {
         type: "running",
         status: "running",
+        locked,
       };
     }
 
@@ -336,9 +404,12 @@ export class BoundlessClient {
     const budgetDeadline = Date.now() + budgetMs;
     const absoluteDeadline = Date.now() + config.pollTimeoutMs;
 
+    let lastResult: ProverPollResult = { type: "running", status: "running" };
+
     /* eslint-disable no-await-in-loop */
     while (Date.now() < budgetDeadline && Date.now() < absoluteDeadline) {
       const result = await this.pollOnce(requestIdHex);
+      lastResult = result;
 
       if (result.type !== "running") {
         return result;
@@ -352,10 +423,7 @@ export class BoundlessClient {
     }
     /* eslint-enable no-await-in-loop */
 
-    return {
-      type: "running",
-      status: "running",
-    };
+    return lastResult;
   }
 
   /**
@@ -474,8 +542,7 @@ export class BoundlessClient {
       "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const;
 
     // Topic1: requestId padded to 32 bytes (uint256, big-endian)
-    const requestIdTopic =
-      `0x${requestId.toString(16).padStart(64, "0")}` as `0x${string}`;
+    const requestIdTopic = `0x${requestId.toString(16).padStart(64, "0")}` as `0x${string}`;
 
     const config = this.config;
 
@@ -498,8 +565,7 @@ export class BoundlessClient {
       const topic0 = log.topics?.[0]?.toLowerCase();
       const topic1 = log.topics?.[1]?.toLowerCase();
       return (
-        topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() &&
-        topic1 === requestIdTopic.toLowerCase()
+        topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() && topic1 === requestIdTopic.toLowerCase()
       );
     });
 
@@ -536,8 +602,7 @@ export class BoundlessClient {
     const clean = data.startsWith("0x") ? data.slice(2) : data;
 
     const readWordAt = (charOffset: number): string => clean.slice(charOffset, charOffset + 64);
-    const readUintAt = (charOffset: number): number =>
-      Number.parseInt(readWordAt(charOffset), 16);
+    const readUintAt = (charOffset: number): number => Number.parseInt(readWordAt(charOffset), 16);
 
     // Outer: word 0 is the offset to the Fulfillment tuple (always 0x20 = 32 bytes)
     const tupleByteOffset = readUintAt(0);
