@@ -541,6 +541,31 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Dev endpoints — gated by DEV_API_KEY (must be set and >= 16 chars).
+  // If no key is configured, these routes return 404.
+  // If a key is configured, requests must include "Authorization: Bearer <key>".
+  // ---------------------------------------------------------------------------
+  const MIN_DEV_KEY_LENGTH = 16;
+
+  router.use("/dev/*", async (c, next) => {
+    const key = c.env.DEV_API_KEY?.trim();
+
+    // No key or insufficient entropy → endpoints don't exist
+    if (!key || key.length < MIN_DEV_KEY_LENGTH) {
+      return jsonError(c, 404, `unknown api route: ${c.req.path}`);
+    }
+
+    const authHeader = c.req.header("authorization") ?? "";
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+
+    if (!match || match[1] !== key) {
+      return jsonError(c, 401, "valid authorization required for dev endpoints");
+    }
+
+    await next();
+  });
+
   // DEV-ONLY: Trigger leaderboard sync (same as cron handler)
   // Pass ?reset_cursor=1 to clear stale RPC cursor.
   // Pass ?from_ledger=N to override the start ledger (skips gaps).

@@ -426,11 +426,34 @@ describe("API routes", () => {
     expect(response.status).toBe(200);
   });
 
-  it("POST /leaderboard/dev/sync triggers sync and returns result", async () => {
+  // ── Dev endpoint auth guard ────────────────────────────────────────────────
+
+  const DEV_KEY = "test-dev-key-with-enough-entropy";
+  const devAuthHeaders = { authorization: `Bearer ${DEV_KEY}` };
+
+  it("POST /leaderboard/dev/sync returns 404 when DEV_API_KEY is not set", async () => {
     const response = await requestApi(
       "/leaderboard/dev/sync",
       { method: "POST" },
       makeEnv(),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("POST /leaderboard/dev/sync returns 401 without valid auth", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/sync",
+      { method: "POST" },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("POST /leaderboard/dev/sync triggers sync and returns result", async () => {
+    const response = await requestApi(
+      "/leaderboard/dev/sync",
+      { method: "POST", headers: devAuthHeaders },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { success: boolean };
@@ -440,8 +463,8 @@ describe("API routes", () => {
   it("POST /leaderboard/dev/sync?from_ledger=invalid returns 400", async () => {
     const response = await requestApi(
       "/leaderboard/dev/sync?from_ledger=abc",
-      { method: "POST" },
-      makeEnv(),
+      { method: "POST", headers: devAuthHeaders },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(400);
   });
@@ -449,8 +472,8 @@ describe("API routes", () => {
   it("POST /leaderboard/dev/reset clears data", async () => {
     const response = await requestApi(
       "/leaderboard/dev/reset",
-      { method: "POST" },
-      makeEnv(),
+      { method: "POST", headers: devAuthHeaders },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { success: boolean; message: string };
@@ -463,7 +486,7 @@ describe("API routes", () => {
       "/leaderboard/dev/seed",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...devAuthHeaders },
         body: JSON.stringify({
           events: [
             {
@@ -477,7 +500,7 @@ describe("API routes", () => {
           ],
         }),
       },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { success: boolean };
@@ -489,10 +512,10 @@ describe("API routes", () => {
       "/leaderboard/dev/seed",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...devAuthHeaders },
         body: JSON.stringify({ events: [] }),
       },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(400);
   });
@@ -502,10 +525,10 @@ describe("API routes", () => {
       "/leaderboard/dev/seed",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...devAuthHeaders },
         body: "not json",
       },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(400);
   });

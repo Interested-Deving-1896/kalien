@@ -5,6 +5,10 @@
  */
 
 const BASE_URL = "http://localhost:5173";
+const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
+const devAuthHeaders: Record<string, string> = DEV_API_KEY
+  ? { Authorization: `Bearer ${DEV_API_KEY}` }
+  : {};
 
 // Generate realistic-looking Stellar addresses
 function fakeGAddress(index: number): string {
@@ -325,7 +329,7 @@ async function main() {
 
   const response = await fetch(`${BASE_URL}/api/leaderboard/dev/seed`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...devAuthHeaders },
     body: JSON.stringify({ events, profiles }),
   });
 

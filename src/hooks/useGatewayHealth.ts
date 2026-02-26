@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { getGatewayHealth, type GatewayHealthResponse, type ProofJobPublic } from "../proof/api";
+import { getGatewayHealth, type GatewayHealthResponse } from "../proof/api";
 import { GATEWAY_HEALTH_INITIAL_POLL_DELAY_MS, GATEWAY_HEALTH_POLL_INTERVAL_MS } from "../consts";
 
 export interface UseGatewayHealthReturn {
   health: GatewayHealthResponse | null;
   isHealthy: boolean;
   error: string | null;
-  activeJob: ProofJobPublic | null;
+  activeJobId: string | null;
 }
 
 export function useGatewayHealth(): UseGatewayHealthReturn {
@@ -49,12 +49,12 @@ export function useGatewayHealth(): UseGatewayHealthReturn {
   }, []);
 
   const isHealthy = health?.prover.status === "compatible";
-  const activeJob = health?.active_job ?? null;
+  const activeJobId = health?.active_job_id ?? null;
 
   return {
     health,
     isHealthy,
     error,
-    activeJob,
+    activeJobId,
   };
 }

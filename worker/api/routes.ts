@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cache } from "hono/cache";
 import {
   DEFAULT_MAX_TAPE_BYTES,
   EXPECTED_RULES_DIGEST,
@@ -12,6 +13,21 @@ import { describeProverHealthError, getValidatedProverHealth } from "../prover/c
 import { parseAndValidateTape } from "../tape";
 import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
 import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
+import {
+  HEALTH_CACHE_CONTROL,
+  JOB_LIST_CACHE_CONTROL,
+  JOB_STATUS_CACHE_CONTROL,
+  JOB_STATUS_TERMINAL_CACHE_CONTROL,
+  RESULT_CACHE_CONTROL,
+  TAPE_CACHE_CONTROL,
+} from "../cache-control";
+import {
+  hasCapacity,
+  recordSubmission,
+  retryAfterSeconds,
+  SUBMISSION_LIMIT,
+  SUBMISSION_WINDOW_MS,
+} from "./rate-limit";
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -98,6 +114,10 @@ function jsonError(
   );
 }
 
+function clientIp(c: { req: { raw: Request } }): string {
+  return c.req.raw.headers.get("cf-connecting-ip") ?? "unknown";
+}
+
 export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
   const api = new Hono<{ Bindings: WorkerEnv }>();
 
@@ -135,6 +155,7 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       };
     }
 
+    c.header("Cache-Control", HEALTH_CACHE_CONTROL);
     return c.json({
       success: true,
       service: "kalien-proof-gateway",
@@ -146,7 +167,8 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       },
       checked_at: new Date().toISOString(),
       prover,
-      active_job: activeJob ? asPublicJob(activeJob) : null,
+      active_jobs: activeJob ? 1 : 0,
+      active_job_id: activeJob?.jobId ?? null,
     });
   });
 
@@ -185,6 +207,22 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     } catch (error) {
       return jsonError(c, 400, `invalid x-claimant-address: ${safeErrorMessage(error)}`);
     }
+
+    // Sliding-window rate limit: 10 submissions per 10 minutes, per IP and per address.
+    const ipKey = `ip:${clientIp(c)}`;
+    const addrKey = `addr:${claimantAddress}`;
+    if (
+      !hasCapacity(ipKey, SUBMISSION_LIMIT, SUBMISSION_WINDOW_MS) ||
+      !hasCapacity(addrKey, SUBMISSION_LIMIT, SUBMISSION_WINDOW_MS)
+    ) {
+      const retryIp = retryAfterSeconds(ipKey, SUBMISSION_LIMIT, SUBMISSION_WINDOW_MS);
+      const retryAddr = retryAfterSeconds(addrKey, SUBMISSION_LIMIT, SUBMISSION_WINDOW_MS);
+      const retryAfter = Math.max(retryIp, retryAddr, 1);
+      c.header("Retry-After", String(retryAfter));
+      return jsonError(c, 429, "too many proof submissions; try again later");
+    }
+    recordSubmission(ipKey, SUBMISSION_WINDOW_MS);
+    recordSubmission(addrKey, SUBMISSION_WINDOW_MS);
 
     const coordinator = coordinatorStub(c.env);
     const createResult = await coordinator.createJob({
@@ -268,6 +306,7 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
 
     const nextOffset = offset + jobs.length < total ? offset + limit : null;
 
+    c.header("Cache-Control", JOB_LIST_CACHE_CONTROL);
     return c.json({
       success: true,
       jobs: jobs.map(asPublicJob),
@@ -278,31 +317,39 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     });
   });
 
-  api.get("/proofs/jobs/:jobId/tape", async (c) => {
-    const jobId = c.req.param("jobId");
-    if (!jobId) {
-      return jsonError(c, 400, "invalid job id in path");
-    }
+  api.get(
+    "/proofs/jobs/:jobId/tape",
+    cache({
+      cacheName: "kalien-tape-v1",
+      cacheControl: TAPE_CACHE_CONTROL,
+    }),
+    async (c) => {
+      const jobId = c.req.param("jobId");
+      if (!jobId) {
+        return jsonError(c, 400, "invalid job id in path");
+      }
 
-    const coordinator = coordinatorStub(c.env);
-    const job = await coordinator.getJob(jobId);
-    if (!job) {
-      return jsonError(c, 404, `job not found: ${jobId}`);
-    }
+      const coordinator = coordinatorStub(c.env);
+      const job = await coordinator.getJob(jobId);
+      if (!job) {
+        return jsonError(c, 404, `job not found: ${jobId}`);
+      }
 
-    const tape = await c.env.PROOF_ARTIFACTS.get(job.tape.key);
-    if (!tape) {
-      return jsonError(c, 404, "tape not found");
-    }
+      const tape = await c.env.PROOF_ARTIFACTS.get(job.tape.key);
+      if (!tape) {
+        return jsonError(c, 404, "tape not found");
+      }
 
-    return new Response(tape.body, {
-      status: 200,
-      headers: {
-        "content-type": "application/octet-stream",
-        "content-disposition": `attachment; filename="${jobId}.tape"`,
-      },
-    });
-  });
+      return new Response(tape.body, {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": `attachment; filename="${jobId}.tape"`,
+          "cache-control": TAPE_CACHE_CONTROL,
+        },
+      });
+    },
+  );
 
   api.get("/proofs/jobs/:jobId", async (c) => {
     const jobId = c.req.param("jobId");
@@ -333,65 +380,63 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       }
     }
 
+    // Terminal jobs never change — cache longer. In-progress jobs need fresh data.
+    c.header(
+      "Cache-Control",
+      isTerminalProofStatus(job.status)
+        ? JOB_STATUS_TERMINAL_CACHE_CONTROL
+        : JOB_STATUS_CACHE_CONTROL,
+    );
+
     return c.json({
       success: true,
       job: asPublicJob(job),
     });
   });
 
-  api.get("/proofs/jobs/:jobId/result", async (c) => {
-    const jobId = c.req.param("jobId");
-    if (!jobId) {
-      return jsonError(c, 400, "invalid job id in path");
-    }
-
-    // Try the DO first for the canonical artifact key.
-    const coordinator = coordinatorStub(c.env);
-    const job = await coordinator.getJob(jobId);
-
-    let artifact: R2ObjectBody | null = null;
-
-    if (job?.result?.artifactKey) {
-      artifact = await c.env.PROOF_ARTIFACTS.get(job.result.artifactKey);
-    } else if (!job) {
-      // DO record was pruned — fall back to the well-known R2 key.
-      // result.json is retained in R2 beyond DO pruning so users can
-      // fetch proof data for on-chain submission.
-      artifact = await c.env.PROOF_ARTIFACTS.get(resultKey(jobId));
-    }
-
-    if (!artifact) {
-      if (job && !job.result?.artifactKey) {
-        return jsonError(c, 409, "proof result is not available for this job");
+  api.get(
+    "/proofs/jobs/:jobId/result",
+    cache({
+      cacheName: "kalien-result-v1",
+      cacheControl: RESULT_CACHE_CONTROL,
+    }),
+    async (c) => {
+      const jobId = c.req.param("jobId");
+      if (!jobId) {
+        return jsonError(c, 400, "invalid job id in path");
       }
-      return jsonError(c, 404, "proof result not found");
-    }
 
-    return new Response(artifact.body, {
-      status: 200,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-      },
-    });
-  });
+      // Try the DO first for the canonical artifact key.
+      const coordinator = coordinatorStub(c.env);
+      const job = await coordinator.getJob(jobId);
 
-  api.delete("/proofs/jobs/:jobId", async (c) => {
-    const jobId = c.req.param("jobId");
-    if (!jobId) {
-      return jsonError(c, 400, "invalid job id in path");
-    }
+      let artifact: R2ObjectBody | null = null;
 
-    const coordinator = coordinatorStub(c.env);
-    const job = await coordinator.markFailed(jobId, "cancelled by user");
-    if (!job) {
-      return jsonError(c, 404, `job not found: ${jobId}`);
-    }
+      if (job?.result?.artifactKey) {
+        artifact = await c.env.PROOF_ARTIFACTS.get(job.result.artifactKey);
+      } else if (!job) {
+        // DO record was pruned — fall back to the well-known R2 key.
+        // result.json is retained in R2 beyond DO pruning so users can
+        // fetch proof data for on-chain submission.
+        artifact = await c.env.PROOF_ARTIFACTS.get(resultKey(jobId));
+      }
 
-    return c.json({
-      success: true,
-      job: asPublicJob(job),
-    });
-  });
+      if (!artifact) {
+        if (job && !job.result?.artifactKey) {
+          return jsonError(c, 409, "proof result is not available for this job");
+        }
+        return jsonError(c, 404, "proof result not found");
+      }
+
+      return new Response(artifact.body, {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": RESULT_CACHE_CONTROL,
+        },
+      });
+    },
+  );
 
   api.notFound((c) => {
     return jsonError(c, 404, `unknown api route: ${c.req.path}`);

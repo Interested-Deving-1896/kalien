@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CompletedGameRun } from "../components/AsteroidsCanvas";
-import { getProofArtifact } from "../proof/api";
+import { getProofArtifact, getProofJob } from "../proof/api";
 import { extractGroth16SealFromArtifact, packJournalRaw } from "../proof/artifact";
 import {
   explainScoreSubmissionError,
@@ -8,10 +8,10 @@ import {
   submitScoreTransaction,
 } from "../chain/score";
 import { deserializeTape } from "../game/tape";
-import { useWallet, type UseWalletReturn } from "./useWallet";
+import type { UseWalletReturn } from "./useWallet";
 import { useGatewayHealth, type UseGatewayHealthReturn } from "./useGatewayHealth";
 import { useProofJob, type UseProofJobReturn } from "./useProofJob";
-import { useTokenBalance, type UseTokenBalanceReturn } from "./useTokenBalance";
+import type { UseTokenBalanceReturn } from "./useTokenBalance";
 
 export type GameFlowStep = "play" | "score" | "wallet" | "prove" | "earn";
 
@@ -24,6 +24,7 @@ export interface UseGameFlowReturn {
   latestRun: CompletedGameRun | null;
   hasPositiveScore: boolean;
   handleGameOver: (run: CompletedGameRun) => void;
+  dismissOverlay: () => void;
   submitForProof: () => Promise<void>;
   submitOnChain: () => Promise<void>;
   loadTapeFile: () => void;
@@ -35,7 +36,12 @@ export interface UseGameFlowReturn {
   scoreContractId: string | null;
 }
 
-export function useGameFlow(): UseGameFlowReturn {
+export interface UseGameFlowDeps {
+  wallet: UseWalletReturn;
+  balance: UseTokenBalanceReturn;
+}
+
+export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
   const [latestRun, setLatestRun] = useState<CompletedGameRun | null>(null);
   const [claimStatus, setClaimStatus] = useState<"idle" | "submitting" | "succeeded" | "failed">(
     "idle",
@@ -43,10 +49,8 @@ export function useGameFlow(): UseGameFlowReturn {
   const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
 
-  const wallet = useWallet();
+  const { wallet, balance } = deps;
   const health = useGatewayHealth();
-
-  const balance = useTokenBalance(wallet.address);
 
   const proof = useProofJob({
     onClaimSucceeded: balance.refresh,
@@ -55,12 +59,27 @@ export function useGameFlow(): UseGameFlowReturn {
   const scoreContractId = getScoreContractIdFromEnv();
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
 
-  // Feed activeJob from gateway health into proof job
+  // Restore in-progress job discovered via gateway health.
+  // The health endpoint only returns the job ID (not the full record),
+  // so we fetch the full job to feed into the proof hook.
   useEffect(() => {
-    if (health.activeJob) {
-      proof.setJobFromExternal(health.activeJob);
-    }
-  }, [health.activeJob, proof.setJobFromExternal]);
+    if (!health.activeJobId) return;
+
+    let cancelled = false;
+    getProofJob(health.activeJobId)
+      .then((response) => {
+        if (!cancelled) {
+          proof.setJobFromExternal(response.job);
+        }
+      })
+      .catch(() => {
+        // Job may have expired or been pruned — ignore.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [health.activeJobId, proof.setJobFromExternal]);
 
   // Reset claim state when proof job changes
   useEffect(() => {
@@ -89,6 +108,10 @@ export function useGameFlow(): UseGameFlowReturn {
     },
     [proof.clearError, proof.clearIfTerminal],
   );
+
+  const dismissOverlay = useCallback(() => {
+    setLatestRun(null);
+  }, []);
 
   const loadTapeFile = useCallback(() => {
     const input = document.createElement("input");
@@ -127,10 +150,7 @@ export function useGameFlow(): UseGameFlowReturn {
     if (!latestRun) {
       return;
     }
-    const success = await proof.submitRun(latestRun, wallet.address);
-    if (success) {
-      window.location.href = "/proofs";
-    }
+    await proof.submitRun(latestRun, wallet.address);
   }, [latestRun, proof.submitRun, wallet.address]);
 
   const submitOnChain = useCallback(async () => {
@@ -227,6 +247,7 @@ export function useGameFlow(): UseGameFlowReturn {
     latestRun,
     hasPositiveScore,
     handleGameOver,
+    dismissOverlay,
     submitForProof,
     submitOnChain,
     loadTapeFile,

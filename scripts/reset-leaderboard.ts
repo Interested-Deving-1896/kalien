@@ -9,6 +9,10 @@ import type { WorkerEnv } from "../worker/env";
 import type { LeaderboardEventRecord } from "../worker/types";
 
 const BASE_URL = "http://localhost:5173";
+const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
+const devAuthHeaders: Record<string, string> = DEV_API_KEY
+  ? { Authorization: `Bearer ${DEV_API_KEY}` }
+  : {};
 const TESTNET_RPC = "https://soroban-testnet.stellar.org/";
 const SCORE_CONTRACT = "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
 
@@ -26,6 +30,7 @@ async function main() {
   console.log("Resetting leaderboard data...");
   const resetResponse = await fetch(`${BASE_URL}/api/leaderboard/dev/reset`, {
     method: "POST",
+    headers: devAuthHeaders,
   });
   if (!resetResponse.ok) {
     console.error(`Reset failed (${resetResponse.status}): ${await resetResponse.text()}`);
@@ -91,7 +96,7 @@ async function main() {
   console.log("Seeding real events into leaderboard...");
   const seedResponse = await fetch(`${BASE_URL}/api/leaderboard/dev/seed`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...devAuthHeaders },
     body: JSON.stringify({ events: uniqueEvents }),
   });
   if (!seedResponse.ok) {

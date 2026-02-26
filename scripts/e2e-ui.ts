@@ -25,6 +25,10 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { Autopilot } from "../src/game/Autopilot";
 
 const BASE_URL = "http://localhost:5173";
+const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
+const devAuthHeaders: Record<string, string> = DEV_API_KEY
+  ? { Authorization: `Bearer ${DEV_API_KEY}` }
+  : {};
 const SCREENSHOT_DIR = "/private/tmp/claude-501";
 const MAX_TAPE_FRAMES = 500;
 
@@ -115,6 +119,7 @@ async function triggerLeaderboardSync(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE_URL}/api/leaderboard/dev/sync?reset_cursor=1`, {
       method: "POST",
+      headers: devAuthHeaders,
     });
     const body = (await res.json()) as { success?: boolean };
     log(`  Sync response: ${res.status} success=${body.success}`);

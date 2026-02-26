@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 import {
+  HEALTH_CACHE_CONTROL,
   LEADERBOARD_CACHE_CONTROL,
   LEADERBOARD_PRIVATE_CACHE_CONTROL,
 } from "../../worker/cache-control";
@@ -231,10 +232,10 @@ async function requestWorker(path: string, init: RequestInit | undefined, env: W
 }
 
 describe("Worker live interface", () => {
-  it("applies default no-store cache-control to /api routes without explicit policy", async () => {
+  it("applies health cache-control to /api/health", async () => {
     const response = await requestWorker("/api/health", undefined, makeEnv());
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe(HEALTH_CACHE_CONTROL);
   });
 
   it("preserves public leaderboard cache policy for public reads", async () => {

@@ -1,5 +1,4 @@
 import {
-  API_TIMEOUT_CANCEL_PROOF_MS,
   API_TIMEOUT_GET_ARTIFACT_MS,
   API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
   API_TIMEOUT_GET_PROOF_MS,
@@ -157,7 +156,8 @@ export interface GatewayHealthResponse {
   };
   checked_at: string;
   prover: GatewayProverHealth;
-  active_job: ProofJobPublic | null;
+  active_jobs: number;
+  active_job_id: string | null;
 }
 
 interface ApiErrorResponse {
@@ -259,22 +259,6 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
       method: "GET",
     },
     API_TIMEOUT_GET_PROOF_MS,
-  );
-
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-
-  return parseJson<GetProofJobResponse>(response);
-}
-
-export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse> {
-  const response = await fetchWithTimeout(
-    `/api/proofs/jobs/${jobId}`,
-    {
-      method: "DELETE",
-    },
-    API_TIMEOUT_CANCEL_PROOF_MS,
   );
 
   if (!response.ok) {
