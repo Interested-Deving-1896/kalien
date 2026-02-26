@@ -68,7 +68,7 @@ import {
   wrapXQ12_4,
   wrapYQ12_4,
 } from "./math";
-import { deserializeTape, serializeTape, TapeRecorder } from "./tape";
+import { deserializeTape, serializeTape, TapeRecorder, type Tape } from "./tape";
 import type { Asteroid, AsteroidSize, Bullet, GameMode, Saucer, Ship } from "./types";
 
 const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
@@ -248,6 +248,7 @@ export class AsteroidsGame {
   private replaySpeed = 1;
   private replayPaused = false;
   private replayTapeSource: TapeInputSource | null = null;
+  private replayTape: Tape | null = null;
 
   // Current frame input (read at start of updateSimulation, used by updateShip)
   private currentFrameInput: { left: boolean; right: boolean; thrust: boolean; fire: boolean } = {
@@ -420,6 +421,15 @@ export class AsteroidsGame {
 
         if (steps >= maxSteps) {
           this.accumulator = 0;
+        }
+      }
+
+      // When the replay tape finishes, transition to game-over so the UI
+      // can show the ScoreCard and allow score submission.
+      if (this.replayTapeSource?.isComplete() && this.mode === "replay") {
+        this.mode = "game-over";
+        if (this.renderer) {
+          this.saveHighScore();
         }
       }
 
@@ -1485,6 +1495,16 @@ export class AsteroidsGame {
 
   /** Snapshot the current recorded run (no claimant binding). */
   getRunRecord(): GameRunRecord | null {
+    // For completed replay: return a record built from the tape's stored data
+    if (!this.recorder && this.replayTape) {
+      return {
+        seed: this.replayTape.header.seed,
+        inputs: this.replayTape.inputs,
+        finalScore: this.replayTape.footer.finalScore,
+        finalRngState: this.replayTape.footer.finalRngState,
+      };
+    }
+
     if (!this.recorder) {
       return null;
     }
@@ -1517,6 +1537,7 @@ export class AsteroidsGame {
     this.replayPaused = false;
     this.lastTimeMs = 0;
     this.accumulator = 0;
+    this.replayTape = tape;
     const tapeSource = new TapeInputSource(tape.inputs);
     this.replayTapeSource = tapeSource;
     this.inputSource = tapeSource;
@@ -1544,11 +1565,14 @@ export class AsteroidsGame {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".tape";
+    input.style.display = "none";
     input.addEventListener("change", () => {
       const file = input.files?.[0];
+      document.body.removeChild(input);
       if (!file) return;
       void file.arrayBuffer().then((buf) => this.loadReplay(new Uint8Array(buf)));
     });
+    document.body.appendChild(input);
     input.click();
   }
 

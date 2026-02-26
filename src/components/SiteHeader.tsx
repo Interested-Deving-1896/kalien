@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "/", label: "Game" },
+  { href: "/proofs", label: "Proofs" },
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
 
@@ -14,7 +15,7 @@ export function SiteHeader() {
         className="font-display text-[clamp(1.1rem,2.4vw,1.35rem)] font-bold tracking-widest uppercase text-[#d6fff0] no-underline [text-shadow:0_0_14px_rgba(82,255,191,0.28),0_0_1px_rgba(214,255,240,0.9)] hover:text-[#eafff7]"
         href="/"
       >
-        Asteroids
+        Kalien
       </a>
       <div className="flex items-center gap-5">
         {NAV_LINKS.map((link) => {

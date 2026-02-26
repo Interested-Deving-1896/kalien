@@ -193,17 +193,6 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       claimantAddress,
     });
 
-    if (!createResult.accepted) {
-      return c.json(
-        {
-          success: false,
-          error: "proof queue is currently busy; retry when the active job completes",
-          active_job: asPublicJob(createResult.activeJob),
-        },
-        429,
-      );
-    }
-
     const { job } = createResult;
 
     try {
@@ -254,6 +243,65 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       },
       202,
     );
+  });
+
+  api.get("/proofs/jobs", async (c) => {
+    const rawAddress = c.req.query("address") ?? "";
+    if (!rawAddress.trim()) {
+      return jsonError(c, 400, "address query param required");
+    }
+
+    let claimantAddress: string;
+    try {
+      claimantAddress = validateClaimantStrKeyFromUserInput(rawAddress);
+    } catch (error) {
+      return jsonError(c, 400, `invalid address: ${safeErrorMessage(error)}`);
+    }
+
+    const limitRaw = Number.parseInt(c.req.query("limit") ?? "25", 10);
+    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 25, 1), 100);
+    const offsetRaw = Number.parseInt(c.req.query("offset") ?? "0", 10);
+    const offset = Math.max(Number.isFinite(offsetRaw) ? offsetRaw : 0, 0);
+
+    const coordinator = coordinatorStub(c.env);
+    const { jobs, total } = await coordinator.listJobsForClaimant(claimantAddress, limit, offset);
+
+    const nextOffset = offset + jobs.length < total ? offset + limit : null;
+
+    return c.json({
+      success: true,
+      jobs: jobs.map(asPublicJob),
+      total,
+      offset,
+      limit,
+      next_offset: nextOffset,
+    });
+  });
+
+  api.get("/proofs/jobs/:jobId/tape", async (c) => {
+    const jobId = c.req.param("jobId");
+    if (!jobId) {
+      return jsonError(c, 400, "invalid job id in path");
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    const job = await coordinator.getJob(jobId);
+    if (!job) {
+      return jsonError(c, 404, `job not found: ${jobId}`);
+    }
+
+    const tape = await c.env.PROOF_ARTIFACTS.get(job.tape.key);
+    if (!tape) {
+      return jsonError(c, 404, "tape not found");
+    }
+
+    return new Response(tape.body, {
+      status: 200,
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-disposition": `attachment; filename="${jobId}.tape"`,
+      },
+    });
   });
 
   api.get("/proofs/jobs/:jobId", async (c) => {
