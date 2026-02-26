@@ -28,20 +28,12 @@ export async function replayCommand(tapePath: string): Promise<void> {
 
   await sleep(2000);
 
-  // Set up game in replay mode
-  const game = new AsteroidsGame({ headless: true, seed: tape.header.seed });
-  game.startNewGame(tape.header.seed);
-  const inputSource = new TapeInputSource(tape.inputs);
-  game.setInputSource(inputSource);
-
-  process.stdout.write(ansi.clearScreen + ansi.cursorHide);
-
-  const replayState = createReplayState();
   const totalFrames = tape.header.frameCount;
   const baseFrameTime = 1000 / 30; // ~30fps at 1x
-  let frame = 0;
   let stopped = false;
+  let paused = false;
   let speed = 1; // 1x, 2x, or 4x
+  let restart = false;
 
   // Enable raw mode for keypress detection
   if (process.stdin.isTTY) {
@@ -56,6 +48,10 @@ export async function replayCommand(tapePath: string): Promise<void> {
         if (data.length === 1) stopped = true;
       } else if (str === "q" || str === "Q") {
         stopped = true;
+      } else if (str === " " || str === "p" || str === "P") {
+        paused = !paused;
+      } else if (str === "r" || str === "R") {
+        restart = true;
       } else if (str === "1") {
         speed = 1;
       } else if (str === "2") {
@@ -73,30 +69,65 @@ export async function replayCommand(tapePath: string): Promise<void> {
     stopped = true;
   });
 
-  while (frame < totalFrames && !stopped) {
-    // Step simulation: 2 game frames per display frame at 1x,
-    // scaled by speed multiplier
-    const stepsPerTick = 2 * speed;
-    for (let i = 0; i < stepsPerTick && frame < totalFrames; i++) {
-      game.stepSimulation();
-      frame++;
+  process.stdout.write(ansi.clearScreen + ansi.cursorHide);
+
+  // Outer loop: supports restart
+  while (!stopped) {
+    const game = new AsteroidsGame({ headless: true, seed: tape.header.seed });
+    game.startNewGame(tape.header.seed);
+    const inputSource = new TapeInputSource(tape.inputs);
+    game.setInputSource(inputSource);
+
+    const replayState = createReplayState();
+    let frame = 0;
+    restart = false;
+
+    while (frame < totalFrames && !stopped && !restart) {
+      if (paused) {
+        // Render current frame with paused indicator, then wait
+        const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
+        const hud: ReplayHUD = {
+          score: game.getScore(),
+          wave: game.getWave(),
+          lives: game.getLives(),
+          frame,
+          totalFrames,
+          speed,
+          paused: true,
+        };
+        process.stdout.write(renderAsciiFrame(snapshot, hud, replayState));
+        await sleep(baseFrameTime);
+        continue;
+      }
+
+      // Step simulation: 2 game frames per display frame at 1x,
+      // scaled by speed multiplier
+      const stepsPerTick = 2 * speed;
+      for (let i = 0; i < stepsPerTick && frame < totalFrames; i++) {
+        game.stepSimulation();
+        frame++;
+      }
+
+      // Get snapshot for rendering
+      const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
+      const hud: ReplayHUD = {
+        score: game.getScore(),
+        wave: game.getWave(),
+        lives: game.getLives(),
+        frame,
+        totalFrames,
+        speed,
+        paused: false,
+      };
+
+      process.stdout.write(renderAsciiFrame(snapshot, hud, replayState));
+
+      // Wait for next display frame (constant rate regardless of speed)
+      await sleep(baseFrameTime);
     }
 
-    // Get snapshot for rendering
-    const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
-    const hud: ReplayHUD = {
-      score: game.getScore(),
-      wave: game.getWave(),
-      lives: game.getLives(),
-      frame,
-      totalFrames,
-      speed,
-    };
-
-    process.stdout.write(renderAsciiFrame(snapshot, hud, replayState));
-
-    // Wait for next display frame (constant rate regardless of speed)
-    await sleep(baseFrameTime);
+    // If we reached the end naturally (not restart/quit), break
+    if (!restart) break;
   }
 
   // Restore terminal state
@@ -108,8 +139,8 @@ export async function replayCommand(tapePath: string): Promise<void> {
   // Show final stats
   process.stdout.write(ansi.cursorShow + "\n\n");
   console.log(`${ansi.color(ansi.brightCyan, "  Replay complete")}`);
-  console.log(`  Final Score: ${ansi.color(ansi.brightGreen, String(game.getScore()))}`);
-  console.log(`  Frames: ${frame}/${totalFrames}`);
+  console.log(`  Final Score: ${ansi.color(ansi.brightGreen, String(tape.footer.finalScore))}`);
+  console.log(`  Frames: ${totalFrames}`);
   console.log("");
 }
 

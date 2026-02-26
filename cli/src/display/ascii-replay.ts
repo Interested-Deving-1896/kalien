@@ -14,6 +14,7 @@ export interface ReplayHUD {
   frame: number;
   totalFrames: number;
   speed: number; // 1, 2, or 4
+  paused: boolean;
 }
 
 interface TermExplosion {
@@ -345,7 +346,8 @@ export function renderAsciiFrame(
     `  ${ansi.color(ansi.dim, "WAVE")} ${ansi.color(ansi.white, String(Math.max(1, hud.wave)))}` +
     `  ${ansi.color(ansi.dim, "LIVES")} ${livesStr}` +
     `  ${ansi.color(ansi.dim, `${progressPct}%`)}` +
-    `  ${ansi.color(hud.speed > 1 ? ansi.brightYellow : ansi.dim, `${hud.speed}x`)}`
+    `  ${ansi.color(hud.speed > 1 ? ansi.brightYellow : ansi.dim, `${hud.speed}x`)}` +
+    (hud.paused ? `  ${ansi.color(ansi.brightYellow, "\u23f8 PAUSED")}` : "")
   );
 
   // Progress bar
@@ -384,7 +386,9 @@ export function renderAsciiFrame(
 
   // Footer legend
   lines.push(
-    ` ${ansi.color(ansi.dim, "[1]")} ${ansi.color(ansi.gray, "1x")}` +
+    ` ${ansi.color(ansi.dim, "[Space]")} ${ansi.color(ansi.gray, "Pause")}` +
+    `  ${ansi.color(ansi.dim, "[R]")} ${ansi.color(ansi.gray, "Restart")}` +
+    `  ${ansi.color(ansi.dim, "[1]")} ${ansi.color(ansi.gray, "1x")}` +
     `  ${ansi.color(ansi.dim, "[2]")} ${ansi.color(ansi.gray, "2x")}` +
     `  ${ansi.color(ansi.dim, "[4]")} ${ansi.color(ansi.gray, "4x")}` +
     `  ${ansi.color(ansi.dim, "[Esc/Q]")} ${ansi.color(ansi.gray, "Quit")}`
