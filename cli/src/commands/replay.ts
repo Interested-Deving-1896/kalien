@@ -1,0 +1,118 @@
+import { readFileSync } from "fs";
+import { AsteroidsGame } from "../../../src/game/AsteroidsGame";
+import type { GameStateSnapshot } from "../../../src/game/Autopilot";
+import { TapeInputSource } from "../../../src/game/input-source";
+import { deserializeTape } from "../../../src/game/tape";
+import { renderAsciiFrame, createReplayState, type ReplayHUD } from "../display/ascii-replay";
+import * as ansi from "../display/ansi";
+
+export async function replayCommand(tapePath: string): Promise<void> {
+  // Load tape
+  let tapeData: Uint8Array;
+  try {
+    tapeData = new Uint8Array(readFileSync(tapePath));
+  } catch (err) {
+    console.error(`Failed to read tape: ${tapePath}`);
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  const tape = deserializeTape(tapeData);
+
+  console.log(`${ansi.color(ansi.brightCyan, "KALIEN Replay")}`);
+  console.log(`  Seed:   0x${tape.header.seed.toString(16).padStart(8, "0")}`);
+  console.log(`  Frames: ${tape.header.frameCount}`);
+  console.log(`  Score:  ${tape.footer.finalScore}`);
+  console.log("");
+  console.log(`  Starting in 2s... (Ctrl+C to quit)`);
+
+  await sleep(2000);
+
+  // Set up game in replay mode
+  const game = new AsteroidsGame({ headless: true, seed: tape.header.seed });
+  game.startNewGame(tape.header.seed);
+  const inputSource = new TapeInputSource(tape.inputs);
+  game.setInputSource(inputSource);
+
+  process.stdout.write(ansi.clearScreen + ansi.cursorHide);
+
+  const replayState = createReplayState();
+  const totalFrames = tape.header.frameCount;
+  const baseFrameTime = 1000 / 30; // ~30fps at 1x
+  let frame = 0;
+  let stopped = false;
+  let speed = 1; // 1x, 2x, or 4x
+
+  // Enable raw mode for keypress detection
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on("data", (data: Buffer) => {
+      const key = data[0];
+      const str = data.toString();
+
+      if (key === 0x1b) {
+        // Esc key (but not an escape sequence like arrow keys)
+        if (data.length === 1) stopped = true;
+      } else if (str === "q" || str === "Q") {
+        stopped = true;
+      } else if (str === "1") {
+        speed = 1;
+      } else if (str === "2") {
+        speed = 2;
+      } else if (str === "4") {
+        speed = 4;
+      } else if (key === 0x03) {
+        // Ctrl+C
+        stopped = true;
+      }
+    });
+  }
+
+  process.on("SIGINT", () => {
+    stopped = true;
+  });
+
+  while (frame < totalFrames && !stopped) {
+    // Step simulation: 2 game frames per display frame at 1x,
+    // scaled by speed multiplier
+    const stepsPerTick = 2 * speed;
+    for (let i = 0; i < stepsPerTick && frame < totalFrames; i++) {
+      game.stepSimulation();
+      frame++;
+    }
+
+    // Get snapshot for rendering
+    const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
+    const hud: ReplayHUD = {
+      score: game.getScore(),
+      wave: game.getWave(),
+      lives: game.getLives(),
+      frame,
+      totalFrames,
+      speed,
+    };
+
+    process.stdout.write(renderAsciiFrame(snapshot, hud, replayState));
+
+    // Wait for next display frame (constant rate regardless of speed)
+    await sleep(baseFrameTime);
+  }
+
+  // Restore terminal state
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+  }
+
+  // Show final stats
+  process.stdout.write(ansi.cursorShow + "\n\n");
+  console.log(`${ansi.color(ansi.brightCyan, "  Replay complete")}`);
+  console.log(`  Final Score: ${ansi.color(ansi.brightGreen, String(game.getScore()))}`);
+  console.log(`  Frames: ${frame}/${totalFrames}`);
+  console.log("");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
