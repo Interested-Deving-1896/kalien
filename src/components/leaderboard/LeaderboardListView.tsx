@@ -10,25 +10,13 @@ import { formatUtcDateTime, timeAgo } from "../../time";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { StatCard, StatGrid } from "@/components/shared/StatCard";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
 import { RelativeTime } from "./RelativeTime";
-import { LeaderboardFilters } from "./LeaderboardFilters";
+import { TimeWindowPicker, RankingsSearch } from "./LeaderboardFilters";
 import { RankingsTable } from "./RankingsTable";
+import { useWalletContext } from "@/contexts/WalletContext";
 
 const AUTO_REFRESH_MS = 60_000;
-
-function windowLabel(window: LeaderboardWindow): string {
-  if (window === "10m") return "10m";
-  if (window === "day") return "24h";
-  return "All";
-}
-
-function windowSubtitle(window: LeaderboardWindow): string {
-  if (window === "10m") return "Last 10 minutes";
-  if (window === "day") return "Last 24 hours";
-  return "All-time history";
-}
 
 function toNullableTrimmed(value: string): string | null {
   const trimmed = value.trim();
@@ -36,6 +24,7 @@ function toNullableTrimmed(value: string): string | null {
 }
 
 export function LeaderboardListView() {
+  const { wallet } = useWalletContext();
   const [windowKey, setWindowKey] = useState<LeaderboardWindow>("all");
   const [offset, setOffset] = useState(0);
   const [limit] = useState(25);
@@ -145,6 +134,13 @@ export function LeaderboardListView() {
     setOffset(0);
   }, []);
 
+  const findMe = useCallback(() => {
+    if (!wallet.address) return;
+    setSearchInput(wallet.address);
+    setFindAddress(wallet.address);
+    setOffset(0);
+  }, [wallet.address]);
+
   // Derived values
   const showingStart = leaderboard
     ? Math.min(leaderboard.pagination.total, leaderboard.pagination.offset + 1)
@@ -155,7 +151,6 @@ export function LeaderboardListView() {
         leaderboard.pagination.offset + leaderboard.entries.length,
       )
     : 0;
-  const topEntry = leaderboard?.entries[0] ?? null;
   const hasHistoricalData =
     (leaderboard?.window !== "all" &&
       leaderboard?.entries.length === 0 &&
@@ -168,7 +163,7 @@ export function LeaderboardListView() {
 
   return (
     <>
-      {/* Hero Header */}
+      {/* Hero Header — mirrors Proofs page style */}
       <header className="animate-rise flex flex-col items-start justify-between gap-3 rounded-xl border border-[rgba(122,185,255,0.34)] bg-[radial-gradient(circle_at_110%_0%,rgba(102,231,196,0.12),transparent_40%),linear-gradient(160deg,rgba(7,14,25,0.8),rgba(5,11,20,0.95))] p-[clamp(0.95rem,2.6vw,1.2rem)] shadow-[0_22px_70px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.07)] sm:flex-row">
         <div>
           <h1 className="m-0 font-display text-[clamp(1.75rem,4.2vw,2.4rem)] tracking-[0.09em] uppercase [text-shadow:0_0_16px_rgba(79,196,255,0.26)]">
@@ -177,17 +172,13 @@ export function LeaderboardListView() {
           <p className="m-0 mt-1 text-[rgba(205,238,226,0.92)]">
             Rolling 10m, 24h, and all-time rankings from proved runs.
           </p>
-          <p className="m-0 mt-1 text-sm text-[rgba(186,210,241,0.92)]">
-            {leaderboard
-              ? `${windowSubtitle(leaderboard.window)} window`
-              : "Loading current ranking window"}
-          </p>
         </div>
-        <div className="grid justify-items-end gap-2">
+        <div className="flex items-center gap-2">
           {leaderboard?.ingestion?.last_synced_at ? (
             <StatusBadge
               variant={
-                Date.now() - new Date(leaderboard.ingestion.last_synced_at).getTime() < 30 * 60_000
+                Date.now() - new Date(leaderboard.ingestion.last_synced_at).getTime() <
+                30 * 60_000
                   ? "success"
                   : "muted"
               }
@@ -210,158 +201,115 @@ export function LeaderboardListView() {
         </div>
       </header>
 
-      {/* Filters */}
-      <Card className="animate-rise">
-        <LeaderboardFilters
-          windowKey={windowKey}
-          onWindowChange={(w) => {
-            setWindowKey(w);
-            setOffset(0);
-          }}
-          searchInput={searchInput}
-          onSearchChange={setSearchInput}
-          onFind={applyFind}
-          onClear={clearFind}
-          findActive={findAddress !== null}
-        />
-      </Card>
-
       <ErrorMessage message={error} />
 
-      {/* Loading skeleton */}
-      {loading && !leaderboard ? (
-        <Card className="animate-rise">
-          <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase text-[rgba(176,219,255,0.95)]">
-            Rankings
-          </h2>
-          <RankingsTable entries={[]} isLoading />
-        </Card>
-      ) : null}
+      {/* Single Rankings Card — everything lives here */}
+      <Card className="animate-rise">
+        {/* Toolbar: time picker left, search right */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TimeWindowPicker
+            windowKey={windowKey}
+            onWindowChange={(w) => {
+              setWindowKey(w);
+              setOffset(0);
+            }}
+          />
+          <RankingsSearch
+            searchInput={searchInput}
+            onSearchChange={setSearchInput}
+            onFind={applyFind}
+            onClear={clearFind}
+            onFindMe={wallet.isConnected ? findMe : null}
+            findActive={findAddress !== null}
+          />
+        </div>
 
-      {leaderboard ? (
-        <>
-          {/* Summary + KPIs */}
-          <Card className="animate-rise">
-            <div className="flex flex-wrap gap-1 gap-x-4">
-              <p className="m-0">
-                <strong>Window:</strong> {windowLabel(leaderboard.window)}
-                {" \u00b7 "}
-                <strong>Updated:</strong> <RelativeTime value={leaderboard.generated_at} />
-              </p>
-              <p className="m-0">
-                <strong>Showing:</strong> {showingStart}-{showingEnd} of{" "}
-                {leaderboard.pagination.total.toLocaleString()} players
-              </p>
-            </div>
+        {/* Your rank callout */}
+        {leaderboard?.me ? (
+          <div className="flex items-center gap-2 rounded-lg border border-secondary/25 bg-[rgba(26,108,71,0.12)] px-3 py-2">
+            <span className="text-sm text-secondary">
+              Your Rank: <strong>#{leaderboard.me.rank}</strong> ({leaderboard.me.score.toLocaleString()} pts)
+            </span>
+          </div>
+        ) : findAddress ? (
+          <div className="rounded-lg border border-border/30 bg-[rgba(8,19,34,0.5)] px-3 py-2">
+            <span className="text-sm text-muted-foreground">Address not ranked in this window.</span>
+          </div>
+        ) : null}
 
-            <StatGrid columns={4}>
-              <StatCard
-                label="Tracked Players"
-                value={leaderboard.pagination.total.toLocaleString()}
-              />
-              <StatCard
-                label="Top Score"
-                value={topEntry ? topEntry.score.toLocaleString() : "n/a"}
-              />
-              <StatCard
-                label="Event Rows"
-                value={leaderboard.ingestion?.total_events?.toLocaleString() ?? "n/a"}
-              />
-              <StatCard
-                label="Highest Ledger"
-                value={leaderboard.ingestion?.highest_ledger?.toLocaleString() ?? "n/a"}
-              />
-            </StatGrid>
-
-            {leaderboard.me ? (
-              <p className="m-0">
-                <strong>Your Rank:</strong> #{leaderboard.me.rank} (
-                {leaderboard.me.score.toLocaleString()} pts)
-              </p>
-            ) : findAddress ? (
-              <p className="m-0 text-[rgba(186,210,241,0.92)]">
-                Address not ranked in this window.
-              </p>
-            ) : null}
-
-            {hasHistoricalData ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-2.5">
-                <p className="m-0 text-[rgba(186,210,241,0.92)]">
-                  No proved runs landed in this short window. Historical rankings still exist.
-                </p>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setWindowKey("all");
-                    setOffset(0);
-                  }}
-                >
-                  Show All-Time
-                </Button>
-              </div>
-            ) : null}
-          </Card>
-
-          {/* Rankings Table */}
-          <Card className="animate-rise">
-            <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase text-[rgba(176,219,255,0.95)]">
-              Rankings
-            </h2>
-            <p className="m-0 text-[rgba(186,210,241,0.92)]">
-              Rankings show one row per claimant (their best proved run in this window). Minted is
-              the token delta minted for that specific submission.
+        {/* Historical data nudge */}
+        {hasHistoricalData ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] px-3 py-2">
+            <p className="m-0 text-sm text-[rgba(186,210,241,0.92)]">
+              No proved runs landed in this short window. Historical rankings still exist.
             </p>
-            {isEmptyAllTime ? (
-              <div className="grid justify-items-center gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-6 text-center">
-                <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs yet.</p>
-                <p className="m-0 text-[rgba(186,210,241,0.92)]">
-                  Play the game and prove your score to appear here.
-                </p>
-                <Button variant="active" asChild>
-                  <a href="/" className="no-underline">
-                    Play Now
-                  </a>
-                </Button>
-              </div>
-            ) : leaderboard.entries.length === 0 ? (
-              <p className="m-0 text-[rgba(186,210,241,0.92)]">
-                No proved runs in this window yet.
-              </p>
-            ) : (
-              <RankingsTable
-                entries={leaderboard.entries}
-                highlightAddress={leaderboard.me?.claimantAddress}
-              />
-            )}
+            <Button
+              size="sm"
+              onClick={() => {
+                setWindowKey("all");
+                setOffset(0);
+              }}
+            >
+              Show All-Time
+            </Button>
+          </div>
+        ) : null}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                onClick={() => setOffset((current) => Math.max(0, current - limit))}
-                disabled={leaderboard.pagination.offset === 0 || loading}
-              >
-                <ChevronLeft className="size-3.5" />
-                Previous
-              </Button>
-              <span className="text-sm tabular-nums text-[rgba(186,210,241,0.92)]">
-                {showingStart}-{showingEnd} of {leaderboard.pagination.total.toLocaleString()}
-              </span>
-              <Button
-                size="sm"
-                onClick={() => {
-                  if (leaderboard.pagination.next_offset !== null) {
-                    setOffset(leaderboard.pagination.next_offset);
-                  }
-                }}
-                disabled={leaderboard.pagination.next_offset === null || loading}
-              >
-                Next
-                <ChevronRight className="size-3.5" />
-              </Button>
-            </div>
-          </Card>
-        </>
-      ) : null}
+        {/* Table or empty states */}
+        {loading && !leaderboard ? (
+          <RankingsTable entries={[]} isLoading />
+        ) : isEmptyAllTime ? (
+          <div className="grid justify-items-center gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-6 text-center">
+            <p className="m-0 text-[rgba(186,210,241,0.92)]">No proved runs yet.</p>
+            <p className="m-0 text-[rgba(186,210,241,0.92)]">
+              Play the game and prove your score to appear here.
+            </p>
+            <Button variant="active" asChild>
+              <a href="/" className="no-underline">
+                Play Now
+              </a>
+            </Button>
+          </div>
+        ) : leaderboard && leaderboard.entries.length === 0 ? (
+          <p className="m-0 text-[rgba(186,210,241,0.92)]">
+            No proved runs in this window yet.
+          </p>
+        ) : leaderboard ? (
+          <RankingsTable
+            entries={leaderboard.entries}
+            highlightAddress={leaderboard.me?.claimantAddress}
+          />
+        ) : null}
+
+        {/* Pagination */}
+        {leaderboard && leaderboard.entries.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => setOffset((current) => Math.max(0, current - limit))}
+              disabled={leaderboard.pagination.offset === 0 || loading}
+            >
+              <ChevronLeft className="size-3.5" />
+              Previous
+            </Button>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {showingStart}&ndash;{showingEnd} of {leaderboard.pagination.total.toLocaleString()}
+            </span>
+            <Button
+              size="sm"
+              onClick={() => {
+                if (leaderboard.pagination.next_offset !== null) {
+                  setOffset(leaderboard.pagination.next_offset);
+                }
+              }}
+              disabled={leaderboard.pagination.next_offset === null || loading}
+            >
+              Next
+              <ChevronRight className="size-3.5" />
+            </Button>
+          </div>
+        )}
+      </Card>
     </>
   );
 }

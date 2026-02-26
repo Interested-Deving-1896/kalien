@@ -15,7 +15,7 @@ ZK/Stellar integration.
 | `06-IMPLEMENTATION-STATUS.md` | Current implementation state and gaps |
 | `07-TESTING-AND-OPERATIONS.md` | Test strategy and operational defaults |
 | `08-SOURCES.md` | Curated source list used to derive this spec |
-| `09-SCORE-TOKEN-CONTRACT.md` | Soroban score-submission and token minting contract spec |
+| `09-SCORE-TOKEN-CONTRACT.md` | Soroban score-submission and KALIEN token minting contract spec |
 | `10-PROOF-GATEWAY-SPEC.md` | Cloudflare Worker + prover gateway behavior and API contract |
 | `11-CLIENT-INTEGRATION-SPEC.md` | Frontend wallet/proof/claim integration contract |
 | `12-GUEST-OPTIMIZATION.md` | RISC0 guest and proving optimization notes |

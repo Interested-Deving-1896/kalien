@@ -62,7 +62,7 @@ export function PlayerCard({ player }: PlayerCardProps) {
       <StatGrid columns={4}>
         <StatCard label="Total Runs" value={player.stats.total_runs.toLocaleString()} />
         <StatCard label="Best Score" value={player.stats.best_score.toLocaleString()} />
-        <StatCard label="Total Minted" value={formatMetric(player.stats.total_minted)} />
+        <StatCard label="Total KALIEN" value={formatMetric(player.stats.total_minted)} />
         <StatCard
           label="Last Played"
           value={<RelativeTime value={player.stats.last_played_at} />}

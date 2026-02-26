@@ -77,7 +77,7 @@ export function WalletConnect({
     >
       <CardHeader className="flex-col items-start gap-1">
         <CardTitle className="text-base">Create Your Account</CardTitle>
-        <CardDescription>Create a free account to prove scores and earn tokens</CardDescription>
+        <CardDescription>Create a free account to prove scores and earn KALIEN</CardDescription>
       </CardHeader>
 
       <div className="grid gap-3">

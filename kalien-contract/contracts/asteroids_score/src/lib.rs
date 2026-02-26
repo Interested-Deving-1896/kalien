@@ -74,11 +74,11 @@ impl AsteroidsScoreContract {
         extend_instance_ttl(&env);
     }
 
-    /// Verify a RISC Zero proof and mint score tokens to the claimant address.
+    /// Verify a RISC Zero proof and mint KALIEN tokens to the claimant address.
     ///
     /// - `seal`: variable-length proof seal bytes
     /// - `journal_raw`: raw 24-byte journal bytes (6 × u32 LE)
-    /// - `claimant`: recipient address for token minting and best-score tracking
+    /// - `claimant`: recipient address for KALIEN minting and best-score tracking
     ///
     /// Returns the claimant's new best score for this seed.
     pub fn submit_score(

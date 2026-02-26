@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  cancelProofJob,
   getProofJob,
   isTerminalProofStatus,
   ProofApiError,
@@ -27,7 +26,6 @@ export interface UseProofJobReturn {
   error: string | null;
   friendlyStatus: string;
   submitRun: (run: CompletedGameRun, claimantAddress: string) => Promise<boolean>;
-  cancel: () => Promise<void>;
   clearError: () => void;
   setError: (message: string) => void;
   clearIfTerminal: () => void;
@@ -81,7 +79,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
         return false;
       }
       if (run.record.finalScore <= 0) {
-        setError("zero-score runs are not accepted for proving or token minting");
+        setError("zero-score runs are not accepted for proving or earning KALIEN");
         return false;
       }
       if (claimantAddress.trim().length === 0) {
@@ -126,21 +124,6 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     },
     [],
   );
-
-  const cancel = useCallback(async () => {
-    if (!job || isTerminalProofStatus(job.status)) {
-      return;
-    }
-
-    try {
-      const response = await cancelProofJob(job.jobId);
-      setJob(response.job);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "failed to cancel job";
-      setError(message);
-    }
-  }, [job]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -238,7 +221,6 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     error,
     friendlyStatus,
     submitRun,
-    cancel,
     clearError,
     setError: setErrorExposed,
     clearIfTerminal,

@@ -300,7 +300,7 @@ ledger timestamp, and tx hash.
 
 ### Game Panel Gating
 - Game playable without wallet (tape capture still works)
-- "Connect wallet to claim scores" prompt on game-over without wallet
+- "Connect wallet to earn KALIEN" prompt on game-over without wallet
 - Proof submission to worker requires wallet (claimant address is mandatory)
 
 ---

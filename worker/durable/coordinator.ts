@@ -892,6 +892,22 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return job;
     }
 
+    // If a prior attempt already recorded a txHash the transaction landed
+    // on-chain. Promote to succeeded rather than marking failed.
+    if (job.claim.txHash) {
+      console.log("[coordinator] claim has txHash — promoting to succeeded instead of failed", {
+        jobId,
+        txHash: job.claim.txHash,
+        reason,
+      });
+      job.claim.status = "succeeded";
+      job.claim.lastError = null;
+      job.claim.nextRetryAt = null;
+      job.updatedAt = nowIso();
+      await this.saveJob(job);
+      return job;
+    }
+
     job.claim.status = "failed";
     job.claim.lastError = reason;
     job.claim.nextRetryAt = null;

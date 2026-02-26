@@ -1,15 +1,19 @@
-import { Search, X } from "lucide-react";
+import { Search, X, User } from "lucide-react";
 import type { LeaderboardWindow } from "./api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export interface LeaderboardFiltersProps {
+export interface TimeWindowPickerProps {
   windowKey: LeaderboardWindow;
   onWindowChange: (w: LeaderboardWindow) => void;
+}
+
+export interface RankingsSearchProps {
   searchInput: string;
   onSearchChange: (v: string) => void;
   onFind: () => void;
   onClear: () => void;
+  onFindMe: (() => void) | null;
   findActive: boolean;
 }
 
@@ -19,77 +23,72 @@ const WINDOWS: { key: LeaderboardWindow; label: string }[] = [
   { key: "all", label: "All Time" },
 ];
 
-export function LeaderboardFilters({
-  windowKey,
-  onWindowChange,
+export function TimeWindowPicker({ windowKey, onWindowChange }: TimeWindowPickerProps) {
+  return (
+    <div
+      className="inline-flex w-fit flex-wrap gap-0.5 rounded-full border border-[rgba(99,156,226,0.37)] bg-[rgba(11,20,34,0.7)] p-0.5"
+      role="group"
+      aria-label="Time window selector"
+    >
+      {WINDOWS.map((w) => (
+        <Button
+          key={w.key}
+          variant={w.key === windowKey ? "active" : "ghost"}
+          size="sm"
+          className="rounded-full px-4"
+          onClick={() => onWindowChange(w.key)}
+          aria-pressed={w.key === windowKey}
+        >
+          {w.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+export function RankingsSearch({
   searchInput,
   onSearchChange,
   onFind,
   onClear,
+  onFindMe,
   findActive,
-}: LeaderboardFiltersProps) {
+}: RankingsSearchProps) {
   return (
-    <div className="animate-rise grid gap-4">
-      {/* Time Period */}
-      <div className="grid gap-1.5">
-        <span className="font-display text-xs tracking-[0.08em] uppercase text-[rgba(176,202,237,0.92)]">
-          Time Period
-        </span>
-        <div
-          className="inline-flex w-fit flex-wrap gap-0.5 rounded-full border border-[rgba(99,156,226,0.37)] bg-[rgba(11,20,34,0.7)] p-0.5"
-          role="group"
-          aria-label="Time window selector"
-        >
-          {WINDOWS.map((w) => (
-            <Button
-              key={w.key}
-              variant={w.key === windowKey ? "active" : "ghost"}
-              size="sm"
-              className="rounded-full px-4"
-              onClick={() => onWindowChange(w.key)}
-              aria-pressed={w.key === windowKey}
-            >
-              {w.label}
-            </Button>
-          ))}
-        </div>
+    <form
+      className="flex items-center gap-1.5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onFind();
+      }}
+    >
+      {onFindMe && !findActive && (
+        <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={onFindMe}>
+          <User className="size-3.5" />
+          Find Me
+        </Button>
+      )}
+      {findActive && (
+        <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={onClear}>
+          <X className="size-3.5" />
+          Clear
+        </Button>
+      )}
+      <div className="relative min-w-0 flex-1">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="text"
+          value={searchInput}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Search by address..."
+          aria-label="Search for a player address"
+          className="h-8 pl-8 text-xs"
+        />
       </div>
-
-      {/* Search Players */}
-      <div className="grid gap-1.5">
-        <span className="font-display text-xs tracking-[0.08em] uppercase text-[rgba(176,202,237,0.92)]">
-          Search Players
-        </span>
-        <form
-          className="flex flex-col gap-2 sm:flex-row"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onFind();
-          }}
-        >
-          <div className="relative flex-1 sm:min-w-[260px]">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              value={searchInput}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="Address (G... or C...)"
-              aria-label="Search for a player address"
-              className="pl-8"
-            />
-          </div>
-          <Button type="submit" size="sm">
-            <Search className="size-3.5" />
-            Find
-          </Button>
-          {findActive ? (
-            <Button size="sm" onClick={onClear}>
-              <X className="size-3.5" />
-              Clear
-            </Button>
-          ) : null}
-        </form>
-      </div>
-    </div>
+      <Button type="submit" size="sm" className="shrink-0">
+        <Search className="size-3.5" />
+        Find
+      </Button>
+    </form>
   );
 }

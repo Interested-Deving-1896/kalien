@@ -16,7 +16,7 @@ export function LeaderboardPage() {
   const playerAddress = useMemo(() => getPlayerAddressFromPath(pathname), [pathname]);
 
   return (
-    <PageShell glow>
+    <PageShell glow className="content-start">
       {playerAddress ? (
         <LeaderboardPlayerView playerAddress={playerAddress} />
       ) : (

@@ -86,24 +86,24 @@ Switch all Stellar references from testnet to mainnet.
 
 ---
 
-## 3. Score Token Deployment
+## 3. KALIEN Token Deployment
 
-Deploy the SCORE token on mainnet and configure minting authority.
+Deploy the KALIEN token on mainnet and configure minting authority.
 
 - [ ] **Create the mainnet issuer account** with enough XLM for reserves.
-      This account will issue the SCORE Stellar Asset Contract (SAC) token.
+      This account will issue the KALIEN Stellar Asset Contract (SAC) token.
 - [ ] **Deploy the SAC token** on mainnet. The testnet script
-      (`deploy-and-test.sh:176-200`) creates an asset `SCORE:<issuer>` and wraps
+      (`deploy-and-test.sh:176-200`) creates an asset `KALIEN:<issuer>` and wraps
       it as a Soroban SAC. Replicate this for mainnet:
       ```bash
       # Create the asset issuer
-      stellar keys generate --global score-issuer --network mainnet --fund
-      ISSUER_ADDR=$(stellar keys address score-issuer)
+      stellar keys generate --global kalien-issuer --network mainnet --fund
+      ISSUER_ADDR=$(stellar keys address kalien-issuer)
 
       # Deploy the SAC
       stellar contract asset deploy \
-        --asset "SCORE:$ISSUER_ADDR" \
-        --source score-issuer \
+        --asset "KALIEN:$ISSUER_ADDR" \
+        --source kalien-issuer \
         --network mainnet
       ```
 - [ ] **Record the mainnet TOKEN_ID** (SAC contract address) — you'll need it
@@ -113,18 +113,18 @@ Deploy the SCORE token on mainnet and configure minting authority.
       ```bash
       stellar contract invoke \
         --id $TOKEN_ID \
-        --source score-issuer \
+        --source kalien-issuer \
         --network mainnet \
         -- set_admin --new_admin $SCORE_CONTRACT_ID
       ```
-- [ ] **Verify minting works** by submitting a real proof and confirming token
+- [ ] **Verify minting works** by submitting a real proof and confirming KALIEN
       balance increases for the player.
 - [ ] **Consider token metadata**: name, symbol, decimals. SAC tokens inherit
-      these from the classic asset. "SCORE" is 12 characters max, 0 decimals
+      these from the classic asset. "KALIEN" is 6 characters, 0 decimals
       (since scores are integers).
 - [ ] **Decide on token supply governance**: Is there a max supply? Should
       minting be uncapped or should the contract enforce a ceiling? Currently
-      there is no cap — every valid proof mints `final_score` tokens.
+      there is no cap — every valid proof mints `final_score` KALIEN.
 
 ---
 

@@ -8,6 +8,17 @@ import { submitToProver } from "../prover/client";
 import type { ClaimQueueMessage, ProofQueueMessage, ProofJournal } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
 
+/**
+ * Returns true when a fatal claim error actually indicates the score was
+ * already submitted on-chain by a prior attempt. The contract rejects
+ * duplicate journals ("already claimed") and non-improving scores ("score not
+ * improved"), both of which prove the claim landed previously.
+ */
+function isAlreadyClaimedOnChain(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("already claimed") || m.includes("score not improved");
+}
+
 function journalRawHex(journal: ProofJournal): string {
   const buf = new Uint8Array(24);
   const view = new DataView(buf.buffer);
@@ -282,6 +293,18 @@ async function processClaimQueueMessage(
     type: relayResult.type,
     message: relayResult.message,
   });
+
+  // Contract rejections like "already claimed" or "score not improved" mean a
+  // prior attempt actually landed on-chain. Treat as success rather than failure.
+  if (isAlreadyClaimedOnChain(relayResult.message)) {
+    console.log("[claim-queue] fatal error indicates prior on-chain success", {
+      jobId: payload.jobId,
+    });
+    await coordinator.markClaimSucceeded(payload.jobId, "prior-attempt");
+    message.ack();
+    return;
+  }
+
   await coordinator.markClaimFailed(payload.jobId, relayResult.message);
   message.ack();
 }
@@ -384,9 +407,22 @@ export async function handleClaimDlqBatch(
 
     const coordinator = coordinatorStub(env);
     const job = await coordinator.getJob(payload.jobId);
-    const priorError = job?.claim.lastError?.trim();
+    const priorError = job?.claim.lastError?.trim() ?? "";
+
+    // If the last error indicates the claim already landed on-chain via a
+    // prior attempt, treat this as success rather than failure.
+    if (priorError.length > 0 && isAlreadyClaimedOnChain(priorError)) {
+      console.log("[claim-dlq] prior error indicates on-chain success", {
+        jobId: payload.jobId,
+        priorError,
+      });
+      await coordinator.markClaimSucceeded(payload.jobId, "prior-attempt");
+      message.ack();
+      continue;
+    }
+
     const dlqMessage =
-      priorError && priorError.length > 0
+      priorError.length > 0
         ? `${priorError} (dead-letter)`
         : "claim submission failed: all queue delivery attempts exhausted (dead-letter)";
     await coordinator.markClaimFailed(payload.jobId, dlqMessage);

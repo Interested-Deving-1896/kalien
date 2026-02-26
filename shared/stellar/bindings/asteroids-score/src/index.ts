@@ -98,7 +98,7 @@ export interface Client {
 
   /**
    * Construct and simulate a submit_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Verify a RISC Zero proof and mint score tokens to the claimant address.
+   * Verify a RISC Zero proof and mint KALIEN tokens to the claimant address.
    * 
    * - `seal`: variable-length proof seal bytes
    * - `journal_raw`: raw 24-byte journal bytes (6 × u32 LE)

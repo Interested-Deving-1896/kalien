@@ -6,14 +6,14 @@ Soroban contract that:
 1. Accepts a RISC Zero proof payload for a replayed Asteroids tape.
 2. Verifies it through the RISC Zero router contract on Stellar.
 3. Extracts the proven score from committed journal bytes.
-4. Mints score-denominated tokens to the claimant.
+4. Mints KALIEN tokens to the claimant.
 
 ## On-Chain Components
 
 - **RISC Zero Router** contract — verification dispatch
 - **Groth16 verifier** contract — proof check (called by router)
 - **Asteroids score** contract — application logic (`AsteroidsScoreContract`)
-- **Score token** — Stellar Asset Contract (SAC) wrapping a classic asset
+- **KALIEN token** — Stellar Asset Contract (SAC) wrapping a classic asset
 
 ## Contract Storage
 
@@ -99,7 +99,7 @@ trusts its own stored image ID rather than accepting one from the caller.
 |--------|-------|-------|
 | 0..4 | `seed` | Game RNG seed |
 | 4..8 | `frame_count` | Total frames played |
-| 8..12 | `final_score` | Score minted as tokens |
+| 8..12 | `final_score` | Score minted as KALIEN |
 | 12..16 | `final_rng_state` | RNG state at game end |
 | 16..20 | `tape_checksum` | CRC-32 of tape (unused by contract) |
 | 20..24 | `rules_digest` | Must be `0x4153_5433` ("AST3") |
@@ -131,7 +131,7 @@ struct ScoreSubmitted {
 
 ## Token Model
 
-The token is a **Stellar Asset Contract** (SAC) wrapping a classic Stellar
+The KALIEN token is a **Stellar Asset Contract** (SAC) wrapping a classic Stellar
 asset. The contract calls `StellarAssetClient::mint()` to mint only the
 improvement delta (`new_best - previous_best`) for a claimant+seed. The SAC
 admin must be set to the score contract address (or a shared admin that

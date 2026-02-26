@@ -1,4 +1,4 @@
-import { Shield, Loader2, PartyPopper, XCircle } from "lucide-react";
+import { Shield, Loader2, PartyPopper, XCircle, ExternalLink, Gamepad2 } from "lucide-react";
 import type { ProofJobStatus } from "@/proof/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ export interface ProofProgressProps {
   error: string | null;
   elapsedMs?: number;
   verifiedScore?: number;
-  onCancel: () => void;
+  onPlayAgain?: () => void;
   onSubmitOnChain?: () => void;
   canSubmitOnChain?: boolean;
   claimStatus?: "idle" | "submitting" | "succeeded" | "failed";
@@ -51,7 +51,7 @@ export function ProofProgress({
   error,
   elapsedMs,
   verifiedScore,
-  onCancel,
+  onPlayAgain,
   onSubmitOnChain,
   canSubmitOnChain,
   claimStatus = "idle",
@@ -155,35 +155,48 @@ export function ProofProgress({
       {/* Error display */}
       <ErrorMessage message={error} />
 
-      {/* Action buttons */}
-      <div className="flex flex-wrap items-center gap-2">
-        {/* Cancel during active proof */}
-        {isBusy && (
-          <Button variant="ghost" size="sm" onClick={onCancel} aria-label="Cancel proof">
-            Cancel
-          </Button>
-        )}
-
-        {/* Submit on-chain after proof succeeds */}
-        {isSucceeded && hasResult && onSubmitOnChain && claimStatus !== "succeeded" && (
-          <Button
-            variant="active"
-            size="default"
-            onClick={onSubmitOnChain}
-            disabled={!canSubmitOnChain}
-            aria-label="Submit score on-chain to earn tokens"
-          >
-            {claimStatus === "submitting" ? (
-              <>
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                Submitting...
-              </>
-            ) : (
-              "Earn Tokens"
+      {/* Hint + navigation during active proof */}
+      {isBusy && (
+        <>
+          <p className="m-0 text-xs text-muted-foreground">
+            This can take a while. Feel free to play again or check your pending proofs.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {onPlayAgain && (
+              <Button variant="ghost" size="sm" onClick={onPlayAgain}>
+                <Gamepad2 className="size-3.5" aria-hidden="true" />
+                Play Again
+              </Button>
             )}
-          </Button>
-        )}
-      </div>
+            <Button variant="ghost" size="sm" asChild>
+              <a href="/proofs" className="no-underline">
+                <ExternalLink className="size-3.5" aria-hidden="true" />
+                View Proofs
+              </a>
+            </Button>
+          </div>
+        </>
+      )}
+
+      {/* Submit on-chain after proof succeeds */}
+      {isSucceeded && hasResult && onSubmitOnChain && claimStatus !== "succeeded" && (
+        <Button
+          variant="active"
+          size="default"
+          onClick={onSubmitOnChain}
+          disabled={!canSubmitOnChain}
+          aria-label="Submit score on-chain to earn KALIEN"
+        >
+          {claimStatus === "submitting" ? (
+            <>
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              Submitting...
+            </>
+          ) : (
+            "Earn KALIEN"
+          )}
+        </Button>
+      )}
     </Card>
   );
 }

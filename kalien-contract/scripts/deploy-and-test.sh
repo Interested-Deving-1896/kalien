@@ -154,15 +154,15 @@ deploy() {
   read_image_id
   info "Image ID: $IMAGE_ID_HEX"
 
-  # Deploy SAC token (SCORE token)
-  info "Deploying SCORE token (Stellar Asset Contract)..."
+  # Deploy SAC token (KALIEN token)
+  info "Deploying KALIEN token (Stellar Asset Contract)..."
   local token_output
   token_output=$(stellar contract asset deploy \
-    --asset "SCORE:$DEPLOYER_ADDR" \
+    --asset "KALIEN:$DEPLOYER_ADDR" \
     --source "$DEPLOYER_NAME" \
     --network "$NETWORK" 2>&1) || {
     token_output=$(stellar contract id asset \
-      --asset "SCORE:$DEPLOYER_ADDR" \
+      --asset "KALIEN:$DEPLOYER_ADDR" \
       --network "$NETWORK" 2>&1)
   }
   TOKEN_ID=$(echo "$token_output" | grep -oE '^C[A-Z0-9]{55}$' | tail -1)
@@ -195,11 +195,11 @@ deploy() {
     --new_admin "$SCORE_CONTRACT_ID" >/dev/null 2>&1
   ok "Token admin transferred"
 
-  # Player needs a trustline to hold the SCORE token
-  info "Creating SCORE trustline for player..."
+  # Player needs a trustline to hold the KALIEN token
+  info "Creating KALIEN trustline for player..."
   stellar tx new change-trust \
     --source "$PLAYER_NAME" \
-    --line "SCORE:$DEPLOYER_ADDR" \
+    --line "KALIEN:$DEPLOYER_ADDR" \
     --network "$NETWORK" >/dev/null 2>&1
   ok "Player trustline created"
 
