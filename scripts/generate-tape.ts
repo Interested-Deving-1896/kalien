@@ -17,7 +17,7 @@ import { deserializeTape } from "../src/game/tape";
 const DEFAULT_MAX_FRAMES = 36_000;
 
 // Parse arguments
-let seed = Date.now();
+let seed = Math.floor(Date.now() / 1000 / 600);
 let maxFrames = DEFAULT_MAX_FRAMES; // ~5 minutes
 let outputPath = "";
 
