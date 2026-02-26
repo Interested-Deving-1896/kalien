@@ -6,7 +6,21 @@ mock.module("cloudflare:workers", () => ({
 }));
 
 const { asPublicJob } = await import("../../worker/durable/coordinator");
-import type { ProofJobRecord } from "../../worker/types";
+import type { ProofJobRecord, ProverAttempt } from "../../worker/types";
+
+function makeAttempt(overrides: Partial<ProverAttempt> = {}): ProverAttempt {
+  return {
+    index: 0,
+    backend: "boundless",
+    startedAt: "2026-01-01T00:00:30.000Z",
+    endedAt: "2026-01-01T00:01:00.000Z",
+    outcome: "success",
+    error: null,
+    proverJobId: "req-0x1234",
+    statusUrl: "boundless:0x1234",
+    ...overrides,
+  };
+}
 
 function makeJob(overrides: Partial<ProofJobRecord> = {}): ProofJobRecord {
   return {
@@ -41,6 +55,7 @@ function makeJob(overrides: Partial<ProofJobRecord> = {}): ProofJobRecord {
       pollingErrors: 0,
       recoveryAttempts: 0,
     },
+    proverAttempts: [makeAttempt()],
     result: {
       artifactKey: "proof-jobs/job-1/result.json",
       summary: {
@@ -105,6 +120,57 @@ describe("coordinator helpers", () => {
       const job = makeJob({ result: null });
       const publicJob = asPublicJob(job);
       expect(publicJob.result).toBeNull();
+    });
+
+    it("includes proverAttempts array", () => {
+      const attempts = [
+        makeAttempt({ index: 0, backend: "boundless", outcome: "failed", error: "timeout" }),
+        makeAttempt({ index: 1, backend: "vast", outcome: "success", error: null }),
+      ];
+      const job = makeJob({ proverAttempts: attempts });
+      const publicJob = asPublicJob(job);
+      expect(publicJob.proverAttempts).toHaveLength(2);
+      expect(publicJob.proverAttempts[0].backend).toBe("boundless");
+      expect(publicJob.proverAttempts[0].outcome).toBe("failed");
+      expect(publicJob.proverAttempts[1].backend).toBe("vast");
+      expect(publicJob.proverAttempts[1].outcome).toBe("success");
+    });
+
+    it("synthesizes a proverAttempts entry from prover data for legacy records", () => {
+      // Simulate a legacy record that lacks the proverAttempts field but has prover tracking
+      const job = makeJob();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (job as any).proverAttempts;
+      const publicJob = asPublicJob(job);
+      // Should synthesize one attempt from the prover tracking data
+      expect(publicJob.proverAttempts).toHaveLength(1);
+      expect(publicJob.proverAttempts[0].index).toBe(0);
+      expect(publicJob.proverAttempts[0].proverJobId).toBe("prover-job-1");
+      expect(publicJob.proverAttempts[0].outcome).toBe("success"); // job.status === "succeeded"
+      expect(publicJob.proverAttempts[0].backend).toBe("vast"); // statusUrl doesn't start with "boundless:"
+    });
+
+    it("returns empty array for legacy records with no prover job assigned", () => {
+      // If neither proverAttempts nor prover.jobId exist, return []
+      const job = makeJob({ proverAttempts: [] });
+      job.prover.jobId = null;
+      job.prover.statusUrl = null;
+      const publicJob = asPublicJob(job);
+      expect(publicJob.proverAttempts).toEqual([]);
+    });
+
+    it("preserves in_progress attempt (currently running)", () => {
+      const attempt = makeAttempt({
+        index: 0,
+        backend: "boundless",
+        outcome: "in_progress",
+        endedAt: null,
+        error: null,
+      });
+      const job = makeJob({ proverAttempts: [attempt] });
+      const publicJob = asPublicJob(job);
+      expect(publicJob.proverAttempts[0].outcome).toBe("in_progress");
+      expect(publicJob.proverAttempts[0].endedAt).toBeNull();
     });
   });
 });
