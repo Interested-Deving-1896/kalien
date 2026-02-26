@@ -291,6 +291,10 @@ async function ensureSchema(env: WorkerEnv): Promise<void> {
           link_url TEXT,
           updated_at TEXT NOT NULL
         )`,
+        `CREATE TABLE IF NOT EXISTS proof_tape_index (
+          tx_hash TEXT PRIMARY KEY,
+          proof_job_id TEXT NOT NULL
+        )`,
         `CREATE TABLE IF NOT EXISTS leaderboard_profile_credentials (
           credential_id TEXT PRIMARY KEY,
           claimant_address TEXT NOT NULL,
@@ -893,6 +897,23 @@ export async function purgeExpiredLeaderboardProfileAuthChallenges(
     .run();
 }
 
+export async function writeProofTapeMapping(
+  env: WorkerEnv,
+  txHash: string,
+  proofJobId: string,
+): Promise<void> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  await db
+    .prepare(
+      `INSERT INTO proof_tape_index (tx_hash, proof_job_id)
+       VALUES (?, ?)
+       ON CONFLICT(tx_hash) DO UPDATE SET proof_job_id = excluded.proof_job_id`,
+    )
+    .bind(txHash, proofJobId)
+    .run();
+}
+
 function windowWhereClause(window: LeaderboardWindow): string {
   return window === "all" ? "" : "WHERE closed_at >= ?";
 }
@@ -962,6 +983,7 @@ function mapRankedEntry(row: Record<string, unknown>): {
   completedAt: string;
   claimStatus: "succeeded";
   claimTxHash: string | null;
+  proofJobId: string | null;
   profile: PlayerProfileRecord | null;
 } {
   const profileUpdatedAt = toNullableString(row.profile_updated_at);
@@ -982,6 +1004,7 @@ function mapRankedEntry(row: Record<string, unknown>): {
     completedAt: String(row.completed_at),
     claimStatus: "succeeded",
     claimTxHash: toNullableString(row.claim_tx_hash),
+    proofJobId: toNullableString(row.proof_job_id),
     profile:
       profileUpdatedAt || profileUsername || profileLinkUrl
         ? {
@@ -1047,12 +1070,15 @@ export async function getLeaderboardPage(
          ranked.rules_digest AS rules_digest,
          ranked.closed_at AS completed_at,
          ranked.tx_hash AS claim_tx_hash,
+         t.proof_job_id AS proof_job_id,
          p.username AS profile_username,
          p.link_url AS profile_link_url,
          p.updated_at AS profile_updated_at
        FROM ranked
        LEFT JOIN leaderboard_profiles AS p
          ON p.claimant_address = ranked.claimant_address
+       LEFT JOIN proof_tape_index AS t
+         ON t.tx_hash = ranked.tx_hash
        ORDER BY ranked.rank ASC
        LIMIT ? OFFSET ?`,
     )
@@ -1079,12 +1105,15 @@ export async function getLeaderboardPage(
            ranked.rules_digest AS rules_digest,
            ranked.closed_at AS completed_at,
            ranked.tx_hash AS claim_tx_hash,
+           t.proof_job_id AS proof_job_id,
            p.username AS profile_username,
            p.link_url AS profile_link_url,
            p.updated_at AS profile_updated_at
          FROM ranked
          LEFT JOIN leaderboard_profiles AS p
            ON p.claimant_address = ranked.claimant_address
+         LEFT JOIN proof_tape_index AS t
+           ON t.tx_hash = ranked.tx_hash
          WHERE ranked.claimant_address = ?
          LIMIT 1`,
       )
@@ -1167,6 +1196,7 @@ export async function getLeaderboardPlayer(
     completedAt: string;
     claimStatus: "succeeded";
     claimTxHash: string | null;
+    proofJobId: string | null;
   }>;
   runsPagination: {
     limit: number;
@@ -1206,20 +1236,23 @@ export async function getLeaderboardPlayer(
     db
       .prepare(
         `SELECT
-           event_id AS job_id,
-           claimant_address,
-           new_best AS score,
-           minted_delta AS minted_delta,
-           seed,
-           frame_count AS frame_count,
-           final_rng_state AS final_rng_state,
-           tape_checksum AS tape_checksum,
-           rules_digest AS rules_digest,
-           closed_at AS completed_at,
-           tx_hash AS claim_tx_hash
-         FROM leaderboard_events
-         WHERE claimant_address = ?
-         ORDER BY closed_at DESC, new_best DESC, event_id ASC
+           e.event_id AS job_id,
+           e.claimant_address,
+           e.new_best AS score,
+           e.minted_delta AS minted_delta,
+           e.seed,
+           e.frame_count AS frame_count,
+           e.final_rng_state AS final_rng_state,
+           e.tape_checksum AS tape_checksum,
+           e.rules_digest AS rules_digest,
+           e.closed_at AS completed_at,
+           e.tx_hash AS claim_tx_hash,
+           t.proof_job_id AS proof_job_id
+         FROM leaderboard_events AS e
+         LEFT JOIN proof_tape_index AS t
+           ON t.tx_hash = e.tx_hash
+         WHERE e.claimant_address = ?
+         ORDER BY e.closed_at DESC, e.new_best DESC, e.event_id ASC
          LIMIT ? OFFSET ?`,
       )
       .bind(claimantAddress, runsLimit, runsOffset)
@@ -1251,6 +1284,7 @@ export async function getLeaderboardPlayer(
     completedAt: String(row.completed_at),
     claimStatus: "succeeded" as const,
     claimTxHash: toNullableString(row.claim_tx_hash),
+    proofJobId: toNullableString(row.proof_job_id),
   }));
 
   const totalRuns = toNumber(statsRow?.total_runs, 0);

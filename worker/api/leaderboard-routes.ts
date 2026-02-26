@@ -625,6 +625,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       db.prepare("DELETE FROM leaderboard_profile_credentials"),
       db.prepare("DELETE FROM leaderboard_profile_auth_challenges"),
       db.prepare("DELETE FROM leaderboard_ingestion_state"),
+      db.prepare("DELETE FROM proof_tape_index"),
     ]);
     return c.json({ success: true, message: "all leaderboard data cleared" });
   });
@@ -698,6 +699,27 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       updated: result.updated,
       profiles: profileCount,
     });
+  });
+
+  // DEV-ONLY: Backfill proof_tape_index from coordinator's succeeded jobs
+  router.post("/dev/backfill-tape-index", async (c) => {
+    const { coordinatorStub } = await import("../durable/coordinator");
+    const { writeProofTapeMapping } = await import("../leaderboard-store");
+    try {
+      const coordinator = coordinatorStub(c.env);
+      const jobs = await coordinator.listSucceededJobs();
+      let count = 0;
+      for (const job of jobs) {
+        if (job.claim.txHash && job.claim.txHash !== "prior-attempt") {
+          await writeProofTapeMapping(c.env, job.claim.txHash, job.jobId);
+          count++;
+        }
+      }
+      return c.json({ success: true, mappings_written: count, total_jobs: jobs.length });
+    } catch (error) {
+      console.error(`[leaderboard] backfill-tape-index error: ${safeErrorMessage(error)}`);
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
   });
 
   return router;
