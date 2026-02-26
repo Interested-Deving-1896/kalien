@@ -91,8 +91,10 @@ export interface BoundlessClientConfig {
   imageUrl: string;
   /** 0x-prefixed 32-byte image ID */
   imageId: `0x${string}`;
-  minPrice: bigint;
-  maxPrice: bigint;
+  /** Maximum price in USD (resolved to wei at submission via Chainlink) */
+  maxPriceUsd: number;
+  /** Minimum price in USD (resolved to wei at submission via Chainlink) */
+  minPriceUsd: number;
   pollIntervalMs: number;
   pollTimeoutMs: number;
   /** Seconds before price ramp begins (prover discovery window) */

@@ -43,8 +43,9 @@ export interface BoundlessConfig {
   privateKey: `0x${string}`;
   imageUrl: string;
   imageId: `0x${string}`;
-  minPrice: bigint;
-  maxPrice: bigint;
+  // USD-denominated pricing — resolved to wei at submission time via Chainlink ETH/USD feed
+  maxPriceUsd: number;
+  minPriceUsd: number;
   pollIntervalMs: number;
   pollTimeoutMs: number;
   // Auction shape (reverse Dutch auction) — all in seconds (contract uses block.timestamp)
@@ -91,26 +92,28 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     ? BigInt(deploymentBlockRaw)
     : (knownDeployment?.deploymentBlock ?? DEFAULT_DEPLOYMENT.deploymentBlock);
 
-  const maxPriceRaw = env.BOUNDLESS_MAX_PRICE?.trim();
-  const maxPrice = maxPriceRaw ? BigInt(maxPriceRaw) : 5000000000000n; // 0.000005 ETH default (~$0.01)
-  const minPriceRaw = env.BOUNDLESS_MIN_PRICE?.trim();
-  const minPrice = minPriceRaw ? BigInt(minPriceRaw) : 50000000000n; // ~1% of default max (~$0.0001)
+  const maxPriceUsd = env.BOUNDLESS_MAX_PRICE_USD
+    ? Number.parseFloat(env.BOUNDLESS_MAX_PRICE_USD)
+    : 0.02; // $0.02 default — resolved to wei at submission time via Chainlink
+  const minPriceUsd = env.BOUNDLESS_MIN_PRICE_USD
+    ? Number.parseFloat(env.BOUNDLESS_MIN_PRICE_USD)
+    : 0.0002; // ~1% of max — auction floor
 
   // Auction shape — reverse Dutch auction from minPrice to maxPrice.
   // All timing values are in SECONDS (the contract uses block.timestamp).
-  // Defaults: 2m flat → 8m ramp → 20m lock → 30m expiry (after lock) = 60m total
+  // Defaults: 1m flat → 11m ramp → 18m lock → 30m expiry (after lock) = 60m total
   const flatPeriodSec = env.BOUNDLESS_FLAT_PERIOD_SEC
     ? Math.max(0, Number.parseInt(env.BOUNDLESS_FLAT_PERIOD_SEC, 10))
-    : 120; // 2 minutes
+    : 60; // 1 minute
   const rampPeriodSec = env.BOUNDLESS_RAMP_PERIOD_SEC
     ? Math.max(1, Number.parseInt(env.BOUNDLESS_RAMP_PERIOD_SEC, 10))
-    : 480; // 8 minutes
+    : 660; // 11 minutes
   const lockTimeoutSec = env.BOUNDLESS_LOCK_TIMEOUT_SEC
     ? Math.max(60, Number.parseInt(env.BOUNDLESS_LOCK_TIMEOUT_SEC, 10))
-    : 1680; // 28 min from rampUpStart (8m ramp + 20m at max price)
+    : 1740; // 29 min from rampUpStart (11m ramp + 18m at max price)
   const timeoutSec = env.BOUNDLESS_TIMEOUT_SEC
     ? Math.max(lockTimeoutSec, Number.parseInt(env.BOUNDLESS_TIMEOUT_SEC, 10))
-    : 3480; // lock (28m) + 30m expiry period for secondary provers
+    : 3540; // lock (29m) + 30m expiry period for secondary provers
 
   const pollIntervalMs = env.BOUNDLESS_POLL_INTERVAL_MS
     ? Math.max(1000, Number.parseInt(env.BOUNDLESS_POLL_INTERVAL_MS, 10))
@@ -127,8 +130,8 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     privateKey: normalizedKey as `0x${string}`,
     imageUrl,
     imageId: normalizedImageId as `0x${string}`,
-    minPrice,
-    maxPrice,
+    maxPriceUsd,
+    minPriceUsd,
     pollIntervalMs,
     pollTimeoutMs,
     flatPeriodSec,

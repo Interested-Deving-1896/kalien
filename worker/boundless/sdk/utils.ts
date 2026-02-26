@@ -175,7 +175,10 @@ export function decodeFulfillmentDataManual(fulfillmentDataHex: string): Uint8Ar
   // journal length is at tupleStart + journalByteOffset * 2 (in chars)
   const journalLenCharOffset = tupleStart + journalByteOffset * 2;
   const journalLen = readUintAt(journalLenCharOffset);
-  const journalHex = clean.slice(journalLenCharOffset + 64, journalLenCharOffset + 64 + journalLen * 2);
+  const journalHex = clean.slice(
+    journalLenCharOffset + 64,
+    journalLenCharOffset + 64 + journalLen * 2,
+  );
 
   return hexToUint8Array(journalHex);
 }
