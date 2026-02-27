@@ -12,9 +12,9 @@ import {
 } from "../../worker/constants";
 
 /**
- * Build a valid tape binary for testing.
+ * Build a valid v3 tape binary for testing.
  * Header (16 bytes): magic(4) + version(1) + rulesTag(1) + reserved(2) + seed(4) + frameCount(4)
- * Frames (frameCount bytes): each byte low nibble only (high nibble reserved = 0)
+ * Body (ceil(frameCount/2) bytes): nibble-packed — low nibble = frame[2i], high nibble = frame[2i+1]
  * Footer (12 bytes): finalScore(4) + finalRngState(4) + crc32(4)
  */
 function buildTape(options: {
@@ -28,7 +28,6 @@ function buildTape(options: {
   reserved?: [number, number];
   frameCount?: number;
   corruptCrc?: boolean;
-  reservedBitsInFrame?: number;
 }): Uint8Array {
   const {
     seed = 42,
@@ -39,13 +38,13 @@ function buildTape(options: {
     rulesTag = EXPECTED_RULES_TAG,
     reserved = [0, 0],
     corruptCrc = false,
-    reservedBitsInFrame,
   } = options;
 
   const frames = options.frames ?? new Uint8Array([0x01, 0x02, 0x03]);
   const frameCount = options.frameCount ?? frames.length;
+  const bodyBytes = (frames.length + 1) >> 1;
 
-  const totalLength = TAPE_HEADER_SIZE + frames.length + TAPE_FOOTER_SIZE;
+  const totalLength = TAPE_HEADER_SIZE + bodyBytes + TAPE_FOOTER_SIZE;
   const buf = new Uint8Array(totalLength);
   const view = new DataView(buf.buffer);
 
@@ -58,27 +57,27 @@ function buildTape(options: {
   view.setUint32(8, seed, true);
   view.setUint32(12, frameCount, true);
 
-  // Frames
-  buf.set(frames, TAPE_HEADER_SIZE);
-
-  if (reservedBitsInFrame !== undefined) {
-    buf[TAPE_HEADER_SIZE + reservedBitsInFrame] |= 0xf0;
+  // Nibble-packed body
+  for (let i = 0; i < bodyBytes; i++) {
+    const lo = frames[2 * i] & 0x0f;
+    const hi = 2 * i + 1 < frames.length ? (frames[2 * i + 1] & 0x0f) << 4 : 0;
+    buf[TAPE_HEADER_SIZE + i] = lo | hi;
   }
 
   // Footer
-  const footerOffset = TAPE_HEADER_SIZE + frames.length;
+  const footerOffset = TAPE_HEADER_SIZE + bodyBytes;
   view.setUint32(footerOffset, score, true);
   view.setUint32(footerOffset + 4, rng, true);
 
-  // Compute CRC32 over entire buffer except last 4 bytes (the checksum field)
-  const crc = crc32(buf, TAPE_HEADER_SIZE, footerOffset);
+  // Compute CRC32 over header + packed body
+  const crc = crc32(buf, footerOffset);
   view.setUint32(footerOffset + 8, corruptCrc ? (crc ^ 0xdeadbeef) >>> 0 : crc, true);
 
   return buf;
 }
 
 /** Standard CRC32 matching the implementation in tape.ts */
-function crc32(data: Uint8Array, _inputsStart: number, _inputsEnd: number): number {
+function crc32(data: Uint8Array, end: number): number {
   const table = new Uint32Array(256);
   for (let i = 0; i < 256; i++) {
     let c = i;
@@ -89,7 +88,7 @@ function crc32(data: Uint8Array, _inputsStart: number, _inputsEnd: number): numb
   }
 
   let crc = 0xffffffff;
-  for (let i = 0; i < _inputsEnd; i++) {
+  for (let i = 0; i < end; i++) {
     crc = table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
   }
   return (crc ^ 0xffffffff) >>> 0;
@@ -148,11 +147,6 @@ describe("parseAndValidateTape", () => {
   it("throws on corrupted CRC", () => {
     const tape = buildTape({ corruptCrc: true });
     expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("checksum mismatch");
-  });
-
-  it("throws on reserved bits set in frame data", () => {
-    const tape = buildTape({ reservedBitsInFrame: 1 });
-    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("reserved bits set");
   });
 
   it("returns correct TapeMetadata for valid tape", () => {
