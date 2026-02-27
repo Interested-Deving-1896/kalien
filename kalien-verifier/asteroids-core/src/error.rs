@@ -62,12 +62,10 @@ pub enum VerifyError {
     HeaderReservedNonZero,
     FrameCountOutOfRange { frame_count: u32, max_frames: u32 },
     TapeLengthMismatch { expected: usize, actual: usize },
-    ReservedInputBitsNonZero { frame: u32, byte: u8 },
     CrcMismatch { stored: u32, computed: u32 },
     RuleViolation { frame: u32, rule: RuleCode },
     FrameCountMismatch { claimed: u32, computed: u32 },
     ScoreMismatch { claimed: u32, computed: u32 },
-    RngMismatch { claimed: u32, computed: u32 },
     InvalidClaimant { reason: &'static str },
     JournalLengthMismatch { expected: usize, actual: usize },
     JournalReservedNonZero,
@@ -94,10 +92,6 @@ impl fmt::Display for VerifyError {
                 f,
                 "tape length mismatch: expected {expected} bytes, got {actual}"
             ),
-            Self::ReservedInputBitsNonZero { frame, byte } => write!(
-                f,
-                "input byte reserved bits set at frame {frame}: 0x{byte:02x}"
-            ),
             Self::CrcMismatch { stored, computed } => write!(
                 f,
                 "crc mismatch: stored=0x{stored:08x}, computed=0x{computed:08x}"
@@ -113,12 +107,6 @@ impl fmt::Display for VerifyError {
             }
             Self::ScoreMismatch { claimed, computed } => {
                 write!(f, "score mismatch: claimed={claimed}, computed={computed}")
-            }
-            Self::RngMismatch { claimed, computed } => {
-                write!(
-                    f,
-                    "rng mismatch: claimed=0x{claimed:08x}, computed=0x{computed:08x}"
-                )
             }
             Self::InvalidClaimant { reason } => write!(f, "invalid claimant address: {reason}"),
             Self::JournalLengthMismatch { expected, actual } => write!(
@@ -234,12 +222,6 @@ mod tests {
         }
         .to_string()
         .contains("expected 32 bytes"));
-        assert!(VerifyError::ReservedInputBitsNonZero {
-            frame: 3,
-            byte: 0xF0
-        }
-        .to_string()
-        .contains("frame 3"));
         assert!(VerifyError::CrcMismatch {
             stored: 0x1234_5678,
             computed: 0xDEAD_BEEF
@@ -264,12 +246,6 @@ mod tests {
         }
         .to_string()
         .contains("score mismatch"));
-        assert!(VerifyError::RngMismatch {
-            claimed: 0xABCD_EF01,
-            computed: 0x1020_3040
-        }
-        .to_string()
-        .contains("claimed=0xabcdef01"));
         assert!(VerifyError::InvalidClaimant {
             reason: "bad checksum"
         }

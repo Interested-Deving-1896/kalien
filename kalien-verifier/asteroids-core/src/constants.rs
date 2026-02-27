@@ -1,5 +1,5 @@
 pub const TAPE_MAGIC: u32 = 0x5A4B5450;
-pub const TAPE_VERSION: u8 = 2;
+pub const TAPE_VERSION: u8 = 3;
 pub const TAPE_HEADER_SIZE: usize = 16;
 pub const TAPE_FOOTER_SIZE: usize = 12;
 

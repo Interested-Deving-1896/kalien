@@ -89,7 +89,7 @@ where
 {
     let tape = parse_tape(bytes, max_frames)?;
     let replay_result =
-        replay_fn(tape.header.seed, tape.inputs).map_err(|err| VerifyError::RuleViolation {
+        replay_fn(tape.header.seed, &tape.inputs).map_err(|err| VerifyError::RuleViolation {
             frame: err.frame_count,
             rule: err.rule,
         })?;
@@ -105,13 +105,6 @@ where
         return Err(VerifyError::ScoreMismatch {
             claimed: tape.footer.final_score,
             computed: replay_result.final_score,
-        });
-    }
-
-    if replay_result.final_rng_state != tape.footer.final_rng_state {
-        return Err(VerifyError::RngMismatch {
-            claimed: tape.footer.final_rng_state,
-            computed: replay_result.final_rng_state,
         });
     }
 
@@ -271,19 +264,11 @@ mod tests {
     use crate::constants::{TAPE_HEADER_SIZE, TAPE_MAGIC, TAPE_VERSION};
     use crate::error::RuleCode;
     use crate::sim::replay;
-    use crate::tape::{crc32, serialize_tape};
+    use crate::tape::{body_bytes, serialize_tape};
     const TEST_CLAIMANT: &str = "GCTCPB732UZF72Q66RFUS44XIUJFWJA2JMR277KKGWMVDZBF44XKHL5M";
 
     fn footer_offset(frame_count: usize) -> usize {
-        TAPE_HEADER_SIZE + frame_count
-    }
-
-    fn write_footer(bytes: &mut [u8], frame_count: usize, final_score: u32, final_rng_state: u32) {
-        let offset = footer_offset(frame_count);
-        let checksum = crc32(&bytes[..offset]);
-        bytes[offset..offset + 4].copy_from_slice(&final_score.to_le_bytes());
-        bytes[offset + 4..offset + 8].copy_from_slice(&final_rng_state.to_le_bytes());
-        bytes[offset + 8..offset + 12].copy_from_slice(&checksum.to_le_bytes());
+        TAPE_HEADER_SIZE + body_bytes(frame_count)
     }
 
     fn valid_tape(seed: u32, inputs: &[u8]) -> Vec<u8> {
@@ -294,21 +279,6 @@ mod tests {
             replay_result.final_score,
             replay_result.final_rng_state,
         )
-    }
-
-    #[test]
-    fn rejects_reserved_input_bits() {
-        let mut tape = serialize_tape(0xAABB_CCDD, &[0x10], 0, 0xAABB_CCDD);
-        write_footer(&mut tape, 1, 0, 0xAABB_CCDD);
-
-        let err = verify_tape(&tape, 10).unwrap_err();
-        assert!(matches!(
-            err,
-            VerifyError::ReservedInputBitsNonZero {
-                frame: 0,
-                byte: 0x10
-            }
-        ));
     }
 
     #[test]
@@ -324,19 +294,6 @@ mod tests {
 
         let err = verify_tape(&good_tape, 10_000).unwrap_err();
         assert!(matches!(err, VerifyError::ScoreMismatch { .. }));
-    }
-
-    #[test]
-    fn detects_rng_tampering() {
-        let inputs = [0x00u8; 48];
-        let seed = 0x1234_5678;
-        let mut tape = valid_tape(seed, &inputs);
-        let offset = footer_offset(inputs.len());
-        let tampered_rng = 0xFFFF_FFFFu32;
-        tape[offset + 4..offset + 8].copy_from_slice(&tampered_rng.to_le_bytes());
-
-        let err = verify_tape(&tape, 10_000).unwrap_err();
-        assert!(matches!(err, VerifyError::RngMismatch { .. }));
     }
 
     #[test]
@@ -431,7 +388,17 @@ mod tests {
         let good_tape = valid_tape(0xFEED_BEEF, &inputs);
         assert!(verify_tape(&good_tape, 100).is_ok());
 
+        // The finalRngState field (footer+4..footer+8) is intentionally not
+        // validated by the Rust prover in v3 — it is retained in the tape as a
+        // hint for the TypeScript worker's DigestMatch predicate, but the ZK proof
+        // guarantees correctness of all committed journal fields from replay.
+        let rng_start = footer_offset(inputs.len()) + 4;
+        let rng_end = rng_start + 4;
+
         for idx in 0..good_tape.len() {
+            if idx >= rng_start && idx < rng_end {
+                continue; // finalRngState is not Rust-validated
+            }
             let mut tampered = good_tape.clone();
             tampered[idx] ^= 0x01;
             assert!(

@@ -51,7 +51,7 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         replay_result.final_rng_state,
     );
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
-    let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 50);
+    let checkpoints = replay_with_checkpoints(tape.header.seed, &tape.inputs, 50);
 
     assert_eq!(checkpoints.first().expect("checkpoint").frame_count, 0);
     assert_eq!(
@@ -82,7 +82,7 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         replay_result.final_rng_state,
     );
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
-    let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 200);
+    let checkpoints = replay_with_checkpoints(tape.header.seed, &tape.inputs, 200);
 
     assert_eq!(checkpoints.first().expect("checkpoint").frame_count, 0);
     assert_eq!(
