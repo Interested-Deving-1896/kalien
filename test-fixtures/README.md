@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-02-27
 
-## Canonical Tape Fixtures (v3 nibble-packed)
+## Canonical Tape Fixtures (v4 nibble-packed)
 
 - `test-short.tape`
   - Seed: `0xdeadbeef`
@@ -56,11 +56,11 @@ Regenerate proof fixtures for the current prover/ruleset:
 bash kalien-contract/scripts/regenerate-proofs.sh https://risc0-kalien.stellar.buzz
 ```
 
-## Tape Format v3
+## Tape Format v4
 
-- Version: `3`
+- Version: `4`
 - Body: `ceil(frameCount/2)` bytes (2 frames per byte, low nibble first)
-- Footer: `finalScore(4) + finalRngState(4) + checksum(4)` = 12 bytes
+- Footer: `finalScore(4) + checksum(4)` = 8 bytes
 
 ## Candidate Promotion Checklist
 

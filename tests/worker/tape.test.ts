@@ -15,13 +15,12 @@ import {
  * Build a valid v3 tape binary for testing.
  * Header (16 bytes): magic(4) + version(1) + rulesTag(1) + reserved(2) + seed(4) + frameCount(4)
  * Body (ceil(frameCount/2) bytes): nibble-packed — low nibble = frame[2i], high nibble = frame[2i+1]
- * Footer (12 bytes): finalScore(4) + finalRngState(4) + crc32(4)
+ * Footer (8 bytes): finalScore(4) + crc32(4)
  */
 function buildTape(options: {
   seed?: number;
   frames?: Uint8Array;
   score?: number;
-  rng?: number;
   magic?: number;
   version?: number;
   rulesTag?: number;
@@ -32,7 +31,6 @@ function buildTape(options: {
   const {
     seed = 42,
     score = 100,
-    rng = 999,
     magic = TAPE_MAGIC,
     version = TAPE_VERSION,
     rulesTag = EXPECTED_RULES_TAG,
@@ -67,11 +65,10 @@ function buildTape(options: {
   // Footer
   const footerOffset = TAPE_HEADER_SIZE + bodyBytes;
   view.setUint32(footerOffset, score, true);
-  view.setUint32(footerOffset + 4, rng, true);
 
   // Compute CRC32 over header + packed body
   const crc = crc32(buf, footerOffset);
-  view.setUint32(footerOffset + 8, corruptCrc ? (crc ^ 0xdeadbeef) >>> 0 : crc, true);
+  view.setUint32(footerOffset + 4, corruptCrc ? (crc ^ 0xdeadbeef) >>> 0 : crc, true);
 
   return buf;
 }
@@ -150,12 +147,11 @@ describe("parseAndValidateTape", () => {
   });
 
   it("returns correct TapeMetadata for valid tape", () => {
-    const tape = buildTape({ seed: 0xabcd, score: 1337, rng: 0xbeef });
+    const tape = buildTape({ seed: 0xabcd, score: 1337 });
     const result = parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES);
     expect(result.seed).toBe(0xabcd);
     expect(result.frameCount).toBe(3);
     expect(result.finalScore).toBe(1337);
-    expect(result.finalRngState).toBe(0xbeef);
     expect(typeof result.checksum).toBe("number");
   });
 

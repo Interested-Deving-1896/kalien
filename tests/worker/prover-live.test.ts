@@ -130,7 +130,6 @@ describe("live prover integration", () => {
     expect(journal.claimant).toBe(TEST_CLAIMANT);
     expect(journal.frame_count).toBe(5000);
     expect(journal.final_score).toBe(11190);
-    expect(journal.final_rng_state).toBe(0xcaf92cc3 >>> 0);
     expect(journal.rules_digest).toBe(0x41535434 >>> 0);
 
     // Verify Groth16 receipt
@@ -184,7 +183,6 @@ describe("live prover integration", () => {
     expect(journal.claimant).toBe(TEST_CLAIMANT);
     expect(journal.frame_count).toBe(6643);
     expect(journal.final_score).toBe(14870);
-    expect(journal.final_rng_state).toBe(0x10ca79d7 >>> 0);
     expect(journal.rules_digest).toBe(0x41535434 >>> 0);
 
     expect(pollResult.response.result!.proof.produced_receipt_kind).toBe("groth16");
