@@ -128,9 +128,9 @@ describe("live prover integration", () => {
     expect(journal.seed).toBe(0xdeadbeef >>> 0);
     expect(journal.seed_id).toBe(seedId);
     expect(journal.claimant).toBe(TEST_CLAIMANT);
-    expect(journal.frame_count).toBe(3980);
-    expect(journal.final_score).toBe(90);
-    expect(journal.final_rng_state).toBe(0xeb0719ce >>> 0);
+    expect(journal.frame_count).toBe(5000);
+    expect(journal.final_score).toBe(11190);
+    expect(journal.final_rng_state).toBe(0xcaf92cc3 >>> 0);
     expect(journal.rules_digest).toBe(0x41535434 >>> 0);
 
     // Verify Groth16 receipt
@@ -144,7 +144,7 @@ describe("live prover integration", () => {
 
     // Verify summarizeProof works
     const summary = summarizeProof(response);
-    expect(summary.journal.final_score).toBe(90);
+    expect(summary.journal.final_score).toBe(11190);
     expect(summary.requestedReceiptKind).toBe("groth16");
     expect(summary.producedReceiptKind).toBe("groth16");
     expect(summary.stats.segments).toBeGreaterThan(0);
@@ -152,7 +152,7 @@ describe("live prover integration", () => {
 
   // ───── Submit + poll (real game tape, groth16) ─────
 
-  it("submit → poll → summarize produces valid proof for real game tape (score=32860)", async () => {
+  it("submit → poll → summarize produces valid proof for real game tape (score=14870)", async () => {
     if (skipIfUnreachable()) return;
 
     const env = makeEnv();
@@ -182,20 +182,20 @@ describe("live prover integration", () => {
     expect(journal.seed).toBe(0x43c9c6cd >>> 0);
     expect(journal.seed_id).toBe(seedId);
     expect(journal.claimant).toBe(TEST_CLAIMANT);
-    expect(journal.frame_count).toBe(13829);
-    expect(journal.final_score).toBe(32860);
-    expect(journal.final_rng_state).toBe(0xa9713c03 >>> 0);
+    expect(journal.frame_count).toBe(6643);
+    expect(journal.final_score).toBe(14870);
+    expect(journal.final_rng_state).toBe(0x10ca79d7 >>> 0);
     expect(journal.rules_digest).toBe(0x41535434 >>> 0);
 
     expect(pollResult.response.result!.proof.produced_receipt_kind).toBe("groth16");
 
     const summary = summarizeProof(pollResult.response);
-    expect(summary.journal.final_score).toBe(32860);
+    expect(summary.journal.final_score).toBe(14870);
   }, 300_000);
 
   // ───── Short tape acceptance ─────
 
-  it("accepts short tape (test-short, score=1030)", async () => {
+  it("accepts short tape (test-short, score=1480)", async () => {
     if (skipIfUnreachable()) return;
 
     const env = makeEnv();
@@ -206,7 +206,7 @@ describe("live prover integration", () => {
       seedId: 3,
       claimantAddress: TEST_CLAIMANT,
     });
-    // test-short.tape has score=1030 — valid tape, prover should accept
+    // test-short.tape has score=1480 — valid tape, prover should accept
     expect(submitResult.type).toBe("success");
   });
 
