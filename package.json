@@ -28,6 +28,7 @@
     "bench:risc0": "bash ./scripts/bench-risc0.sh"
   },
   "dependencies": {
+    "asteroids-score": "file:./shared/stellar/bindings/asteroids-score",
     "@fontsource/monaspace-krypton": "^5.2.5",
     "@fontsource/monaspace-neon": "^5.2.5",
     "@openzeppelin/relayer-plugin-channels": "^0.13.0",

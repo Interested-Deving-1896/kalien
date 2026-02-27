@@ -6,7 +6,7 @@ import {
 } from "../constants";
 import { submitClaim } from "../claim/submit";
 import { resolveBoundlessConfig } from "../boundless/config";
-import { submitToBoundless } from "../boundless/client";
+import { BoundlessClient } from "../boundless/sdk/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { writeProofTapeMapping } from "../leaderboard-store";
@@ -20,9 +20,13 @@ import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessag
  * duplicate journals ("already claimed") and non-improving scores ("score not
  * improved"), both of which prove the claim landed previously.
  */
-function isAlreadyClaimedOnChain(message: string): boolean {
-  const m = message.toLowerCase();
-  return m.includes("already claimed") || m.includes("score not improved");
+function isAlreadyClaimedOnChain(message: string, errorDetail?: string): boolean {
+  const combined = (message + " " + (errorDetail ?? "")).toLowerCase();
+  return (
+    combined.includes("already claimed") ||
+    combined.includes("score not improved") ||
+    combined.includes("contract, #5") // ScoreNotImproved — error code from Stellar contract
+  );
 }
 
 function journalRawHex(journal: ProofJournal): string {
@@ -167,7 +171,6 @@ async function handleSubmitResult(
     submitResult.jobId,
     submitResult.statusUrl,
     submitResult.segmentLimitPo2,
-    undefined, // recoveryAttempts
     submitResult.ipfsCid,
     submitResult.maxPriceUsd,
   );
@@ -197,9 +200,9 @@ async function processBoundlessMessage(
     return;
   }
 
-  let submitResult: Awaited<ReturnType<typeof submitToBoundless>>;
+  let submitResult: Awaited<ReturnType<BoundlessClient["submitRequest"]>>;
   try {
-    submitResult = await submitToBoundless(boundlessConfig, tapeBytes);
+    submitResult = await new BoundlessClient(boundlessConfig).submitRequest(tapeBytes);
   } catch (error) {
     const reason = `boundless submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_QUEUE_RETRIES) {
@@ -324,6 +327,32 @@ async function processClaimQueueMessage(
     return;
   }
 
+  // Skip claim if a higher-scoring proof already claimed successfully for this
+  // claimant. This prevents the contract rejection in common serial-race cases.
+  const thisScore = job.tape.metadata.finalScore >>> 0;
+  const thisSeed = job.tape.metadata.seed;
+  const { jobs: claimantJobs } = await coordinator.listJobsForClaimant(
+    job.claim.claimantAddress,
+    100,
+    0,
+  );
+  const superseded = claimantJobs.some(
+    (j) =>
+      j.jobId !== job.jobId &&
+      j.tape.metadata.seed === thisSeed && // same seed window only
+      j.claim.status === "succeeded" &&
+      (j.tape.metadata.finalScore >>> 0) >= thisScore,
+  );
+  if (superseded) {
+    console.log("[claim-queue] skipping — superseded by higher-scoring claim", {
+      jobId: payload.jobId,
+      score: thisScore,
+    });
+    await coordinator.markClaimSucceeded(payload.jobId, "superseded-by-higher-score");
+    message.ack();
+    return;
+  }
+
   const artifact = await env.PROOF_ARTIFACTS.get(job.result.artifactKey);
   if (!artifact) {
     await coordinator.markClaimFailed(payload.jobId, "missing proof artifact in R2");
@@ -386,10 +415,14 @@ async function processClaimQueueMessage(
       txHash: relayResult.txHash,
     });
     await coordinator.markClaimSucceeded(payload.jobId, relayResult.txHash);
-    try {
-      await writeProofTapeMapping(env, relayResult.txHash, payload.jobId);
-    } catch (err) {
-      console.error("[claim-queue] failed to write tape mapping", err);
+    // Only write the tape mapping for real on-chain tx hashes — synthetic
+    // values like "prior-attempt" and "superseded-by-higher-score" have no tx.
+    if (/^[0-9a-f]{64}$/i.test(relayResult.txHash)) {
+      try {
+        await writeProofTapeMapping(env, relayResult.txHash, payload.jobId);
+      } catch (err) {
+        console.error("[claim-queue] failed to write tape mapping", err);
+      }
     }
     message.ack();
     return;
@@ -431,7 +464,7 @@ async function processClaimQueueMessage(
 
   // Contract rejections like "already claimed" or "score not improved" mean a
   // prior attempt actually landed on-chain. Treat as success rather than failure.
-  if (isAlreadyClaimedOnChain(relayResult.message)) {
+  if (isAlreadyClaimedOnChain(relayResult.message, relayResult.errorDetail)) {
     console.log("[claim-queue] fatal error indicates prior on-chain success", {
       jobId: payload.jobId,
     });
@@ -566,10 +599,13 @@ export async function handleClaimDlqBatch(
     const coordinator = coordinatorStub(env);
     const job = await coordinator.getJob(payload.jobId);
     const priorError = job?.claim.lastError?.trim() ?? "";
+    const priorErrorDetail =
+      [...(job?.claimAttempts ?? [])].reverse().find((a) => a.errorDetail != null)
+        ?.errorDetail ?? "";
 
     // If the last error indicates the claim already landed on-chain via a
     // prior attempt, treat this as success rather than failure.
-    if (priorError.length > 0 && isAlreadyClaimedOnChain(priorError)) {
+    if (priorError.length > 0 && isAlreadyClaimedOnChain(priorError, priorErrorDetail)) {
       console.log("[claim-dlq] prior error indicates on-chain success", {
         jobId: payload.jobId,
         priorError,

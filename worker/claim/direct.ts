@@ -1,10 +1,10 @@
-import { Address, xdr } from "@stellar/stellar-sdk";
+import { Address, rpc, xdr } from "@stellar/stellar-sdk";
 import {
   ChannelsClient,
   PluginExecutionError,
   PluginTransportError,
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
-import { Client as ScoreContractClient } from "../../shared/stellar/bindings/asteroids-score/dist/index.js";
+import { Client as ScoreContractClient } from "asteroids-score";
 import {
   DEFAULT_BINDINGS_RPC_URL,
   DEFAULT_RELAYER_REQUEST_TIMEOUT_MS,
@@ -26,6 +26,8 @@ interface DirectClaimConfig {
   scoreContractId: string;
   channels: ChannelsConfig;
 }
+
+const SEED_INTERVAL_SECONDS = 600;
 
 function nonEmpty(value: string | undefined): string | null {
   if (!value) {
@@ -193,6 +195,82 @@ function extractExecutionCode(details: unknown): string | null {
   return null;
 }
 
+/**
+ * Extract a Soroban contract error number from SIMULATION_FAILED errorDetails.
+ * Channels surfaces these as e.g. "escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #3)".
+ */
+function extractContractErrorCode(errorDetails: unknown): number | null {
+  const details = asObject(errorDetails);
+  const inner = details ? asObject(details.details) : null;
+  const errorStr = inner && typeof inner.error === "string" ? inner.error : null;
+  if (!errorStr) return null;
+  const match = /\(Contract,\s*#(\d+)\)/.exec(errorStr);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+/**
+ * Map a known asteroids-score contract error code to an appropriate RelaySubmitResult.
+ *
+ * Error codes (from lib.rs #[contracterror]):
+ *   1 InvalidJournalLength  — journal not exactly 24 bytes        → fatal
+ *   2 InvalidRulesDigest    — wrong rules digest / image id       → fatal
+ *   3 JournalAlreadyClaimed — digest already on-chain             → treat as prior success
+ *   4 ZeroScoreNotAllowed   — score is 0                          → fatal
+ *   5 ScoreNotImproved      — not better than existing best       → treat as superseded
+ *   6 ContractPaused        — contract is paused (admin action)   → fatal
+ *   7 SeedExpired           — seed no longer valid                → fatal
+ */
+function classifySimulationContractError(
+  contractCode: number,
+  errorDetails: unknown,
+): RelaySubmitResult {
+  const errorDetail = buildErrorDetail({ errorDetails });
+  switch (contractCode) {
+    case 1:
+      return {
+        type: "fatal",
+        message: "claim rejected: journal data is malformed (InvalidJournalLength)",
+        errorDetail,
+      };
+    case 2:
+      return {
+        type: "fatal",
+        message: "claim rejected: proof rules digest does not match contract (InvalidRulesDigest)",
+        errorDetail,
+      };
+    case 3:
+      // Journal digest already exists on-chain — a prior claim attempt succeeded.
+      return { type: "success", txHash: "prior-attempt" };
+    case 4:
+      return {
+        type: "fatal",
+        message: "claim rejected: score is zero (ZeroScoreNotAllowed)",
+        errorDetail,
+      };
+    case 5:
+      // Score did not beat claimant's current best — superseded by a higher score.
+      return { type: "success", txHash: "superseded-by-higher-score" };
+    case 6:
+      return {
+        type: "fatal",
+        message: "claim rejected: contract is paused (ContractPaused)",
+        errorDetail,
+      };
+    case 7:
+      return {
+        type: "fatal",
+        message: "claim rejected: seed has expired, claim window closed (SeedExpired)",
+        errorDetail,
+      };
+    default:
+      return {
+        type: "fatal",
+        message: `claim rejected: contract error #${contractCode}`,
+        errorDetail,
+      };
+  }
+}
+
 /** Deterministic contract / input patterns that should never be retried. */
 function hasFatalClaimIndicator(message: string): boolean {
   const m = message.toLowerCase();
@@ -208,11 +286,9 @@ function hasFatalClaimIndicator(message: string): boolean {
 }
 
 function isRetryableChannelsExecution(message: string, code: string | null): boolean {
+  // SIMULATION_FAILED is handled via extractContractErrorCode before reaching here;
+  // this branch is a fallback for opaque simulation failures with no contract code.
   if (code?.toLowerCase() === "simulation_failed") {
-    // Channels can surface transient RPC/plugin errors as SIMULATION_FAILED.
-    // Treat as fatal when the message carries a deterministic contract/input
-    // failure; otherwise check for known transient indicators before defaulting
-    // to fatal (avoids blind retries on opaque simulation failures).
     if (hasFatalClaimIndicator(message)) {
       return false;
     }
@@ -222,12 +298,17 @@ function isRetryableChannelsExecution(message: string, code: string | null): boo
   if (retryableChannelsExecutionCode(code)) {
     return true;
   }
+  // The error code itself may be a known network/transient error (e.g. ECONNRESET).
+  if (code && isRetryableDirectClaimMessage(code)) {
+    return true;
+  }
   const normalized = message.toLowerCase();
   return (
     (normalized.includes("internal error") && normalized.includes("reference")) ||
     normalized.includes("too many transactions queued") ||
     normalized.includes("temporarily unavailable") ||
-    normalized.includes("try again later")
+    normalized.includes("try again later") ||
+    isRetryableDirectClaimMessage(message)
   );
 }
 
@@ -339,6 +420,30 @@ async function submitSorobanOperationViaChannels(
 
     if (error instanceof PluginExecutionError) {
       const code = extractExecutionCode(error.errorDetails);
+
+      // For SIMULATION_FAILED, parse the Soroban contract error code first so
+      // we can give each outcome a precise classification and message.
+      if (code?.toLowerCase() === "simulation_failed") {
+        const contractCode = extractContractErrorCode(error.errorDetails);
+        if (contractCode !== null) {
+          return classifySimulationContractError(contractCode, error.errorDetails);
+        }
+        // Opaque simulation failure — no contract error code found.
+        const isRetryable = !hasFatalClaimIndicator(error.message) &&
+          isRetryableDirectClaimMessage(error.message);
+        return {
+          type: isRetryable ? "retry" : "fatal",
+          message: `soroban simulation failed: ${error.message}`,
+          errorDetail: buildErrorDetail({
+            category: error.category,
+            code,
+            message: error.message,
+            errorDetails: error.errorDetails,
+            stack: error.stack,
+          }),
+        };
+      }
+
       const detail = code ? `${error.message} (${code})` : error.message;
       return {
         type: isRetryableChannelsExecution(error.message, code) ? "retry" : "fatal",
@@ -385,7 +490,17 @@ async function buildSubmitScorePayloadViaBindings(
   };
 
   const assembled = await client.submit_score(args, { simulate: false });
-  const built = assembled.raw?.build();
+  return buildInvokePayloadFromAssembled(
+    assembled,
+    "generated bindings did not produce invokeHostFunction operation",
+  );
+}
+
+function buildInvokePayloadFromAssembled(
+  assembled: { raw?: { build: () => { operations?: unknown[] } } } | null | undefined,
+  onMissingOperationError: string,
+): SorobanInvokePayload {
+  const built = assembled?.raw?.build();
   const operation = built?.operations?.[0] as
     | {
         func?: xdr.HostFunction;
@@ -394,7 +509,7 @@ async function buildSubmitScorePayloadViaBindings(
     | undefined;
 
   if (!operation?.func) {
-    throw new Error("generated bindings did not produce invokeHostFunction operation");
+    throw new Error(onMissingOperationError);
   }
 
   const authEntries = Array.isArray(operation.auth) ? operation.auth : [];
@@ -402,6 +517,121 @@ async function buildSubmitScorePayloadViaBindings(
     func: operation.func.toXDR("base64"),
     auth: authEntries.map((entry) => entry.toXDR("base64")),
   };
+}
+
+async function fetchWindowSeed(contractId: string, window: number): Promise<number | null> {
+  const server = new rpc.Server(DEFAULT_BINDINGS_RPC_URL, {
+    allowHttp: DEFAULT_BINDINGS_RPC_URL.startsWith("http:"),
+  });
+  const key = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("ValidSeed"), xdr.ScVal.scvU32(window)]);
+
+  try {
+    const entry = await server.getContractData(contractId, key, rpc.Durability.Temporary);
+    const value = entry.val.contractData().val();
+    if (value.switch().name !== "scvU32") {
+      return null;
+    }
+    return value.u32() >>> 0;
+  } catch {
+    return null;
+  }
+}
+
+export async function submitSeedRefresh(env: WorkerEnv): Promise<void> {
+  const config = resolveDirectClaimConfig(env);
+  if (!config) {
+    console.log("[seed-refresh] channels relayer not configured, skipping seed refresh");
+    return;
+  }
+
+  let phase = "init";
+  try {
+    phase = "build_payload_current_seed";
+    const client = new ScoreContractClient({
+      contractId: config.scoreContractId,
+      rpcUrl: DEFAULT_BINDINGS_RPC_URL,
+      networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
+    });
+    const assembled = await client.current_seed({ simulate: false });
+    const payload = buildInvokePayloadFromAssembled(
+      assembled,
+      "current_seed invocation did not produce invokeHostFunction operation",
+    );
+
+    console.log("[seed-refresh] submitting current_seed() to materialize window seed", {
+      contractId: config.scoreContractId,
+      relayerUrl: config.channels.baseUrl,
+    });
+
+    phase = "send_tx_current_seed";
+    const result = await submitSorobanOperationViaChannels(config.channels, payload);
+
+    if (result.type !== "success") {
+      console.warn("[seed-refresh] seed materialization failed", {
+        type: result.type,
+        message: result.message,
+      });
+      return;
+    }
+
+    const nowWindow = Math.floor(Date.now() / 1000 / SEED_INTERVAL_SECONDS);
+    const candidateWindows = nowWindow > 0 ? [nowWindow, nowWindow - 1] : [nowWindow];
+
+    phase = "fetch_window_seed";
+    let window: number | null = null;
+    let seed: number | null = null;
+    for (const candidateWindow of candidateWindows) {
+      const candidateSeed = await fetchWindowSeed(config.scoreContractId, candidateWindow);
+      if (candidateSeed !== null) {
+        window = candidateWindow;
+        seed = candidateSeed;
+        break;
+      }
+    }
+    if (window === null || seed === null) {
+      console.warn("[seed-refresh] unable to read ValidSeed(window) after materialization", {
+        triedWindows: candidateWindows,
+      });
+      return;
+    }
+
+    phase = "build_payload_index_seed";
+    const indexAssembled = await client.index_seed(
+      { window: window >>> 0, seed },
+      { simulate: false },
+    );
+    const indexPayload = buildInvokePayloadFromAssembled(
+      indexAssembled,
+      "index_seed invocation did not produce invokeHostFunction operation",
+    );
+
+    console.log("[seed-refresh] submitting index_seed(window, seed)", {
+      window,
+      seed,
+    });
+
+    phase = "send_tx_index_seed";
+    const indexResult = await submitSorobanOperationViaChannels(config.channels, indexPayload);
+    if (indexResult.type === "success") {
+      console.log("[seed-refresh] seed materialized and indexed successfully", {
+        txHashCurrentSeed: result.txHash,
+        txHashIndexSeed: indexResult.txHash,
+        window,
+        seed,
+      });
+      return;
+    }
+
+    console.warn("[seed-refresh] seed indexed failed after materialization", {
+      type: indexResult.type,
+      message: indexResult.message,
+      window,
+      seed,
+      txHashCurrentSeed: result.txHash,
+    });
+  } catch (error) {
+    console.error(`[seed-refresh] error during ${phase}: ${safeErrorMessage(error)}`);
+  }
 }
 
 export async function submitClaimDirect(

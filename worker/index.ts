@@ -13,6 +13,7 @@ import {
   handleQueueBatch,
   handleVastQueueBatch,
 } from "./queue/consumer";
+import { submitSeedRefresh } from "./claim/direct";
 import type { ClaimQueueMessage, ProofQueueMessage } from "./types";
 import { safeErrorMessage } from "./utils";
 
@@ -94,6 +95,10 @@ export default {
     env: WorkerEnv,
     _executionCtx: ExecutionContext,
   ): Promise<void> {
+    // Materialize the on-chain seed for the new window so players don't pay gas
+    // for seed creation. Runs unconditionally every 10 minutes.
+    await submitSeedRefresh(env);
+
     try {
       const result = await runScheduledLeaderboardSync(env, controller.scheduledTime);
       if (!result.enabled) {
