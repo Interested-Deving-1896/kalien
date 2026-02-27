@@ -184,7 +184,6 @@ fn main() -> Result<()> {
             println!("score={}", artifact.metrics.final_score);
             println!("lives={}", artifact.metrics.final_lives);
             println!("wave={}", artifact.metrics.final_wave);
-            println!("rules_digest={:#010x}", artifact.metrics.rules_digest);
             println!("output={}", output_path.display());
         }
         Commands::VerifyTape { input, max_frames } => {
@@ -195,7 +194,6 @@ fn main() -> Result<()> {
             println!("seed={}", seed_to_hex(tape.header.seed));
             println!("frame_count={}", tape.header.frame_count);
             println!("final_score={}", tape.footer.final_score);
-            println!("rules_digest={:#010x}", journal.rules_digest);
         }
         Commands::Benchmark {
             bots,

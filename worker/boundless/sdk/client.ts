@@ -32,7 +32,7 @@ import { uploadInput } from "../storage";
 import { fetchEthPriceUsd, usdToWei, weiToUsd } from "../pricing";
 import { adaptFulfillmentToProverResponse } from "../adapter";
 import { parseAndValidateTape } from "../../tape";
-import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../../constants";
+import { DEFAULT_MAX_TAPE_BYTES } from "../../constants";
 import type { ProverPollResult, ProverSubmitResult } from "../../types";
 import type {
   BoundlessClientConfig,
@@ -166,13 +166,10 @@ export class BoundlessClient {
     let expectedJournal: Uint8Array;
     try {
       expectedJournal = packJournalRaw({
-        seed: tapeMeta.seed,
         seed_id: metadata.seedId >>> 0,
+        seed: tapeMeta.seed,
         frame_count: tapeMeta.frameCount,
         final_score: tapeMeta.finalScore,
-        final_rng_state: 0,
-        tape_checksum: 0,
-        rules_digest: EXPECTED_RULES_DIGEST,
         claimant: metadata.claimantAddress,
       });
     } catch (error) {

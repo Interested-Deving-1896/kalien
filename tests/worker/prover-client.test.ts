@@ -47,13 +47,10 @@ function validProverGetJobResponse(overrides: Partial<ProverGetJobResponse> = {}
     result: {
       proof: {
         journal: {
-          seed: 42,
           seed_id: 123,
+          seed: 42,
           frame_count: 100,
           final_score: 1337,
-          final_rng_state: 0,
-          tape_checksum: 0,
-          rules_digest: EXPECTED_RULES_DIGEST,
           claimant: TEST_CLAIMANT,
         },
         requested_receipt_kind: "groth16",
@@ -144,11 +141,6 @@ describe("prover client", () => {
       expect(() => summarizeProof(response)).toThrow("zero-score");
     });
 
-    it("throws for rules digest mismatch", () => {
-      const response = validProverGetJobResponse();
-      response.result!.proof.journal.rules_digest = 0xdeadbeef;
-      expect(() => summarizeProof(response)).toThrow("0x");
-    });
   });
 
   describe("getValidatedProverHealth", () => {

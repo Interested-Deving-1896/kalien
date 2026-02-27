@@ -29,7 +29,7 @@ import { boundlessMarketAbi, eip712Types } from "../worker/boundless/abi";
 import type { ProofRequest } from "../worker/boundless/types";
 import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
 import { parseAndValidateTape } from "../worker/tape";
-import { DEFAULT_BINDINGS_RPC_URL, DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../worker/constants";
+import { DEFAULT_BINDINGS_RPC_URL, DEFAULT_MAX_TAPE_BYTES } from "../worker/constants";
 import { fetchEthPriceUsd, usdToWei } from "../worker/boundless/pricing";
 import { packJournalRaw, unpackJournalRaw, JOURNAL_LEN } from "../shared/stellar/journal";
 import { Client as ScoreContractClient } from "asteroids-score";
@@ -306,13 +306,10 @@ if (claimOnly) {
   // the expected fixed-length AST4 journal and using sha256(journal).
   const tapeMeta = parseAndValidateTape(tapeBytes, DEFAULT_MAX_TAPE_BYTES);
   const expectedJournal = packJournalRaw({
-    seed: tapeMeta.seed >>> 0,
     seed_id: seedIdForRequest >>> 0,
+    seed: tapeMeta.seed >>> 0,
     frame_count: tapeMeta.frameCount >>> 0,
     final_score: tapeMeta.finalScore >>> 0,
-    final_rng_state: 0,
-    tape_checksum: 0,
-    rules_digest: EXPECTED_RULES_DIGEST >>> 0,
     claimant: CLAIMANT_ADDRESS,
   });
   const digestInput = expectedJournal as unknown as BufferSource;
@@ -555,22 +552,18 @@ if (selectorHex !== GROTH16_SELECTOR) {
   process.exit(1);
 }
 
-// Journal: fixed 64-byte format.
+// Journal: fixed 49-byte format.
 if (journal.length !== JOURNAL_LEN) {
   console.error(`  FAIL: journal is ${journal.length} bytes (expected ${JOURNAL_LEN})`);
   process.exit(1);
 }
 const journalFields = unpackJournalRaw(journal);
 console.log(
-  `  Journal: seed=0x${journalFields.seed.toString(16)}, seed_id=${journalFields.seed_id}, claimant=${journalFields.claimant}, frames=${journalFields.frame_count}, score=${journalFields.final_score}, rules=0x${journalFields.rules_digest.toString(16)}`,
+  `  Journal: seed_id=${journalFields.seed_id}, seed=0x${journalFields.seed.toString(16)}, claimant=${journalFields.claimant}, frames=${journalFields.frame_count}, score=${journalFields.final_score}`,
 );
 
 if (journalFields.final_score === 0) {
   console.error("  FAIL: score is zero");
-  process.exit(1);
-}
-if (journalFields.rules_digest !== 0x41535434) {
-  console.error(`  FAIL: rules_digest 0x${journalFields.rules_digest.toString(16)} !== 0x41535434 (AST4)`);
   process.exit(1);
 }
 console.log("  PASS: seal and journal valid");
@@ -604,8 +597,9 @@ console.log("  PASS: adapter round-trip seal matches original");
 const aj = adapted.result!.proof.journal;
 if (
   aj.seed_id !== journalFields.seed_id ||
+  aj.seed !== journalFields.seed ||
+  aj.frame_count !== journalFields.frame_count ||
   aj.final_score !== journalFields.final_score ||
-  aj.rules_digest !== journalFields.rules_digest ||
   aj.claimant !== journalFields.claimant
 ) {
   console.error("  FAIL: adapter journal mismatch");

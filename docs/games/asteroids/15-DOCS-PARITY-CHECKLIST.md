@@ -44,8 +44,8 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 - Ship fire is edge-triggered latch + cooldown (`shipFireLatch`/`ship_fire_latch`), not shift-register.
 
 5. Verifier journal/output
-- Success journal is 64 bytes / 8 fields:
-  - `seed`, `seed_id`, `frame_count`, `final_score`, `reserved(0)`, `reserved(0)`, `rules_digest`, `claimant`.
+- Success journal is 49 bytes / 5 fields:
+  - `seed_id`, `seed`, `frame_count`, `final_score`, `claimant`.
 - Claimant is encoded as fixed bytes (`kind + 32-byte id`) and decoded as `G...`/`C...`.
 - Rules digest is `0x4153_5434` (`AST4`).
 

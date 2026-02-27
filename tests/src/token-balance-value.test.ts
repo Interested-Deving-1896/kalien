@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { Asset, Networks } from "@stellar/stellar-sdk";
-import { parseSacAssetFromName } from "../../src/chain/score";
+import { parseSacAssetFromName } from "../../src/chain/token";
 
 const KALIEN_SAC_NAME = "KALIEN:GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB";
-const KALIEN_TOKEN_CONTRACT_ID = "CBUCDXT6BY3WWP764AMW66QJA6ZRWL2TRV6VTYCWPZF4FUZRAXK2S253";
+const KALIEN_TOKEN_CONTRACT_ID = "CDC6PHLNYLH6Q3SICJDNMGQLBMGLDFYEHSJHZ46DYB2TCEZZUGN723RU";
 
 describe("parseSacAssetFromName", () => {
   it("parses native SAC names", () => {
@@ -19,7 +19,7 @@ describe("parseSacAssetFromName", () => {
 
   it("rejects contract-id strings as asset names", () => {
     expect(() => parseSacAssetFromName(KALIEN_TOKEN_CONTRACT_ID)).toThrow(
-      'invalid stellar asset name "CBUCDXT6BY3WWP764AMW66QJA6ZRWL2TRV6VTYCWPZF4FUZRAXK2S253"',
+      `invalid stellar asset name "${KALIEN_TOKEN_CONTRACT_ID}"`,
     );
   });
 });

@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { Address } from "@stellar/stellar-sdk";
+import { Address } from "@stellar/stellar-sdk/minimal";
 import {
   AssembledTransaction,
   Client as ContractClient,
@@ -7,7 +7,7 @@ import {
   MethodOptions,
   Result,
   Spec as ContractSpec,
-} from "@stellar/stellar-sdk/contract";
+} from "@stellar/stellar-sdk/minimal/contract";
 import type {
   u32,
   i32,
@@ -20,10 +20,10 @@ import type {
   Option,
   Timepoint,
   Duration,
-} from "@stellar/stellar-sdk/contract";
-export * from "@stellar/stellar-sdk";
-export * as contract from "@stellar/stellar-sdk/contract";
-export * as rpc from "@stellar/stellar-sdk/rpc";
+} from "@stellar/stellar-sdk/minimal/contract";
+export * from "@stellar/stellar-sdk/minimal";
+export * as contract from "@stellar/stellar-sdk/minimal/contract";
+export * as rpc from "@stellar/stellar-sdk/minimal/rpc";
 
 if (typeof window !== "undefined") {
   //@ts-ignore Buffer exists
@@ -31,7 +31,12 @@ if (typeof window !== "undefined") {
 }
 
 
-
+export const networks = {
+  testnet: {
+    networkPassphrase: "Test SDF Network ; September 2015",
+    contractId: "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
+  }
+} as const
 
 export const ScoreError = {
   1: {message:"InvalidJournalFormat"},
@@ -84,7 +89,7 @@ export interface Client {
   /**
    * Construct and simulate a best_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Read a claimant's best score for a specific `seed_id`.
-   *
+   * 
    * Returns `0` when no prior score exists.
    */
   best_score: ({claimant, seed_id}: {claimant: string, seed_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
@@ -92,7 +97,7 @@ export interface Client {
   /**
    * Construct and simulate a is_claimed transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Check whether a journal digest has already been claimed.
-   *
+   * 
    * Arguments:
    * - `env`: Soroban execution environment.
    * - `journal_digest`: SHA-256 digest of the raw journal bytes.
@@ -108,7 +113,7 @@ export interface Client {
   /**
    * Construct and simulate a current_seed transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Return the current window's seed, materializing it on first call per window.
-   *
+   * 
    * This method writes only one deterministic key:
    * `SeedById(seed_id) -> seed`.
    */
@@ -135,15 +140,14 @@ export interface Client {
   /**
    * Construct and simulate a submit_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Verify a RISC Zero proof and mint KALIEN tokens.
-   *
+   * 
    * - `seal`: variable-length proof seal bytes
-   * - `journal_raw`: raw 64-byte journal bytes:
-   * - 7 x u32 LE fields
+   * - `journal_raw`: raw 49-byte journal bytes:
+   * - 4 x u32 LE fields (`seed_id`, `seed`, `frame_count`, `final_score`)
    * - claimant payload (kind + 32-byte id)
-   * - 3 reserved zero bytes
-   *
+   * 
    * Returns the claimant's new best score for this `seed_id`.
-   *
+   * 
    * Errors:
    * - `ContractPaused` if submissions are disabled.
    * - `InvalidJournalFormat`/`InvalidRulesDigest` for malformed or mismatched journal data.
@@ -156,7 +160,7 @@ export interface Client {
   /**
    * Construct and simulate a verify_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Verify a RISC Zero proof without minting rewards or mutating claim state.
-   *
+   * 
    * Returns the `final_score` carried by the verified journal.
    */
   verify_score: ({seal, journal_raw}: {seal: Buffer, journal_raw: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>

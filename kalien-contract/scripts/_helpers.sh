@@ -67,23 +67,16 @@ sha256_of_hex() {
   echo -n "$1" | xxd -r -p | shasum -a 256 | cut -d' ' -f1
 }
 
-# Validate that a journal hex payload encodes AST4 rules_digest at bytes 24..28.
-# Expects little-endian u32 "AST4" = 0x41535434 => hex 34545341 at byte offset 24.
-assert_ast4_rules_digest_in_journal_hex() {
+# Validate AST4 journal raw hex length for the compact layout.
+# Layout: seed_id(u32 LE) + seed(u32 LE) + frame_count(u32 LE) + final_score(u32 LE)
+#         + claimant(kind + 32-byte id) = 49 bytes (98 hex chars).
+assert_compact_journal_hex() {
   local journal_hex="${1:-}"
   local context="${2:-journal}"
-  local expected_le_hex="34545341"
+  local expected_hex_len=98
 
-  if [[ ${#journal_hex} -lt 56 ]]; then
-    err "$context: journal too short (${#journal_hex} hex chars, need at least 56)"
-    return 1
-  fi
-
-  local rules_digest_le_hex="${journal_hex:48:8}"
-  rules_digest_le_hex=$(printf '%s' "$rules_digest_le_hex" | tr '[:upper:]' '[:lower:]')
-  if [[ "$rules_digest_le_hex" != "$expected_le_hex" ]]; then
-    err "$context: rules_digest is not AST4 (found LE hex ${rules_digest_le_hex}, expected ${expected_le_hex})"
-    err "$context: regenerate proof fixtures against the AST4 prover before running this script"
+  if [[ ${#journal_hex} -ne $expected_hex_len ]]; then
+    err "$context: journal length mismatch (${#journal_hex} hex chars, expected ${expected_hex_len})"
     return 1
   fi
 }

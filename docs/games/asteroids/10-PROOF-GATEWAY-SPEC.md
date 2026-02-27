@@ -352,21 +352,17 @@ Bindings:
 
 ```rust
 struct VerificationJournal {
-    seed: u32,
     seed_id: u32,
+    seed: u32,
     frame_count: u32,
     final_score: u32,
-    reserved_0: u32,    // always 0
-    reserved_1: u32,    // always 0
-    rules_digest: u32,  // RULES_DIGEST = 0x41535434 ("AST4")
     claimant: String,   // decoded from fixed claimant bytes (kind + 32-byte id)
 }
 ```
 
-Serialized as 64 bytes:
-- 7 x u32 LE (bytes 16-23 are reserved zeros)
+Serialized as 49 bytes:
+- 4 x u32 LE (`seed_id`, `seed`, `frame_count`, `final_score`)
 - claimant bytes (`kind + 32-byte id`)
-- 3 reserved zero bytes
 
 ### Host prover behavior
 

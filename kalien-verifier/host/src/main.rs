@@ -172,8 +172,6 @@ fn main() -> Result<()> {
     println!("  Claimant:      {}", proof.journal.claimant);
     println!("  Frames:        {}", proof.journal.frame_count);
     println!("  Final score:   {}", proof.journal.final_score);
-    println!("  Tape checksum: 0x{:08x}", proof.journal.tape_checksum);
-    println!("  Rules digest:  0x{:08x}", proof.journal.rules_digest);
     println!("  Segments:      {}", proof.stats.segments);
     println!("  Total cycles:  {}", proof.stats.total_cycles);
     println!("  User cycles:   {}", proof.stats.user_cycles);

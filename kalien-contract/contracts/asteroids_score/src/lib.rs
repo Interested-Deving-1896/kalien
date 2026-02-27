@@ -24,23 +24,19 @@ enum DataKey {
 
 const RULES_DIGEST: u32 = 0x4153_5434; // "AST4"
 
-const JOURNAL_SEED_OFFSET: u32 = 0;
-const JOURNAL_SEED_ID_OFFSET: u32 = 4;
+const JOURNAL_SEED_ID_OFFSET: u32 = 0;
+const JOURNAL_SEED_OFFSET: u32 = 4;
 const JOURNAL_FRAME_COUNT_OFFSET: u32 = 8;
 const JOURNAL_FINAL_SCORE_OFFSET: u32 = 12;
-const JOURNAL_RULES_DIGEST_OFFSET: u32 = 24;
-const JOURNAL_CLAIMANT_OFFSET: u32 = 28;
+const JOURNAL_CLAIMANT_OFFSET: u32 = 16;
 const JOURNAL_CLAIMANT_KIND_ACCOUNT: u8 = 0;
 const JOURNAL_CLAIMANT_KIND_CONTRACT: u8 = 1;
 const JOURNAL_CLAIMANT_ENCODED_LEN: usize = 33; // kind(1) + id(32)
-const JOURNAL_RESERVED_LEN: usize = 3;
-const JOURNAL_LEN: u32 =
-    JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN as u32 + JOURNAL_RESERVED_LEN as u32;
+const JOURNAL_LEN: u32 = JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN as u32;
 const JOURNAL_LEN_USIZE: usize = JOURNAL_LEN as usize;
 const JOURNAL_CLAIMANT_OFFSET_USIZE: usize = JOURNAL_CLAIMANT_OFFSET as usize;
 const JOURNAL_CLAIMANT_END_USIZE: usize =
     JOURNAL_CLAIMANT_OFFSET_USIZE + JOURNAL_CLAIMANT_ENCODED_LEN;
-const JOURNAL_RESERVED_OFFSET_USIZE: usize = JOURNAL_CLAIMANT_END_USIZE;
 
 const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 7 days  (at ~5s/ledger: 17280 ledgers/day)
 const INSTANCE_TTL_BUMP: u32 = 172_800; // 10 days (at ~5s/ledger)
@@ -65,11 +61,11 @@ pub enum ScoreError {
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScoreSubmitted {
-    pub claimant: Address,
-    pub seed: u32,
     pub seed_id: u32,
+    pub seed: u32,
     pub frame_count: u32,
     pub final_score: u32,
+    pub claimant: Address,
     pub previous_best: u32,
     pub new_best: u32,
     pub minted_delta: u32,
@@ -112,16 +108,15 @@ impl AsteroidsScoreContract {
     /// Verify a RISC Zero proof and mint KALIEN tokens.
     ///
     /// - `seal`: variable-length proof seal bytes
-    /// - `journal_raw`: raw 64-byte journal bytes:
-    ///   - 7 x u32 LE fields
+    /// - `journal_raw`: raw 49-byte journal bytes:
+    ///   - 4 x u32 LE fields (`seed_id`, `seed`, `frame_count`, `final_score`)
     ///   - claimant payload (kind + 32-byte id)
-    ///   - 3 reserved zero bytes
     ///
     /// Returns the claimant's new best score for this `seed_id`.
     ///
     /// Errors:
     /// - `ContractPaused` if submissions are disabled.
-    /// - `InvalidJournalFormat`/`InvalidRulesDigest` for malformed or mismatched journal data.
+    /// - `InvalidJournalFormat` for malformed journal data.
     /// - `SeedNotActive` if the `(seed_id, seed)` pair is not active.
     /// - `JournalAlreadyClaimed` on replay.
     /// - `ZeroScoreNotAllowed` or `ScoreNotImproved` for policy violations.
@@ -139,10 +134,6 @@ impl AsteroidsScoreContract {
 
         let journal = load_journal_bytes(&journal_raw)?;
         let parsed = parse_journal_fields(&journal);
-
-        if parsed.rules_digest != RULES_DIGEST {
-            return Err(ScoreError::InvalidRulesDigest);
-        }
 
         if !is_active_seed(&env, parsed.seed_id, parsed.seed) {
             return Err(ScoreError::SeedNotActive);
@@ -184,11 +175,11 @@ impl AsteroidsScoreContract {
         token_client.mint(&claimant, &(minted_delta as i128 * TOKEN_DECIMALS_SCALE));
 
         ScoreSubmitted {
-            claimant,
-            seed: parsed.seed,
             seed_id: parsed.seed_id,
+            seed: parsed.seed,
             frame_count: parsed.frame_count,
             final_score: parsed.final_score,
+            claimant,
             previous_best,
             new_best: parsed.final_score,
             minted_delta,
@@ -288,7 +279,7 @@ impl AsteroidsScoreContract {
         env.storage().instance().get(&DataKey::TokenId).unwrap()
     }
 
-    /// Read the hard-coded rules digest expected in verified journals.
+    /// Read the hard-coded rules digest for AST4 verifier policy.
     pub fn rules_digest(_env: Env) -> u32 {
         RULES_DIGEST
     }
@@ -307,10 +298,6 @@ impl AsteroidsScoreContract {
     pub fn verify_score(env: Env, seal: Bytes, journal_raw: Bytes) -> Result<u32, ScoreError> {
         let journal = load_journal_bytes(&journal_raw)?;
         let parsed = parse_journal_fields(&journal);
-
-        if parsed.rules_digest != RULES_DIGEST {
-            return Err(ScoreError::InvalidRulesDigest);
-        }
 
         let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
         let router_id: Address = env.storage().instance().get(&DataKey::RouterId).unwrap();
@@ -370,18 +357,16 @@ fn is_active_seed(env: &Env, seed_id: u32, seed: u32) -> bool {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ParsedJournalFields {
-    seed: u32,
     seed_id: u32,
+    seed: u32,
     frame_count: u32,
     final_score: u32,
-    rules_digest: u32,
 }
 
 /// Load and validate raw journal bytes into a fixed-size stack array.
 ///
 /// Validation includes:
 /// - exact byte length,
-/// - zeroed reserved trailer bytes,
 /// - and supported claimant kind tag.
 fn load_journal_bytes(journal_raw: &Bytes) -> Result<[u8; JOURNAL_LEN_USIZE], ScoreError> {
     if journal_raw.len() != JOURNAL_LEN {
@@ -390,12 +375,6 @@ fn load_journal_bytes(journal_raw: &Bytes) -> Result<[u8; JOURNAL_LEN_USIZE], Sc
 
     let mut journal = [0u8; JOURNAL_LEN_USIZE];
     journal_raw.copy_into_slice(&mut journal);
-    if journal[JOURNAL_RESERVED_OFFSET_USIZE] != 0
-        || journal[JOURNAL_RESERVED_OFFSET_USIZE + 1] != 0
-        || journal[JOURNAL_RESERVED_OFFSET_USIZE + 2] != 0
-    {
-        return Err(ScoreError::InvalidJournalFormat);
-    }
     let claimant_kind = journal[JOURNAL_CLAIMANT_OFFSET_USIZE];
     if claimant_kind != JOURNAL_CLAIMANT_KIND_ACCOUNT
         && claimant_kind != JOURNAL_CLAIMANT_KIND_CONTRACT
@@ -408,11 +387,10 @@ fn load_journal_bytes(journal_raw: &Bytes) -> Result<[u8; JOURNAL_LEN_USIZE], Sc
 /// Parse policy-relevant fields from a validated journal byte array.
 fn parse_journal_fields(journal: &[u8; JOURNAL_LEN_USIZE]) -> ParsedJournalFields {
     ParsedJournalFields {
-        seed: read_u32_le_from_slice(journal, JOURNAL_SEED_OFFSET as usize),
         seed_id: read_u32_le_from_slice(journal, JOURNAL_SEED_ID_OFFSET as usize),
+        seed: read_u32_le_from_slice(journal, JOURNAL_SEED_OFFSET as usize),
         frame_count: read_u32_le_from_slice(journal, JOURNAL_FRAME_COUNT_OFFSET as usize),
         final_score: read_u32_le_from_slice(journal, JOURNAL_FINAL_SCORE_OFFSET as usize),
-        rules_digest: read_u32_le_from_slice(journal, JOURNAL_RULES_DIGEST_OFFSET as usize),
     }
 }
 

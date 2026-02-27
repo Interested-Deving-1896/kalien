@@ -63,13 +63,10 @@ export interface ProofTapeInfo {
 }
 
 export interface ProofJournal {
-  seed: number;
   seed_id: number;
+  seed: number;
   frame_count: number;
   final_score: number;
-  final_rng_state: number;
-  tape_checksum: number;
-  rules_digest: number;
   claimant: string;
 }
 

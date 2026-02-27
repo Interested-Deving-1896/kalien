@@ -30,7 +30,7 @@ export function getTokenContractIdFromEnv(): string | null {
 }
 
 
-function parseSacAssetFromName(name: string): Asset {
+export function parseSacAssetFromName(name: string): Asset {
   const normalized = name.trim();
   if (normalized === "native") {
     return Asset.native();

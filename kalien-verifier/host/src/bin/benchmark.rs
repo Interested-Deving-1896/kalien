@@ -24,8 +24,6 @@ struct BenchmarkJson {
     seed_id: u32,
     frame_count: u32,
     final_score: u32,
-    tape_checksum: u32,
-    rules_digest: u32,
     claimant: String,
     segments: u64,
     total_cycles: u64,
@@ -197,8 +195,6 @@ fn main() -> Result<()> {
             seed_id: journal.seed_id,
             frame_count: journal.frame_count,
             final_score: journal.final_score,
-            tape_checksum: journal.tape_checksum,
-            rules_digest: journal.rules_digest,
             claimant: journal.claimant.clone(),
             segments,
             total_cycles,
@@ -216,8 +212,6 @@ fn main() -> Result<()> {
     println!("  Claimant:      {}", journal.claimant);
     println!("  Frames:        {}", journal.frame_count);
     println!("  Final score:   {}", journal.final_score);
-    println!("  Tape checksum: 0x{:08x}", journal.tape_checksum);
-    println!("  Rules digest:  0x{:08x}", journal.rules_digest);
     println!("  Segments:      {}", segments);
     println!("  Total cycles:  {}", total_cycles);
     println!("  Cycles/frame:  {}", cycles_per_frame);

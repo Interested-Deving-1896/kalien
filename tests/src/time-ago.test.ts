@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { timeAgo } from "../../src/time";
+import { timeAgo } from "../../src/lib/time";
 
 describe("timeAgo", () => {
   it("returns 'invalid date' for invalid input", () => {

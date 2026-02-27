@@ -54,7 +54,7 @@ pub const RULES_TAG: u8 = 4; // "AST4"
 pub const RULES_DIGEST: u32 = 0x4153_5434; // "AST4"
 pub const RULESET_NAME: &str = "AST4";
 
-pub const JOURNAL_LEN: usize = 64;
+pub const JOURNAL_LEN: usize = 49;
 pub const JOURNAL_CLAIMANT_KIND_ACCOUNT: u8 = 0;
 pub const JOURNAL_CLAIMANT_KIND_CONTRACT: u8 = 1;
 pub const JOURNAL_CLAIMANT_ENCODED_LEN: usize = 33; // kind(1) + id(32)

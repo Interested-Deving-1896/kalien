@@ -58,20 +58,16 @@ Any reorder is invalid.
 - Visual RNG must be isolated and non-authoritative.
 
 ## Required Verification Output
-On success, verifier returns/commits the canonical 64-byte journal (all fields u32 LE unless noted):
+On success, verifier returns/commits the canonical 49-byte journal (all fields u32 LE unless noted):
 
 | Offset | Field | Size | Type |
 |--------|-------|------|------|
-| 0 | `seed` | 4 | u32 LE |
-| 4 | `seed_id` | 4 | u32 LE |
+| 0 | `seed_id` | 4 | u32 LE |
+| 4 | `seed` | 4 | u32 LE |
 | 8 | `frame_count` | 4 | u32 LE |
 | 12 | `final_score` | 4 | u32 LE |
-| 16 | `reserved` | 4 | must be 0x00000000 |
-| 20 | `reserved` | 4 | must be 0x00000000 |
-| 24 | `rules_digest` | 4 | u32 LE (`0x4153_5434`, `AST4`) |
-| 28 | `claimant_kind` | 1 | u8 (0=account, 1=contract) |
-| 29 | `claimant_id` | 32 | raw bytes |
-| 61 | `reserved` | 3 | must be 0x000000 |
+| 16 | `claimant_kind` | 1 | u8 (0=account, 1=contract) |
+| 17 | `claimant_id` | 32 | raw bytes |
 
 `seed_id` is provided out-of-band (not embedded in the tape) and binds the proof to a specific on-chain game seed epoch.
 

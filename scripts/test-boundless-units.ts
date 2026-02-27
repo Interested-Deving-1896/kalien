@@ -184,40 +184,31 @@ function makeFakeSeal(selector: [number, number, number, number]): Uint8Array {
 }
 
 function makeFakeJournal(fields: {
-  seed: number;
   seed_id: number;
+  seed: number;
   frame_count: number;
   final_score: number;
-  final_rng_state: number;
-  tape_checksum: number;
-  rules_digest: number;
   claimant: string;
 }): Uint8Array {
   return packJournalRaw({
-    seed: fields.seed >>> 0,
     seed_id: fields.seed_id >>> 0,
+    seed: fields.seed >>> 0,
     frame_count: fields.frame_count >>> 0,
     final_score: fields.final_score >>> 0,
-    final_rng_state: fields.final_rng_state >>> 0,
-    tape_checksum: fields.tape_checksum >>> 0,
-    rules_digest: fields.rules_digest >>> 0,
     claimant: fields.claimant,
   });
 }
 
 const TEST_SELECTOR: [number, number, number, number] = [0xde, 0xad, 0xbe, 0xef];
 const TEST_JOURNAL = {
-  seed: 0x12345678,
   seed_id: 778899,
+  seed: 0x12345678,
   frame_count: 1000,
   final_score: 42,
-  final_rng_state: 0xaabbccdd,
-  tape_checksum: 0xfeedface,
-  rules_digest: 0x41535434,
   claimant: CLAIMANT,
 };
 
-test("parses 64-byte journal and strips selector from seal", () => {
+test("parses 49-byte journal and strips selector from seal", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: makeFakeJournal(TEST_JOURNAL),
@@ -229,19 +220,10 @@ test("parses 64-byte journal and strips selector from seal", () => {
   const journal = response.result!.proof.journal;
   const groth16 = (response.result as any).proof.receipt.inner.Groth16;
 
-  assert(journal.seed === TEST_JOURNAL.seed, "journal.seed mismatch");
   assert(journal.seed_id === TEST_JOURNAL.seed_id, "journal.seed_id mismatch");
+  assert(journal.seed === TEST_JOURNAL.seed, "journal.seed mismatch");
   assert(journal.frame_count === TEST_JOURNAL.frame_count, "journal.frame_count mismatch");
   assert(journal.final_score === TEST_JOURNAL.final_score, "journal.final_score mismatch");
-  assert(
-    (journal.final_rng_state >>> 0) === (TEST_JOURNAL.final_rng_state >>> 0),
-    "journal.final_rng_state mismatch",
-  );
-  assert(
-    (journal.tape_checksum >>> 0) === (TEST_JOURNAL.tape_checksum >>> 0),
-    "journal.tape_checksum mismatch",
-  );
-  assert((journal.rules_digest >>> 0) === TEST_JOURNAL.rules_digest, "journal.rules_digest mismatch");
   assert(journal.claimant === TEST_JOURNAL.claimant, "journal.claimant mismatch");
 
   assert(groth16.seal.length === 256, "groth16.seal length mismatch");
@@ -249,7 +231,7 @@ test("parses 64-byte journal and strips selector from seal", () => {
   assert(firstWord === 0xefbeadde, "selector word mismatch");
 });
 
-test("throws on journal shorter than 64 bytes", () => {
+test("throws on journal shorter than 49 bytes", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
     journal: new Uint8Array(32),

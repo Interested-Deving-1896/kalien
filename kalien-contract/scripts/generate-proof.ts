@@ -15,7 +15,7 @@
  * Output fixture format:
  *   {
  *     "seal":        "hex string (260 bytes = 4-byte selector + 256-byte proof)",
- *     "journal_raw": "hex string (64-byte AST4 journal)",
+ *     "journal_raw": "hex string (49-byte AST4 journal)",
  *     "image_id":    "hex string (32 bytes LE)",
  *     "journal":     { seed, frame_count, final_score, ... },
  *     "receipt_kind": "groth16",
@@ -28,8 +28,6 @@ import { resolve } from "path";
 import { createHash } from "crypto";
 import { packJournalRaw } from "../../shared/stellar/journal";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
-
-const EXPECTED_RULES_DIGEST = 0x41535434; // "AST4"
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -144,13 +142,10 @@ interface ProverJobResponse {
   result?: {
     proof: {
       journal: {
-        seed: number;
         seed_id: number;
+        seed: number;
         frame_count: number;
         final_score: number;
-        final_rng_state: number;
-        tape_checksum: number;
-        rules_digest: number;
         claimant: string;
       };
       receipt: any;
@@ -295,13 +290,10 @@ function extractSeal(receipt: any): Uint8Array {
 
 function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journal"]): Uint8Array {
   return packJournalRaw({
-    seed: journal.seed >>> 0,
     seed_id: journal.seed_id >>> 0,
+    seed: journal.seed >>> 0,
     frame_count: journal.frame_count >>> 0,
     final_score: journal.final_score >>> 0,
-    final_rng_state: journal.final_rng_state >>> 0,
-    tape_checksum: journal.tape_checksum >>> 0,
-    rules_digest: journal.rules_digest >>> 0,
     claimant: journal.claimant,
   });
 }
@@ -371,12 +363,6 @@ async function main() {
   }
 
   const { proof } = result.result;
-  const rulesDigest = proof.journal.rules_digest >>> 0;
-  if (rulesDigest !== EXPECTED_RULES_DIGEST) {
-    throw new Error(
-      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST4). Update/redeploy prover before generating fixtures.`
-    );
-  }
   if ((proof.journal.final_score >>> 0) === 0) {
     throw new Error(
       "Prover returned final_score=0. Zero-score runs are not accepted for minting fixtures."
@@ -389,7 +375,6 @@ async function main() {
   );
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
-  console.log(`  Rules digest: 0x${rulesDigest.toString(16)}`);
   console.log(
     `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`
   );

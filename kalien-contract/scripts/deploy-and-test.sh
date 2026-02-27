@@ -141,8 +141,8 @@ set_journal_seed_hex() {
   seed_le=$(u32_to_le_hex "$seed")
   seed_id_le=$(u32_to_le_hex "$seed_id")
   # AST4 journal layout starts with:
-  # [0..3] seed (u32 LE), [4..7] seed_id (u32 LE)
-  echo "${seed_le}${seed_id_le}${journal_hex:16}"
+  # [0..3] seed_id (u32 LE), [4..7] seed (u32 LE)
+  echo "${seed_id_le}${seed_le}${journal_hex:16}"
 }
 
 materialize_current_seed() {
@@ -334,7 +334,7 @@ test_submit_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
     warn "SKIP: $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
@@ -424,7 +424,7 @@ test_reject_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
     warn "SKIP: $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
@@ -479,13 +479,12 @@ test_reject_fixture() {
 test_reject_zero_score() {
   info "--- Test: reject synthetic zero-score journal ---"
 
-  # Build a 64-byte AST4 journal with score=0:
-  # seed(u32 LE) + seed_id(u32 LE) + frames + score + rng + checksum + rules_digest
-  # + claimant(kind=0 + 32-byte payload) + 3 reserved zero bytes.
-  # seed=0xdeadbeef seed_id=0 frames=100 score=0 rng=0 checksum=0 rules_digest=AST4(0x41535434)
+  # Build a 49-byte AST4 journal with score=0:
+  # seed_id(u32 LE) + seed(u32 LE) + frames + score + claimant(kind=0 + 32-byte payload).
+  # seed_id=0 seed=0xdeadbeef frames=100 score=0
   local claimant_hex
   claimant_hex=$(printf '00%064x' 0)
-  local journal_hex="efbeadde000000006400000000000000000000000000000034545341${claimant_hex}000000"
+  local journal_hex="00000000efbeadde6400000000000000${claimant_hex}"
   if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
     err "failed to materialize live seed for zero-score rejection test"
     TOTAL=$((TOTAL + 1))
@@ -643,7 +642,7 @@ test_submit_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
     warn "SKIP: Groth16 $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
@@ -692,7 +691,7 @@ test_reject_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
     warn "SKIP: Groth16 $label fixture is not AST4-compatible in forward-only mode"
     return
   fi

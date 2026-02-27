@@ -4,9 +4,8 @@ use crate::{
     AsteroidsScoreContract, AsteroidsScoreContractArgs, AsteroidsScoreContractClient, CurrentSeed,
     ScoreError, JOURNAL_CLAIMANT_ENCODED_LEN, JOURNAL_CLAIMANT_KIND_ACCOUNT,
     JOURNAL_CLAIMANT_KIND_CONTRACT, JOURNAL_CLAIMANT_OFFSET, JOURNAL_FINAL_SCORE_OFFSET,
-    JOURNAL_FRAME_COUNT_OFFSET, JOURNAL_LEN, JOURNAL_RULES_DIGEST_OFFSET, JOURNAL_SEED_ID_OFFSET,
-    JOURNAL_SEED_OFFSET, MAX_SEED_AGE_WINDOWS, RULES_DIGEST, SEED_INTERVAL_SECONDS,
-    TOKEN_DECIMALS_SCALE,
+    JOURNAL_FRAME_COUNT_OFFSET, JOURNAL_LEN, JOURNAL_SEED_ID_OFFSET, JOURNAL_SEED_OFFSET,
+    MAX_SEED_AGE_WINDOWS, RULES_DIGEST, SEED_INTERVAL_SECONDS, TOKEN_DECIMALS_SCALE,
 };
 use soroban_sdk::{
     address_payload::AddressPayload,
@@ -106,18 +105,14 @@ fn make_journal(
 ) -> Bytes {
     let mut buf = [0u8; JOURNAL_LEN as usize];
 
-    buf[JOURNAL_SEED_OFFSET as usize..(JOURNAL_SEED_OFFSET + 4) as usize]
-        .copy_from_slice(&seed.to_le_bytes());
     buf[JOURNAL_SEED_ID_OFFSET as usize..(JOURNAL_SEED_ID_OFFSET + 4) as usize]
         .copy_from_slice(&seed_id.to_le_bytes());
+    buf[JOURNAL_SEED_OFFSET as usize..(JOURNAL_SEED_OFFSET + 4) as usize]
+        .copy_from_slice(&seed.to_le_bytes());
     buf[JOURNAL_FRAME_COUNT_OFFSET as usize..(JOURNAL_FRAME_COUNT_OFFSET + 4) as usize]
         .copy_from_slice(&frame_count.to_le_bytes());
     buf[JOURNAL_FINAL_SCORE_OFFSET as usize..(JOURNAL_FINAL_SCORE_OFFSET + 4) as usize]
         .copy_from_slice(&final_score.to_le_bytes());
-    buf[16..20].copy_from_slice(&99u32.to_le_bytes());
-    buf[20..24].copy_from_slice(&0xDEADu32.to_le_bytes());
-    buf[JOURNAL_RULES_DIGEST_OFFSET as usize..(JOURNAL_RULES_DIGEST_OFFSET + 4) as usize]
-        .copy_from_slice(&RULES_DIGEST.to_le_bytes());
 
     let mut claimant_raw = [0u8; JOURNAL_CLAIMANT_ENCODED_LEN];
     match claimant

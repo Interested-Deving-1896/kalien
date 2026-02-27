@@ -73,7 +73,10 @@ fn champion_registry_matches_bot_roster_and_files() -> Result<()> {
 
     if let Some(lock) = &registry.record_lock_bot {
         if create_bot(&lock.bot_id).is_none() {
-            return Err(anyhow!("record lock bot missing from roster: {}", lock.bot_id));
+            return Err(anyhow!(
+                "record lock bot missing from roster: {}",
+                lock.bot_id
+            ));
         }
         let lock_fp = bot_fingerprint(&lock.bot_id)
             .ok_or_else(|| anyhow!("missing fingerprint for {}", lock.bot_id))?;
@@ -86,7 +89,10 @@ fn champion_registry_matches_bot_roster_and_files() -> Result<()> {
         }
         if strict_artifacts_enabled() {
             if !repo_path(&lock.source_tape).exists() {
-                return Err(anyhow!("record lock source tape missing: {}", lock.source_tape));
+                return Err(anyhow!(
+                    "record lock source tape missing: {}",
+                    lock.source_tape
+                ));
             }
             strict_validate_tape(&lock.source_tape)?;
         }

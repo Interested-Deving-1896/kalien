@@ -241,19 +241,20 @@ The browser should never receive privileged backend relay secrets.
 
 ### Journal Packing
 
-Pack 24 bytes from the proof journal fields (all u32 LE):
+Pack 49 bytes from the proof journal fields:
+- `seed_id`, `seed`, `frame_count`, `final_score` as u32 LE
+- claimant as `kind(1) + id(32)`
 
 ```typescript
 function packJournal(journal: ProofJournal): Uint8Array {
-  const buf = new ArrayBuffer(24);
-  const view = new DataView(buf);
-  view.setUint32(0, journal.seed, true);
-  view.setUint32(4, journal.frame_count, true);
-  view.setUint32(8, journal.final_score, true);
-  view.setUint32(12, 0, true);              // reserved
-  view.setUint32(16, 0, true);              // reserved
-  view.setUint32(20, journal.rules_digest, true);
-  return new Uint8Array(buf);
+  const bytes = new Uint8Array(49);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, journal.seed_id, true);
+  view.setUint32(4, journal.seed, true);
+  view.setUint32(8, journal.frame_count, true);
+  view.setUint32(12, journal.final_score, true);
+  bytes.set(encodeClaimantForJournal(journal.claimant), 16);
+  return bytes;
 }
 ```
 

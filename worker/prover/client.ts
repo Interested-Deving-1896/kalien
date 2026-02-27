@@ -590,13 +590,6 @@ export function summarizeProof(response: ProverGetJobResponse): ProofResultSumma
   } catch {
     throw new Error("prover returned invalid claimant in journal; expected Stellar G... or C...");
   }
-  const digest = result.proof.journal.rules_digest >>> 0;
-  if (digest !== EXPECTED_RULES_DIGEST >>> 0) {
-    throw new Error(
-      `unexpected rules digest 0x${digest.toString(16).padStart(8, "0")} (expected 0x${EXPECTED_RULES_DIGEST.toString(16).padStart(8, "0")})`,
-    );
-  }
-
   return {
     elapsedMs: result.elapsed_ms,
     requestedReceiptKind: result.proof.requested_receipt_kind,

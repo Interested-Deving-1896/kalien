@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatUtcDateTime } from "../../src/time";
+import { formatUtcDateTime } from "../../src/lib/time";
 
 describe("formatUtcDateTime", () => {
   it("formats numeric timestamps in UTC", () => {

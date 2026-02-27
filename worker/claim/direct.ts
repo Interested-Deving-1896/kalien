@@ -1,4 +1,4 @@
-import { Address, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, xdr } from "@stellar/stellar-sdk/minimal";
 import {
   ChannelsClient,
   PluginExecutionError,
@@ -27,7 +27,7 @@ interface DirectClaimConfig {
 
 const SEED_INTERVAL_SECONDS = 600;
 const SEED_REFRESH_COOLDOWN_MS = 2_500;
-const SEED_REFRESH_RECHECK_DELAYS_MS = [500, 1_000, 1_500] as const;
+const SEED_LEDGER_FETCH_TIMEOUT_MS = 15_000;
 
 let inFlightSeedEnsureSeedId: number | null = null;
 let inFlightSeedEnsurePromise: Promise<EnsureCurrentEpochSeedResult> | null = null;
@@ -614,25 +614,87 @@ function buildInvokePayloadForContractFn(
   };
 }
 
+function buildSeedByIdLedgerKeyXdr(contractId: string, seedId: number): string {
+  const contractAddress = Address.fromString(contractId).toScAddress();
+  const seedKey = xdr.ScVal.scvVec([
+    xdr.ScVal.scvSymbol("SeedById"),
+    xdr.ScVal.scvU32(seedId >>> 0),
+  ]);
+  const ledgerKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: contractAddress,
+      key: seedKey,
+      durability: xdr.ContractDataDurability.temporary(),
+    }),
+  );
+  return ledgerKey.toXDR("base64");
+}
+
 async function fetchSeedById(
   contractId: string,
   rpcUrl: string,
   seedId: number,
 ): Promise<number | null> {
-  const server = new rpc.Server(rpcUrl, {
-    allowHttp: rpcUrl.startsWith("http:"),
-  });
-  const key = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("SeedById"), xdr.ScVal.scvU32(seedId)]);
-
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SEED_LEDGER_FETCH_TIMEOUT_MS);
   try {
-    const entry = await server.getContractData(contractId, key, rpc.Durability.Temporary);
-    const value = entry.val.contractData().val();
-    if (value.switch().name !== "scvU32") {
+    const keyXdr = buildSeedByIdLedgerKeyXdr(contractId, seedId);
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getLedgerEntries",
+        params: {
+          keys: [keyXdr],
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`getLedgerEntries HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>;
+    const rpcError = asObject(payload.error);
+    if (rpcError) {
+      const code = typeof rpcError.code === "number" ? rpcError.code : null;
+      const message = typeof rpcError.message === "string" ? rpcError.message : "unknown rpc error";
+      throw new Error(code !== null ? `getLedgerEntries RPC error ${code}: ${message}` : message);
+    }
+
+    const result = asObject(payload.result);
+    const first = Array.isArray(result?.entries) ? asObject(result.entries[0]) : null;
+    if (!first) {
       return null;
     }
+
+    const entryXdr = typeof first.xdr === "string" ? first.xdr : null;
+    if (!entryXdr) {
+      return null;
+    }
+
+    const entry = xdr.LedgerEntryData.fromXDR(entryXdr, "base64");
+    if (entry.switch().value !== xdr.LedgerEntryType.contractData().value) {
+      return null;
+    }
+
+    const value = entry.contractData().val();
+    if (value.switch().value !== xdr.ScValType.scvU32().value) {
+      return null;
+    }
+
     return value.u32() >>> 0;
-  } catch {
+  } catch (error) {
+    console.warn("[seed-refresh] fetchSeedById: failed", { rpcUrl, seedId, error: safeErrorMessage(error) });
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -649,8 +711,7 @@ function currentSeedIdWithSecondsLeft(nowMs: number = Date.now()): {
 export interface CurrentEpochSeedState {
   seedId: number;
   secondsLeft: number;
-  materializedSeed: number | null;
-  activeSeed: number | null;
+  seed: number | null;
 }
 
 export interface SeedRefreshResult {
@@ -679,13 +740,8 @@ export async function readCurrentEpochSeedState(env: WorkerEnv): Promise<Current
 
   const rpcUrl = resolveBindingsRpcUrl(env);
   const { seedId, secondsLeft } = currentSeedIdWithSecondsLeft();
-  const materializedSeed = await fetchSeedById(scoreContractId, rpcUrl, seedId);
-  return {
-    seedId,
-    secondsLeft,
-    materializedSeed: materializedSeed ?? null,
-    activeSeed: materializedSeed ?? null,
-  };
+  const seed = await fetchSeedById(scoreContractId, rpcUrl, seedId);
+  return { seedId, secondsLeft, seed };
 }
 
 export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResult> {
@@ -707,7 +763,7 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
     phase = "build_payload_current_seed";
     const payload = buildCurrentSeedPayload(config.scoreContractId);
 
-    console.log("[seed-refresh] submitting current_seed() to materialize current seed_id", {
+    console.log("[seed-refresh] submitting current_seed() to create seed for current epoch", {
       contractId: config.scoreContractId,
       relayerUrl: config.channels.baseUrl,
     });
@@ -720,7 +776,7 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
     if (result.type === "success") {
       txHashCurrentSeed = result.txHash;
     } else if (!currentSeedAcceptedWithoutHash) {
-      console.warn("[seed-refresh] seed materialization failed", {
+      console.warn("[seed-refresh] current_seed submission failed", {
         type: result.type,
         message: result.message,
       });
@@ -733,7 +789,7 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
       };
     }
     if (currentSeedAcceptedWithoutHash) {
-      console.warn("[seed-refresh] current_seed accepted without hash; verifying chain state", {
+      console.warn("[seed-refresh] current_seed accepted without hash; will retry reading", {
         message: result.message,
       });
     }
@@ -744,8 +800,8 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
     phase = "fetch_seed_by_id";
     let seedId: number | null = null;
     let seed: number | null = null;
-    const materializationReadDelaysMs = currentSeedAcceptedWithoutHash ? [0, 600, 1_500, 3_000] : [0];
-    for (const delayMs of materializationReadDelaysMs) {
+    const readDelaysMs = currentSeedAcceptedWithoutHash ? [0, 600, 1_500, 3_000] : [0, 1_000];
+    for (const delayMs of readDelaysMs) {
       if (delayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
@@ -758,25 +814,24 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
           break;
         }
       }
-      if (seedId !== null && seed !== null) {
+
+      if (seed !== null) {
         break;
       }
     }
 
     if (seedId === null || seed === null) {
-      console.warn("[seed-refresh] unable to read SeedById(seed_id) after materialization", {
-        triedSeedIds: candidateSeedIds,
-      });
+      console.warn("[seed-refresh] unable to read seed after current_seed() submission");
       return {
         success: false,
-        message: "could not read SeedById(seed_id) after materialization",
+        message: "could not read seed after current_seed() submission",
         seedId: null,
         seed: null,
         txHashCurrentSeed: txHashCurrentSeed,
       };
     }
 
-    console.log("[seed-refresh] seed materialized successfully", {
+    console.log("[seed-refresh] seed created successfully", {
       seedId,
       seed,
       txHashCurrentSeed,
@@ -803,13 +858,13 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
 
 export async function ensureCurrentEpochSeed(env: WorkerEnv): Promise<EnsureCurrentEpochSeedResult> {
   let state = await readCurrentEpochSeedState(env);
-  if (state.activeSeed !== null) {
+  if (state.seed !== null) {
     return {
       success: true,
       state,
       refreshAttempted: false,
       refreshed: false,
-      message: "current epoch seed is already indexed",
+      message: "current epoch seed already exists",
       txHashCurrentSeed: null,
     };
   }
@@ -843,25 +898,38 @@ export async function ensureCurrentEpochSeed(env: WorkerEnv): Promise<EnsureCurr
     lastSeedRefreshAttemptAt = Date.now();
 
     const refresh = await submitSeedRefresh(env);
-    state = await readCurrentEpochSeedState(env).catch(() => state);
 
-    // Channels occasionally accepts tx but omits hash; when that happens,
-    // poll chain state briefly before declaring failure.
-    if (state.activeSeed === null && !refresh.success) {
+    // submitSeedRefresh already retries reading the seed after submission.
+    // If it found the seed, use its data directly — no extra RPC call needed.
+    if (refresh.success && refresh.seedId !== null && refresh.seed !== null) {
+      const { secondsLeft } = currentSeedIdWithSecondsLeft();
+      state = {
+        seedId: refresh.seedId,
+        secondsLeft,
+        seed: refresh.seed,
+      };
+      return {
+        success: true,
+        state,
+        refreshAttempted: true,
+        refreshed: true,
+        message: null,
+        txHashCurrentSeed: refresh.txHashCurrentSeed,
+      };
+    }
+
+    // Submission didn't confirm seed yet. Do one single re-read after a
+    // short delay — Channels may have accepted but RPC needs a moment.
+    if (!refresh.success) {
       const msg = (refresh.message ?? "").toLowerCase();
       const shouldRecheck = msg.includes("did not return hash") || isRetryableDirectClaimMessage(msg);
       if (shouldRecheck) {
-        for (const delayMs of SEED_REFRESH_RECHECK_DELAYS_MS) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-          state = await readCurrentEpochSeedState(env).catch(() => state);
-          if (state.activeSeed !== null) {
-            break;
-          }
-        }
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        state = await readCurrentEpochSeedState(env).catch(() => state);
       }
     }
 
-    const indexed = state.activeSeed !== null;
+    const indexed = state.seed !== null;
     return {
       success: indexed,
       state,

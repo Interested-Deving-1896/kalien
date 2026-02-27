@@ -1,4 +1,4 @@
-import { Address, StrKey } from "@stellar/stellar-sdk";
+import { Address, StrKey } from "@stellar/stellar-sdk/minimal";
 
 export type ClaimantStrKeyType = "account" | "contract";
 

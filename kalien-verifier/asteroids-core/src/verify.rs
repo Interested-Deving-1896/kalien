@@ -4,7 +4,7 @@ use stellar_strkey::{ed25519, Contract, Strkey};
 
 use crate::constants::{
     JOURNAL_CLAIMANT_ENCODED_LEN, JOURNAL_CLAIMANT_KIND_ACCOUNT, JOURNAL_CLAIMANT_KIND_CONTRACT,
-    JOURNAL_LEN, MAX_FRAMES_DEFAULT, RULES_DIGEST,
+    JOURNAL_LEN, MAX_FRAMES_DEFAULT,
 };
 use crate::error::VerifyError;
 use crate::sim::{replay_strict, ReplayResult, ReplayViolation};
@@ -20,25 +20,18 @@ pub struct GuestInput {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationJournal {
-    pub seed: u32,
     pub seed_id: u32,
+    pub seed: u32,
     pub frame_count: u32,
     pub final_score: u32,
-    pub final_rng_state: u32,
-    pub tape_checksum: u32,
-    pub rules_digest: u32,
     pub claimant: String,
 }
 
-const JOURNAL_SEED_OFFSET: usize = 0;
-const JOURNAL_SEED_ID_OFFSET: usize = 4;
+const JOURNAL_SEED_ID_OFFSET: usize = 0;
+const JOURNAL_SEED_OFFSET: usize = 4;
 const JOURNAL_FRAME_COUNT_OFFSET: usize = 8;
 const JOURNAL_FINAL_SCORE_OFFSET: usize = 12;
-const JOURNAL_FINAL_RNG_STATE_OFFSET: usize = 16;
-const JOURNAL_TAPE_CHECKSUM_OFFSET: usize = 20;
-const JOURNAL_RULES_DIGEST_OFFSET: usize = 24;
-const JOURNAL_CLAIMANT_OFFSET: usize = 28;
-const JOURNAL_RESERVED_OFFSET: usize = JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN;
+const JOURNAL_CLAIMANT_OFFSET: usize = 16;
 
 /// Verify guest input end-to-end and produce a canonical journal.
 ///
@@ -75,7 +68,7 @@ pub fn verify_tape(bytes: &[u8], max_frames: u32) -> Result<VerificationJournal,
 /// The function:
 /// - parses the tape format,
 /// - replays inputs against deterministic game logic,
-/// - checks claimed frame count / score / RNG against replay results,
+/// - checks claimed frame count / score against replay results,
 /// - emits canonical journal fields on success.
 fn verify_tape_with_replay<F>(
     bytes: &[u8],
@@ -109,13 +102,10 @@ where
     }
 
     Ok(VerificationJournal {
-        seed: tape.header.seed,
         seed_id,
+        seed: tape.header.seed,
         frame_count: tape.header.frame_count,
         final_score: replay_result.final_score,
-        final_rng_state: 0,
-        tape_checksum: 0,
-        rules_digest: RULES_DIGEST,
         claimant,
     })
 }
@@ -123,23 +113,17 @@ where
 /// Encode a journal into the fixed-width raw byte format committed by the guest.
 ///
 /// Layout is stable and deterministic:
-/// `7 * u32 LE` + `claimant(kind + 32-byte id)` + `3 reserved zero bytes`.
+/// `4 * u32 LE` + `claimant(kind + 32-byte id)`.
 pub fn encode_journal_raw(journal: &VerificationJournal) -> Result<[u8; JOURNAL_LEN], VerifyError> {
     let claimant = encode_claimant_for_journal(&journal.claimant)?;
     let mut raw = [0u8; JOURNAL_LEN];
-    raw[JOURNAL_SEED_OFFSET..JOURNAL_SEED_OFFSET + 4].copy_from_slice(&journal.seed.to_le_bytes());
     raw[JOURNAL_SEED_ID_OFFSET..JOURNAL_SEED_ID_OFFSET + 4]
         .copy_from_slice(&journal.seed_id.to_le_bytes());
+    raw[JOURNAL_SEED_OFFSET..JOURNAL_SEED_OFFSET + 4].copy_from_slice(&journal.seed.to_le_bytes());
     raw[JOURNAL_FRAME_COUNT_OFFSET..JOURNAL_FRAME_COUNT_OFFSET + 4]
         .copy_from_slice(&journal.frame_count.to_le_bytes());
     raw[JOURNAL_FINAL_SCORE_OFFSET..JOURNAL_FINAL_SCORE_OFFSET + 4]
         .copy_from_slice(&journal.final_score.to_le_bytes());
-    raw[JOURNAL_FINAL_RNG_STATE_OFFSET..JOURNAL_FINAL_RNG_STATE_OFFSET + 4]
-        .copy_from_slice(&journal.final_rng_state.to_le_bytes());
-    raw[JOURNAL_TAPE_CHECKSUM_OFFSET..JOURNAL_TAPE_CHECKSUM_OFFSET + 4]
-        .copy_from_slice(&journal.tape_checksum.to_le_bytes());
-    raw[JOURNAL_RULES_DIGEST_OFFSET..JOURNAL_RULES_DIGEST_OFFSET + 4]
-        .copy_from_slice(&journal.rules_digest.to_le_bytes());
     raw[JOURNAL_CLAIMANT_OFFSET..JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN]
         .copy_from_slice(&claimant);
     Ok(raw)
@@ -147,7 +131,7 @@ pub fn encode_journal_raw(journal: &VerificationJournal) -> Result<[u8; JOURNAL_
 
 /// Decode and validate a raw journal byte slice into a structured journal.
 ///
-/// Validation enforces exact length and zeroed reserved bytes.
+/// Validation enforces exact length.
 pub fn decode_journal_raw(raw: &[u8]) -> Result<VerificationJournal, VerifyError> {
     if raw.len() != JOURNAL_LEN {
         return Err(VerifyError::JournalLengthMismatch {
@@ -155,21 +139,12 @@ pub fn decode_journal_raw(raw: &[u8]) -> Result<VerificationJournal, VerifyError
             actual: raw.len(),
         });
     }
-    if raw[JOURNAL_RESERVED_OFFSET] != 0
-        || raw[JOURNAL_RESERVED_OFFSET + 1] != 0
-        || raw[JOURNAL_RESERVED_OFFSET + 2] != 0
-    {
-        return Err(VerifyError::JournalReservedNonZero);
-    }
 
     Ok(VerificationJournal {
-        seed: read_u32_le(raw, JOURNAL_SEED_OFFSET),
         seed_id: read_u32_le(raw, JOURNAL_SEED_ID_OFFSET),
+        seed: read_u32_le(raw, JOURNAL_SEED_OFFSET),
         frame_count: read_u32_le(raw, JOURNAL_FRAME_COUNT_OFFSET),
         final_score: read_u32_le(raw, JOURNAL_FINAL_SCORE_OFFSET),
-        final_rng_state: read_u32_le(raw, JOURNAL_FINAL_RNG_STATE_OFFSET),
-        tape_checksum: read_u32_le(raw, JOURNAL_TAPE_CHECKSUM_OFFSET),
-        rules_digest: read_u32_le(raw, JOURNAL_RULES_DIGEST_OFFSET),
         claimant: decode_claimant_from_journal_bytes(
             &raw[JOURNAL_CLAIMANT_OFFSET..JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN],
         )?,
@@ -305,7 +280,6 @@ mod tests {
 
         let journal = verify_guest_input(&guest_input).unwrap();
         assert_eq!(journal.frame_count, inputs.len() as u32);
-        assert_eq!(journal.rules_digest, RULES_DIGEST);
     }
 
     #[test]
@@ -412,13 +386,10 @@ mod tests {
     #[test]
     fn journal_raw_roundtrip() {
         let journal = VerificationJournal {
-            seed: 0xDEAD_BEEF,
             seed_id: 123,
+            seed: 0xDEAD_BEEF,
             frame_count: 456,
             final_score: 789,
-            final_rng_state: 0,
-            tape_checksum: 0,
-            rules_digest: RULES_DIGEST,
             claimant: TEST_CLAIMANT.to_string(),
         };
         let raw = encode_journal_raw(&journal).unwrap();
@@ -428,20 +399,24 @@ mod tests {
     }
 
     #[test]
-    fn decode_journal_rejects_non_zero_reserved() {
+    fn decode_journal_rejects_wrong_length() {
         let journal = VerificationJournal {
-            seed: 1,
             seed_id: 2,
+            seed: 1,
             frame_count: 3,
             final_score: 4,
-            final_rng_state: 0,
-            tape_checksum: 0,
-            rules_digest: RULES_DIGEST,
             claimant: TEST_CLAIMANT.to_string(),
         };
-        let mut raw = encode_journal_raw(&journal).unwrap();
-        raw[JOURNAL_RESERVED_OFFSET] = 1;
-        let err = decode_journal_raw(&raw).unwrap_err();
-        assert_eq!(err, VerifyError::JournalReservedNonZero);
+        let raw = encode_journal_raw(&journal).unwrap();
+        let mut too_long = raw.to_vec();
+        too_long.push(0);
+        let err = decode_journal_raw(&too_long).unwrap_err();
+        assert_eq!(
+            err,
+            VerifyError::JournalLengthMismatch {
+                expected: JOURNAL_LEN,
+                actual: JOURNAL_LEN + 1,
+            }
+        );
     }
 }

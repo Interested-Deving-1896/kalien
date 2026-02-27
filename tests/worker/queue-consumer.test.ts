@@ -14,13 +14,15 @@ mock.module("../../worker/boundless/config", () => ({
     (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ?? null,
 }));
 
-mock.module("../../worker/boundless/client", () => ({
-  submitToBoundless: async (
-    _config: unknown,
-    _tape: Uint8Array,
-  ) => {
-    // The env isn't passed directly, so we use a module-level holder
-    return (globalThis as Record<string, unknown>).__boundlessSubmitResult;
+mock.module("../../worker/boundless/sdk/client", () => ({
+  BoundlessClient: class MockBoundlessClient {
+    constructor(_config: unknown) {}
+    async submitRequest(
+      _tape: Uint8Array,
+      _metadata: unknown,
+    ) {
+      return (globalThis as Record<string, unknown>).__boundlessSubmitResult;
+    }
   },
 }));
 
@@ -93,6 +95,7 @@ function makeCoordinator(overrides: Record<string, unknown> = {}): Record<string
     markClaimRetry: async () => null,
     markClaimSucceeded: async () => null,
     hasActiveVastJob: async () => false,
+    listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
   };
 
   const merged = { ...defaults, ...overrides };
@@ -154,9 +157,10 @@ describe("handleQueueBatch (Boundless)", () => {
         status: "dispatching",
         tape: {
           key: "tapes/job-1",
-          metadata: { finalScore: 100 },
+          metadata: { finalScore: 100, seedId: 1 },
         },
         prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
         createdAt: new Date().toISOString(),
       }),
       markProverAccepted: async () => null,
@@ -191,9 +195,10 @@ describe("handleQueueBatch (Boundless)", () => {
         status: "dispatching",
         tape: {
           key: "tapes/job-1",
-          metadata: { finalScore: 100 },
+          metadata: { finalScore: 100, seedId: 1 },
         },
         prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
         createdAt: new Date().toISOString(),
       }),
     });
@@ -221,9 +226,10 @@ describe("handleQueueBatch (Boundless)", () => {
         status: "dispatching",
         tape: {
           key: "tapes/job-1",
-          metadata: { finalScore: 100 },
+          metadata: { finalScore: 100, seedId: 1 },
         },
         prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
         createdAt: new Date().toISOString(),
       }),
     });
@@ -255,9 +261,10 @@ describe("handleQueueBatch (Boundless)", () => {
         status: "dispatching",
         tape: {
           key: "tapes/job-1",
-          metadata: { finalScore: 100 },
+          metadata: { finalScore: 100, seedId: 1 },
         },
         prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
         createdAt: new Date().toISOString(),
       }),
     });
@@ -289,9 +296,10 @@ describe("handleQueueBatch (Boundless)", () => {
         status: "dispatching",
         tape: {
           key: "tapes/job-1",
-          metadata: { finalScore: 100 },
+          metadata: { finalScore: 100, seedId: 1 },
         },
         prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
         createdAt: new Date().toISOString(),
       }),
     });
@@ -358,9 +366,10 @@ describe("handleVastQueueBatch (VastAI)", () => {
         status: "dispatching",
         tape: {
           key: "tapes/job-1",
-          metadata: { finalScore: 100 },
+          metadata: { finalScore: 100, seedId: 1 },
         },
         prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
         createdAt: new Date().toISOString(),
       }),
       markProverAccepted: async () => null,
@@ -431,6 +440,8 @@ describe("handleDlqBatch", () => {
 // Claim queue
 // ---------------------------------------------------------------------------
 
+const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
 describe("handleClaimQueueBatch", () => {
   it("acks when job not succeeded", async () => {
     const coordinator = makeCoordinator({
@@ -460,21 +471,22 @@ describe("handleClaimQueueBatch", () => {
       beginClaimAttempt: async () => ({
         jobId: "job-1",
         status: "succeeded",
-        claim: { status: "submitting", claimantAddress: "GABC" },
+        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
         result: {
           summary: {
             journal: {
+              seed_id: 1,
               seed: 1,
               frame_count: 10,
               final_score: 100,
-              final_rng_state: 1,
-              tape_checksum: 1,
-              rules_digest: 1,
+              claimant: TEST_CLAIMANT,
             },
           },
           artifactKey: "results/job-1.json",
         },
       }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
     });
     const msg = makeMessage({ jobId: "job-1" });
     const env = makeEnv({
@@ -499,21 +511,22 @@ describe("handleClaimQueueBatch", () => {
       beginClaimAttempt: async () => ({
         jobId: "job-1",
         status: "succeeded",
-        claim: { status: "submitting", claimantAddress: "GABC" },
+        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
         result: {
           summary: {
             journal: {
+              seed_id: 1,
               seed: 1,
               frame_count: 10,
               final_score: 100,
-              final_rng_state: 1,
-              tape_checksum: 1,
-              rules_digest: 1,
+              claimant: TEST_CLAIMANT,
             },
           },
           artifactKey: "results/job-1.json",
         },
       }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
     });
     const msg = makeMessage({ jobId: "job-1" }, 1);
     const env = makeEnv({
@@ -538,21 +551,22 @@ describe("handleClaimQueueBatch", () => {
       beginClaimAttempt: async () => ({
         jobId: "job-1",
         status: "succeeded",
-        claim: { status: "submitting", claimantAddress: "GABC" },
+        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
         result: {
           summary: {
             journal: {
+              seed_id: 1,
               seed: 1,
               frame_count: 10,
               final_score: 100,
-              final_rng_state: 1,
-              tape_checksum: 1,
-              rules_digest: 1,
+              claimant: TEST_CLAIMANT,
             },
           },
           artifactKey: "results/job-1.json",
         },
       }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
     });
     const msg = makeMessage({ jobId: "job-1" });
     const env = makeEnv({

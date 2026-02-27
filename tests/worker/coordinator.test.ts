@@ -66,13 +66,10 @@ function makeJob(overrides: Partial<ProofJobRecord> = {}): ProofJobRecord {
         requestedReceiptKind: "groth16",
         producedReceiptKind: "groth16",
         journal: {
-          seed: 42,
           seed_id: 123,
+          seed: 42,
           frame_count: 100,
           final_score: 1337,
-          final_rng_state: 0,
-          tape_checksum: 0,
-          rules_digest: 0x41535434,
           claimant: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
         },
         stats: {

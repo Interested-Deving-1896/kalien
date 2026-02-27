@@ -60,21 +60,17 @@ describe("packJournalRaw", () => {
   it("encodes journal fields as fixed-length little-endian payload", () => {
     const claimant = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     const raw = packJournalRaw({
-      seed: 0xdeadbeef,
       seed_id: 12345,
+      seed: 0xdeadbeef,
       frame_count: 3980,
       final_score: 90,
-      final_rng_state: 0,
-      tape_checksum: 0,
-      rules_digest: 0x41535434,
       claimant,
     });
 
     expect(raw.length).toBe(JOURNAL_LEN);
-    expect(toHex(raw.slice(0, 28))).toBe(
-      "efbeadde393000008c0f00005a000000000000000000000034545341",
+    expect(toHex(raw.slice(0, 16))).toBe(
+      "39300000efbeadde8c0f00005a000000",
     );
-    expect(raw.slice(28, 61)).toEqual(encodeClaimantForJournal(claimant));
-    expect(raw.slice(61, 64)).toEqual(new Uint8Array([0, 0, 0]));
+    expect(raw.slice(16, 49)).toEqual(encodeClaimantForJournal(claimant));
   });
 });

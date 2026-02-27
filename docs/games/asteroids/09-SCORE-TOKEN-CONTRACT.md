@@ -4,7 +4,7 @@
 
 Soroban contract that:
 1. Verifies a RISC Zero proof through the on-chain router.
-2. Validates a fixed 64-byte AST4 journal.
+2. Validates a fixed 49-byte AST4 journal.
 3. Uses claimant encoded in the journal as the canonical reward recipient.
 4. Tracks best score per `(claimant, seed_id)` and mints only the improvement delta.
 
@@ -44,10 +44,10 @@ enum ScoreError {
 
 ### `submit_score(seal: Bytes, journal_raw: Bytes) -> Result<u32, ScoreError>`
 
-1. Enforce exact 64-byte journal length.
-2. Enforce reserved bytes are zero.
+1. Enforce exact 49-byte journal length.
+2. Decode fixed-width journal bytes.
 3. Enforce claimant kind is account or contract.
-4. Parse journal fields and require `rules_digest == 0x41535434` (`AST4`).
+4. Parse journal fields.
 5. Enforce `(seed_id, seed)` is active:
    - `seed_id <= now_seed_id`
    - `now_seed_id - seed_id <= 143` (24h at 10-minute windows)
@@ -71,20 +71,16 @@ No separate indexing method exists.
 
 ## Journal Format
 
-Fixed length: `64` bytes.
+Fixed length: `49` bytes.
 
-- 7 x `u32` little-endian fields at offsets `0..27`
-  - `seed`
+- 4 x `u32` little-endian fields at offsets `0..15`
   - `seed_id`
+  - `seed`
   - `frame_count`
   - `final_score`
-  - `reserved` (always 0)
-  - `reserved` (always 0)
-  - `rules_digest`
-- claimant payload at `28..60`
-  - byte `28`: claimant kind (`0 = account`, `1 = contract`)
-  - bytes `29..60`: 32-byte address payload
-- reserved bytes `61..63` must be `0`
+- claimant payload at `16..48`
+  - byte `16`: claimant kind (`0 = account`, `1 = contract`)
+  - bytes `17..48`: 32-byte address payload
 
 ## Read Methods
 

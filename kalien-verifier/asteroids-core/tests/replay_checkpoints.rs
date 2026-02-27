@@ -44,11 +44,7 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         *input = (rng.next() & 0x0F) as u8;
     }
     let replay_result = replay(seed, &inputs);
-    let bytes = serialize_tape(
-        seed,
-        &inputs,
-        replay_result.final_score,
-    );
+    let bytes = serialize_tape(seed, &inputs, replay_result.final_score);
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
     let checkpoints = replay_with_checkpoints(tape.header.seed, &tape.inputs, 50);
 
@@ -74,11 +70,7 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         *input = (rng.next() & 0x0F) as u8;
     }
     let replay_result = replay(seed, &inputs);
-    let bytes = serialize_tape(
-        seed,
-        &inputs,
-        replay_result.final_score,
-    );
+    let bytes = serialize_tape(seed, &inputs, replay_result.final_score);
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
     let checkpoints = replay_with_checkpoints(tape.header.seed, &tape.inputs, 200);
 

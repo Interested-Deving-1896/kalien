@@ -4,7 +4,7 @@
 - Leaderboard API is sourced from ingested chain events, not proof-job records.
 - Source event expected: `score_submitted` (canonical, forward-only).
 - Event payload consumed for leaderboard/analytics:
-  - Journal mirror: `seed`, `frame_count`, `final_score`, `final_rng_state`, `tape_checksum`, `rules_digest`
+  - Journal mirror: `seed`, `frame_count`, `final_score`
   - Reward context: `claimant`, `previous_best`, `new_best`, `minted_delta`, `journal_digest`
   - Metadata: `event_id`, `tx_hash`, `event_index`, `ledger`, `closed_at`
 - Ingestion is idempotent by `eventId` and safe to re-run.

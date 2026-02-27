@@ -331,35 +331,14 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       success: true,
       seed_id: state.seedId,
       seconds_left: state.secondsLeft,
-      seed: state.activeSeed,
-      materialized_seed: state.materializedSeed,
-      indexed: state.activeSeed !== null,
+      seed: state.seed,
+      indexed: state.seed !== null,
     });
   });
 
   api.post("/seed/refresh", async (c) => {
-    let currentState: Awaited<ReturnType<typeof readCurrentEpochSeedState>>;
-    try {
-      currentState = await readCurrentEpochSeedState(c.env);
-    } catch (error) {
-      return jsonError(c, 503, safeErrorMessage(error));
-    }
-
-    if (currentState.activeSeed !== null) {
-      return c.json(
-        {
-          success: false,
-          error: "current epoch seed is already indexed",
-          seed_id: currentState.seedId,
-          seconds_left: currentState.secondsLeft,
-          seed: currentState.activeSeed,
-          materialized_seed: currentState.materializedSeed,
-          indexed: true,
-        },
-        409,
-      );
-    }
-
+    // ensureCurrentEpochSeed already checks if the seed exists
+    // and has its own cooldown logic — no need to pre-check here.
     let result;
     try {
       result = await ensureCurrentEpochSeed(c.env);
@@ -374,12 +353,11 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return c.json(
         {
           success: false,
-          error: result.message ?? "unable to refresh current epoch seed",
+          error: result.message ?? "unable to create current epoch seed",
           seed_id: result.state.seedId,
           seconds_left: result.state.secondsLeft,
-          seed: result.state.activeSeed,
-          materialized_seed: result.state.materializedSeed,
-          indexed: result.state.activeSeed !== null,
+          seed: result.state.seed,
+          indexed: result.state.seed !== null,
           refresh_attempted: result.refreshAttempted,
           refreshed: result.refreshed,
           tx_hash_current_seed: result.txHashCurrentSeed,
@@ -393,9 +371,8 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       success: true,
       seed_id: result.state.seedId,
       seconds_left: result.state.secondsLeft,
-      seed: result.state.activeSeed,
-      materialized_seed: result.state.materializedSeed,
-      indexed: result.state.activeSeed !== null,
+      seed: result.state.seed,
+      indexed: result.state.seed !== null,
       refresh_attempted: result.refreshAttempted,
       refreshed: result.refreshed,
       message: result.message,
