@@ -24,7 +24,6 @@ struct BenchmarkJson {
     seed_id: u32,
     frame_count: u32,
     final_score: u32,
-    final_rng_state: u32,
     tape_checksum: u32,
     rules_digest: u32,
     claimant: String,
@@ -128,13 +127,12 @@ fn main() -> Result<()> {
 
     let tape_bytes = fs::read(&cli.tape_path)
         .with_context(|| format!("failed to read tape: {}", cli.tape_path.display()))?;
-    let (expected_seed, expected_frame_count, expected_score, expected_rng_state) = {
+    let (expected_seed, expected_frame_count, expected_score) = {
         let tape = parse_tape(&tape_bytes, cli.max_frames).context("failed to parse tape")?;
         (
             tape.header.seed,
             tape.header.frame_count,
             tape.footer.final_score,
-            tape.footer.final_rng_state,
         )
     };
 
@@ -173,18 +171,15 @@ fn main() -> Result<()> {
     if journal.seed != expected_seed
         || journal.frame_count != expected_frame_count
         || journal.final_score != expected_score
-        || journal.final_rng_state != expected_rng_state
     {
         return Err(anyhow!(
-            "journal output mismatch: seed={:#x}/{:#x} frames={}/{} score={}/{} rng={:#x}/{:#x}",
+            "journal output mismatch: seed={:#x}/{:#x} frames={}/{} score={}/{}",
             journal.seed,
             expected_seed,
             journal.frame_count,
             expected_frame_count,
             journal.final_score,
             expected_score,
-            journal.final_rng_state,
-            expected_rng_state,
         ));
     }
 
@@ -202,7 +197,6 @@ fn main() -> Result<()> {
             seed_id: journal.seed_id,
             frame_count: journal.frame_count,
             final_score: journal.final_score,
-            final_rng_state: journal.final_rng_state,
             tape_checksum: journal.tape_checksum,
             rules_digest: journal.rules_digest,
             claimant: journal.claimant.clone(),
@@ -222,7 +216,6 @@ fn main() -> Result<()> {
     println!("  Claimant:      {}", journal.claimant);
     println!("  Frames:        {}", journal.frame_count);
     println!("  Final score:   {}", journal.final_score);
-    println!("  Final RNG:     0x{:08x}", journal.final_rng_state);
     println!("  Tape checksum: 0x{:08x}", journal.tape_checksum);
     println!("  Rules digest:  0x{:08x}", journal.rules_digest);
     println!("  Segments:      {}", segments);

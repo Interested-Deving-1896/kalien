@@ -1,7 +1,7 @@
 pub const TAPE_MAGIC: u32 = 0x5A4B5450;
-pub const TAPE_VERSION: u8 = 3;
+pub const TAPE_VERSION: u8 = 4;
 pub const TAPE_HEADER_SIZE: usize = 16;
-pub const TAPE_FOOTER_SIZE: usize = 12;
+pub const TAPE_FOOTER_SIZE: usize = 8;
 
 pub const MAX_FRAMES_DEFAULT: u32 = 18_000;
 

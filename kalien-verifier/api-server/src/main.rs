@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_rejects_zero_score() {
         let zero_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0, 0xAABB_CCDD);
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0);
         let (_, code) = validate_non_zero_score_tape(&zero_score_tape, MAX_FRAMES_DEFAULT)
             .expect_err("zero score should be rejected");
         assert_eq!(code, "zero_score_not_allowed");
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_accepts_positive_score() {
         let positive_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10, 0xAABB_CCDD);
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10);
         assert!(validate_non_zero_score_tape(&positive_score_tape, MAX_FRAMES_DEFAULT).is_ok());
     }
 

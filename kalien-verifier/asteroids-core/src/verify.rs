@@ -113,8 +113,8 @@ where
         seed_id,
         frame_count: tape.header.frame_count,
         final_score: replay_result.final_score,
-        final_rng_state: replay_result.final_rng_state,
-        tape_checksum: tape.footer.checksum,
+        final_rng_state: 0,
+        tape_checksum: 0,
         rules_digest: RULES_DIGEST,
         claimant,
     })
@@ -273,12 +273,7 @@ mod tests {
 
     fn valid_tape(seed: u32, inputs: &[u8]) -> Vec<u8> {
         let replay_result = replay(seed, inputs);
-        serialize_tape(
-            seed,
-            inputs,
-            replay_result.final_score,
-            replay_result.final_rng_state,
-        )
+        serialize_tape(seed, inputs, replay_result.final_score)
     }
 
     #[test]
@@ -300,12 +295,7 @@ mod tests {
     fn guest_input_uses_default_max_frames_when_zero() {
         let inputs = [0x00u8; 32];
         let replay_result = replay(0x4455_6677, &inputs);
-        let tape = serialize_tape(
-            0x4455_6677,
-            &inputs,
-            replay_result.final_score,
-            replay_result.final_rng_state,
-        );
+        let tape = serialize_tape(0x4455_6677, &inputs, replay_result.final_score);
         let guest_input = GuestInput {
             tape,
             max_frames: 0,
@@ -388,17 +378,7 @@ mod tests {
         let good_tape = valid_tape(0xFEED_BEEF, &inputs);
         assert!(verify_tape(&good_tape, 100).is_ok());
 
-        // The finalRngState field (footer+4..footer+8) is intentionally not
-        // validated by the Rust prover in v3 — it is retained in the tape as a
-        // hint for the TypeScript worker's DigestMatch predicate, but the ZK proof
-        // guarantees correctness of all committed journal fields from replay.
-        let rng_start = footer_offset(inputs.len()) + 4;
-        let rng_end = rng_start + 4;
-
         for idx in 0..good_tape.len() {
-            if idx >= rng_start && idx < rng_end {
-                continue; // finalRngState is not Rust-validated
-            }
             let mut tampered = good_tape.clone();
             tampered[idx] ^= 0x01;
             assert!(
@@ -436,8 +416,8 @@ mod tests {
             seed_id: 123,
             frame_count: 456,
             final_score: 789,
-            final_rng_state: 0xAABB_CCDD,
-            tape_checksum: 0x1122_3344,
+            final_rng_state: 0,
+            tape_checksum: 0,
             rules_digest: RULES_DIGEST,
             claimant: TEST_CLAIMANT.to_string(),
         };
@@ -454,8 +434,8 @@ mod tests {
             seed_id: 2,
             frame_count: 3,
             final_score: 4,
-            final_rng_state: 5,
-            tape_checksum: 6,
+            final_rng_state: 0,
+            tape_checksum: 0,
             rules_digest: RULES_DIGEST,
             claimant: TEST_CLAIMANT.to_string(),
         };

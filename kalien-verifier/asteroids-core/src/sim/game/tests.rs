@@ -192,7 +192,6 @@ fn checked_step_accepts_verified_fixture_inputs() {
         seed,
         &inputs,
         replay_result.final_score,
-        replay_result.final_rng_state,
     );
     let tape = parse_tape(&tape_bytes, 18_000).expect("generated tape should parse");
 
@@ -350,7 +349,6 @@ fn strict_transition_validator_matches_downloads_fixture() {
         seed,
         &inputs,
         replay_result.final_score,
-        replay_result.final_rng_state,
     );
     let tape = parse_tape(&tape_bytes, 18_000).expect("generated tape should parse");
 
