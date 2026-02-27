@@ -13,8 +13,11 @@ export interface ProverAttempt {
   statusUrl: string | null; // "boundless:{requestId}" or Vast.ai job URL
   maxPriceUsd?: number | null; // Boundless: max price offered (USD)
   actualCostUsd: number | null; // Boundless: actual settlement cost in USD
+  lockPriceWei?: string | null; // Boundless: lock price in wei (cached while locked, cleared after payment)
   proverAddress: string | null; // Boundless: on-chain prover address from ProofDelivered event
   fulfillmentTxHash: string | null; // Boundless: tx hash of the fulfillment
+  programCycles?: number | null; // Boundless: guest program cycles from indexer API
+  totalCycles?: number | null; // Boundless: total cycles (program + overhead) from indexer API
 }
 
 export interface ClaimAttempt {
@@ -103,7 +106,6 @@ export interface ProverTracking {
   segmentLimitPo2: number | null;
   lastPolledAt: string | null;
   pollingErrors: number;
-  recoveryAttempts: number;
   ipfsCid?: string | null;
 }
 
@@ -315,10 +317,12 @@ export interface ProverSuccessMetadata {
   actualCostUsd: number | null;
   proverAddress: string | null;
   fulfillmentTxHash: string | null;
+  programCycles?: number | null;
+  totalCycles?: number | null;
 }
 
 export type ProverPollResult =
-  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean }
+  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean; lockPriceWei?: bigint }
   | { type: "success"; response: ProverGetJobResponse; metadata?: ProverSuccessMetadata }
   | { type: "retry"; message: string; clearProverJob?: boolean; errorCode?: string; errorDetail?: string }
   | { type: "fatal"; message: string; errorCode?: string; errorDetail?: string };

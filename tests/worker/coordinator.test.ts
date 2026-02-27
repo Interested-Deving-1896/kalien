@@ -58,7 +58,6 @@ function makeJob(overrides: Partial<ProofJobRecord> = {}): ProofJobRecord {
       segmentLimitPo2: 21,
       lastPolledAt: "2026-01-01T00:01:00.000Z",
       pollingErrors: 0,
-      recoveryAttempts: 0,
     },
     proverAttempts: [makeAttempt()],
     result: {

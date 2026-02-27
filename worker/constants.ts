@@ -25,7 +25,6 @@ export const OPPORTUNISTIC_POLL_STALE_MS = 5_000;
 export const DEFAULT_MAX_JOB_WALL_TIME_MS = 6 * 60 * 60_000; // 6 hours
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
-export const MAX_PROVER_RECOVERY_ATTEMPTS = 0; // replaced by MAX_TOTAL_PROVER_ATTEMPTS fallback system
 export const MAX_TOTAL_PROVER_ATTEMPTS = 4; // 2 Boundless + 2 Vast.ai interleaved
 
 export const DEFAULT_SEGMENT_LIMIT_PO2 = 21;
@@ -52,9 +51,9 @@ export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "internal_error",
 ]);
 
-export const ACTIVE_JOB_KEY = "active_job_id";
 export const ACTIVE_JOBS_KEY = "active_job_ids";
 export const JOB_KEY_PREFIX = "job:";
+export const ORPHAN_SCAN_DONE_KEY = "orphan_scan_done";
 
 // Boundless proving defaults
 export const DEFAULT_BOUNDLESS_POLL_INTERVAL_MS = 5_000;
