@@ -48,7 +48,7 @@ Options:
                              clamp = clamp to prover health bounds
                              strict = fail when requested range exceeds policy
   --receipts <csv>           Comma-separated receipt kinds to benchmark.
-                             Values: composite|succinct|groth16
+                             Values: groth16
                              Default: groth16
   --tapes <csv>              Comma-separated tape labels to benchmark.
                              Values: short|medium|real|all
@@ -203,9 +203,9 @@ for receipt in "${RECEIPTS[@]}"; do
     exit 1
   fi
   case "$receipt" in
-    composite|succinct|groth16) ;;
+    groth16) ;;
     *)
-      echo "ERROR: unsupported receipt kind: $receipt" >&2
+      echo "ERROR: unsupported receipt kind: $receipt (allowed: groth16 only, v4 flow)" >&2
       exit 1
       ;;
   esac
@@ -398,16 +398,20 @@ submit_and_wait() {
         echo "$jr" | python3 -c '
 import json,sys
 d=json.load(sys.stdin)
-r=d.get("result",{})
-p=r.get("proof",{})
-s=p.get("stats",{})
-print(r.get("elapsed_ms",""),
-      s.get("segments",""),
-      s.get("total_cycles",""),
-      s.get("user_cycles",""),
-      s.get("paging_cycles",""),
-      s.get("reserved_cycles",""),
-      p.get("produced_receipt_kind",""))'
+r=d["result"]
+p=r["proof"]
+s=p["stats"]
+requested=p["requested_receipt_kind"]
+produced=p["produced_receipt_kind"]
+if requested != "groth16" or produced != "groth16":
+    raise SystemExit(f"unexpected receipt kind transition: {requested} -> {produced}")
+print(r["elapsed_ms"],
+      s["segments"],
+      s["total_cycles"],
+      s["user_cycles"],
+      s["paging_cycles"],
+      s["reserved_cycles"],
+      produced)'
       )"
 
       printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,succeeded,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,,\n" \

@@ -40,7 +40,7 @@ Usage: scripts/batch-smoke-test.sh [options] <tape-paths-or-dirs...>
 Options:
   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
   --receipts <csv>       Comma-separated list of receipt kinds to run.
-                         Allowed values: composite|groth16
+                         Allowed values: groth16
                          Default: groth16
   --poll <seconds>       Poll interval (default: 5)
   --seed-id <u32>        seed_id bound into the proof journal (default: 0)
@@ -87,11 +87,11 @@ declare -a NORMALIZED_RECEIPTS=()
 for receipt in "${RECEIPTS[@]}"; do
   receipt="$(echo "$receipt" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
   case "$receipt" in
-    composite|groth16)
+    groth16)
       NORMALIZED_RECEIPTS+=("$receipt")
       ;;
     *)
-      echo "ERROR: unsupported receipt kind in --receipts: $receipt (allowed: composite|groth16)" >&2
+      echo "ERROR: unsupported receipt kind in --receipts: $receipt (allowed: groth16 only, v4 flow)" >&2
       exit 1
       ;;
   esac
@@ -358,22 +358,18 @@ echo "BATCH SUMMARY"
 echo "$(date)"
 echo "================================================================"
 echo ""
-printf "%-55s %-12s %-12s\n" "TAPE" "COMPOSITE" "GROTH16"
-printf "%-55s %-12s %-12s\n" "────" "─────────" "───────"
+printf "%-55s %-12s\n" "TAPE" "GROTH16"
+printf "%-55s %-12s\n" "────" "───────"
 
 while IFS=$'\t' read -r frames score seed size tape; do
   tape_name=$(basename "$tape")
-  comp_result="—"
   g16_result="—"
   while IFS=$'\t' read -r rname rstage rstatus; do
-    if [[ "$rname" == "$tape_name" && "$rstage" == "composite" ]]; then
-      comp_result="$rstatus"
-    fi
     if [[ "$rname" == "$tape_name" && "$rstage" == "groth16" ]]; then
       g16_result="$rstatus"
     fi
   done < "$RESULT_FILE"
-  printf "%-55s %-12s %-12s\n" "$tape_name" "$comp_result" "$g16_result"
+  printf "%-55s %-12s\n" "$tape_name" "$g16_result"
 done < "$TAPE_INDEX_FILE"
 
 echo ""

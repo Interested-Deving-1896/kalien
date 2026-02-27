@@ -124,6 +124,11 @@ regenerate_fixture() {
   local seal_hex journal_hex image_id_hex journal_digest_hex
   seal_hex=$(tr -d '[:space:]' < "$FIXTURES_DIR/${out_prefix}.seal")
   journal_hex=$(tr -d '[:space:]' < "$FIXTURES_DIR/${out_prefix}.journal_raw")
+  if ! assert_compact_journal_hex "$journal_hex" "$out_prefix"; then
+    err "$label: generated journal is not the expected 49-byte compact format"
+    FAILED=$((FAILED + 1))
+    return
+  fi
   image_id_hex=$(tr -d '[:space:]' < "$FIXTURES_DIR/${out_prefix}.image_id")
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -164,10 +169,19 @@ echo ""
 
 # Check prover health first
 info "Checking prover health..."
-health=$(curl -sf "$PROVER_URL/health" 2>&1) || {
+health=""
+for attempt in 1 2 3; do
+  if health=$(curl -sS --max-time 15 --retry 2 --retry-delay 1 --retry-all-errors "$PROVER_URL/health" 2>&1); then
+    break
+  fi
+  warn "Prover health check attempt $attempt failed: $health"
+  sleep 1
+  health=""
+done
+if [[ -z "$health" ]]; then
   err "Prover not reachable at $PROVER_URL/health"
   exit 1
-}
+fi
 echo "  $health"
 echo ""
 

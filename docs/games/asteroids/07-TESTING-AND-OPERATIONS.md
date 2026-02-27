@@ -11,7 +11,6 @@
 - Reserved bits set.
 - Checksum mismatch.
 - Footer score mismatch.
-- Footer RNG mismatch.
 
 ### Rule enforcement
 - Cooldown bypass attempts.

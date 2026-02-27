@@ -14,7 +14,7 @@ let tapePath = "";
 let maxFrames = 18_000;
 let journalOut = "";
 let segmentLimitPo2 = 19;
-let receiptKind = "composite";
+let receiptKind = "groth16";
 const usage =
   "Usage: bun run scripts/verify-tape-risc0.ts --tape <path> [--max-frames <n>] [--segment-limit-po2 <n>] [--receipt-kind <kind>] [--journal-out <path>] (dev mode only; default --segment-limit-po2 19)";
 
@@ -72,8 +72,8 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (!["composite", "succinct", "groth16"].includes(receiptKind)) {
-  console.error("Invalid --receipt-kind. Expected composite|succinct|groth16.");
+if (receiptKind !== "groth16") {
+  console.error("Invalid --receipt-kind. Expected groth16 (v4-only flow).");
   process.exit(1);
 }
 

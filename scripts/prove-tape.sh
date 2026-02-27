@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Options (passed as query params):
 #   --seg <n>          segment_limit_po2 (default: 21)
-#   --receipt <kind>   composite|succinct|groth16 (default: groth16)
+#   --receipt <kind>   groth16 only (default: groth16)
 #   --seed-id <u32>    seed_id bound into the proof journal (default: 0)
 #   --claimant <addr>  claimant Stellar address (G...|C...)
 #   --poll <seconds>   Poll interval (default: 5)
@@ -28,7 +28,7 @@ Usage: scripts/prove-tape.sh [prover-url] <tape-file> [options]
 
 Options:
   --seg <n>          segment_limit_po2 (default: 21)
-  --receipt <kind>   composite|succinct|groth16 (default: groth16)
+  --receipt <kind>   groth16 only (default: groth16)
   --seed-id <u32>    seed_id bound into the proof journal (default: 0)
   --claimant <addr>  claimant Stellar address (default: GAAAAAAAA...WHF)
   --poll <seconds>   Poll interval (default: 5)
@@ -110,13 +110,10 @@ if ! [[ "$SEED_ID" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-case "$RECEIPT" in
-  composite|succinct|groth16) ;;
-  *)
-    echo "ERROR: --receipt must be one of: composite, succinct, groth16" >&2
-    exit 1
-    ;;
-esac
+if [[ "$RECEIPT" != "groth16" ]]; then
+  echo "ERROR: --receipt must be groth16 (v4-only flow)" >&2
+  exit 1
+fi
 
 if [[ "$CLEANUP_MODE" != "delete" && "$CLEANUP_MODE" != "keep" ]]; then
   echo "ERROR: --cleanup-mode must be delete or keep" >&2
@@ -133,20 +130,22 @@ trap 'rm -f "$FMT_SCRIPT"' EXIT
 cat > "$FMT_SCRIPT" << 'PYEOF'
 import sys, json
 d = json.load(sys.stdin)
-r = d.get("result", {})
-p = r.get("proof", {})
-s = p.get("stats", {})
-j = p.get("journal", {})
-e = r.get("elapsed_ms", 0)
-segs = s.get("segments", "?")
-tc = s.get("total_cycles", 0)
-uc = s.get("user_cycles", 0)
-pc = s.get("paging_cycles", 0)
-rc = s.get("reserved_cycles", 0)
-score = j.get("final_score", "n/a")
-frames = j.get("frame_count", "n/a")
-rk = p.get("requested_receipt_kind", "?")
-pk = p.get("produced_receipt_kind", "?")
+r = d["result"]
+p = r["proof"]
+s = p["stats"]
+j = p["journal"]
+e = r["elapsed_ms"]
+segs = s["segments"]
+tc = s["total_cycles"]
+uc = s["user_cycles"]
+pc = s["paging_cycles"]
+rc = s["reserved_cycles"]
+score = j["final_score"]
+frames = j["frame_count"]
+rk = p["requested_receipt_kind"]
+pk = p["produced_receipt_kind"]
+if rk != "groth16" or pk != "groth16":
+    raise SystemExit(f"unexpected receipt kind transition: {rk} -> {pk}")
 print(f"Result:  SUCCEEDED")
 print(f"Elapsed: {e/1000:.1f}s ({e} ms)")
 print(f"")
