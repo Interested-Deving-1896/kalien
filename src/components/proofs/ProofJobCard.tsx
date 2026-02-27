@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ChevronDown,
   ExternalLink,
@@ -11,11 +11,11 @@ import {
   DollarSign,
   RotateCw,
 } from "lucide-react";
-import type { ProofJobPublic, ProverAttempt } from "@/proof/api";
-import { getTapeDownloadUrl, retryFailedClaim } from "@/proof/api";
+import type { ClaimAttempt, ProofJobPublic, ProverAttempt } from "@/proof/api";
+import { getTapeDownloadUrl, retryFailedClaim, getProofJob } from "@/proof/api";
 import { ErrorDetailDialog } from "./ErrorDetailDialog";
 import { boundlessExplorerUrl, getActiveBackend } from "@/proof/helpers";
-import { formatBytes, formatDuration, formatHex32 } from "@/lib/format";
+import { formatBytes, formatCycles, formatDuration, formatHex32 } from "@/lib/format";
 import { timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { STELLAR_EXPLORER_TESTNET_BASE } from "@/consts";
@@ -24,7 +24,12 @@ import { ProofStatusBadge } from "./ProofStatusBadge";
 import { BackendBadge } from "./BackendBadge";
 
 function getSuccessfulAttempt(job: ProofJobPublic): ProverAttempt | null {
-  return job.proverAttempts?.find((a) => a.outcome === "success") ?? null;
+  if (!job.proverAttempts || job.proverAttempts.length === 0) return null;
+  for (let i = job.proverAttempts.length - 1; i >= 0; i -= 1) {
+    const attempt = job.proverAttempts[i];
+    if (attempt.outcome === "success") return attempt;
+  }
+  return null;
 }
 
 function computeWallClockMs(attempt: ProverAttempt): number | null {
@@ -33,12 +38,61 @@ function computeWallClockMs(attempt: ProverAttempt): number | null {
   return ms > 0 ? ms : null;
 }
 
-function formatCostUsd(usd: number): string {
-  if (usd < 0.01) return `<$0.01`;
-  return `$${usd.toFixed(2)}`;
+function computeJobWallClockMs(job: ProofJobPublic): number | null {
+  if (!job.createdAt || !job.completedAt) return null;
+  const ms = new Date(job.completedAt).getTime() - new Date(job.createdAt).getTime();
+  return ms > 0 ? ms : null;
 }
 
-function claimStatusLabel(status: string): string {
+function parseIsoMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function formatCostUsd(usd: number): string {
+  if (usd >= 0.01) return `$${usd.toFixed(2)}`;
+  // Show up to 7 decimal places but trim trailing zeros
+  const raw = usd.toFixed(7).replace(/0+$/, "").replace(/\.$/, "");
+  return `$${raw}`;
+}
+
+const CYCLE_INDEXING_WINDOW_MS = 20 * 60 * 1_000;
+
+function isPositiveNumber(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+type AttemptOutcome = ProverAttempt["outcome"] | ClaimAttempt["outcome"];
+
+function attemptOutcomeLabel(outcome: AttemptOutcome): string {
+  switch (outcome) {
+    case "in_progress":
+      return "In Progress";
+    case "success":
+      return "Succeeded";
+    case "failed":
+      return "Failed";
+    default:
+      return outcome;
+  }
+}
+
+/** Returns a string describing what a synthetic (non-hex) tx hash means. */
+function syntheticTxNote(txHash: string | null | undefined): string | null {
+  if (txHash === "superseded-by-higher-score") {
+    return "A higher score for this seed was already on-chain — this claim was not needed";
+  }
+  if (txHash === "prior-attempt") {
+    return "Claim landed in a prior delivery — tx hash not captured";
+  }
+  return null;
+}
+
+function claimStatusLabel(status: string, txHash?: string | null): string {
+  if (status === "succeeded" && txHash === "superseded-by-higher-score") {
+    return "Superseded";
+  }
   switch (status) {
     case "queued":
       return "Queued";
@@ -55,7 +109,10 @@ function claimStatusLabel(status: string): string {
   }
 }
 
-function claimStatusColor(status: string): string {
+function claimStatusColor(status: string, txHash?: string | null): string {
+  if (status === "succeeded" && txHash === "superseded-by-higher-score") {
+    return "text-purple-400";
+  }
   switch (status) {
     case "succeeded":
       return "text-secondary";
@@ -82,18 +139,190 @@ export function ProofJobCard({
   const [job, setJob] = useState(initialJob);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [fastPolling, setFastPolling] = useState(false);
+  const onJobUpdateRef = useRef(onJobUpdate);
+  onJobUpdateRef.current = onJobUpdate;
+  const cycleBackfillInFlightRef = useRef(false);
 
-  // Keep in sync with parent prop updates
-  if (initialJob.updatedAt !== job.updatedAt && !retrying) {
+  // Keep in sync with parent prop updates — only if parent is strictly newer
+  // to avoid overwriting local state after a retry API response.
+  if (new Date(initialJob.updatedAt) > new Date(job.updatedAt) && !retrying) {
     setJob(initialJob);
   }
+
+  // Fast-poll this specific job after a manual retry until the claim settles.
+  useEffect(() => {
+    if (!fastPolling) return;
+
+    const INTERVAL_MS = 2_500;
+    const TIMEOUT_MS = 60_000;
+    const startedAt = Date.now();
+
+    const timerId = setInterval(() => {
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        setFastPolling(false);
+        return;
+      }
+      void (async () => {
+        try {
+          const response = await getProofJob(job.jobId);
+          const updated = response.job;
+          setJob(updated);
+          onJobUpdateRef.current?.(updated);
+          if (updated.claim.status === "succeeded" || updated.claim.status === "failed") {
+            setFastPolling(false);
+          }
+        } catch {
+          // ignore transient poll errors
+        }
+      })();
+    }, INTERVAL_MS);
+
+    return () => clearInterval(timerId);
+  }, [fastPolling, job.jobId]);
 
   const score = job.tape.metadata.finalScore;
   const backend = getActiveBackend(job);
   const result = job.result?.summary ?? null;
-  const stellarTxUrl = job.claim.txHash
-    ? `${STELLAR_EXPLORER_TESTNET_BASE}/tx/${job.claim.txHash}`
+  const resultStats = result?.stats ?? null;
+  const successAttempt = getSuccessfulAttempt(job);
+  const successBackend = successAttempt?.backend ?? null;
+  const wallClockMs = (successAttempt ? computeWallClockMs(successAttempt) : null) ?? computeJobWallClockMs(job);
+  const resultElapsedMs = isPositiveNumber(result?.elapsedMs) ? result.elapsedMs : null;
+  const vastCycles = isPositiveNumber(resultStats?.total_cycles) ? resultStats.total_cycles : null;
+  const attemptTotalCycles = isPositiveNumber(successAttempt?.totalCycles)
+    ? successAttempt.totalCycles
     : null;
+  const totalCycles = vastCycles ?? attemptTotalCycles;
+  const vastSegments = isPositiveNumber(resultStats?.segments) ? resultStats.segments : null;
+  const actualCostUsd = successAttempt?.actualCostUsd;
+  const maxPriceUsd = successAttempt?.maxPriceUsd;
+  const proverAddr = successAttempt?.proverAddress;
+  const waitingForBoundlessCycles =
+    job.status === "succeeded" && successBackend === "boundless" && totalCycles == null;
+  const cycleAnchorMs =
+    parseIsoMs(successAttempt?.endedAt) ??
+    parseIsoMs(job.completedAt) ??
+    parseIsoMs(job.updatedAt);
+  const isCycleIndexingPending =
+    waitingForBoundlessCycles &&
+    (cycleAnchorMs == null || Date.now() - cycleAnchorMs < CYCLE_INDEXING_WINDOW_MS);
+  const cycleValue =
+    totalCycles != null && vastSegments != null
+      ? `${formatCycles(totalCycles)} · ${vastSegments.toLocaleString()} seg`
+      : totalCycles != null
+        ? formatCycles(totalCycles)
+        : null;
+  const durationLabel =
+    resultElapsedMs != null
+      ? "Proved In"
+      : wallClockMs != null
+        ? successBackend === "boundless"
+          ? "Fulfilled In"
+          : "Completed In"
+        : null;
+  const durationValue =
+    resultElapsedMs != null
+      ? formatDuration(resultElapsedMs)
+      : wallClockMs != null
+        ? formatDuration(wallClockMs)
+        : null;
+  const costLabel =
+    actualCostUsd != null ? "Actual Cost" : maxPriceUsd != null ? "Max Cost" : null;
+  const costValue =
+    actualCostUsd != null
+      ? formatCostUsd(actualCostUsd)
+      : maxPriceUsd != null
+        ? formatCostUsd(maxPriceUsd)
+        : null;
+  const proverValue = proverAddr
+    ? `${proverAddr.slice(0, 6)}…${proverAddr.slice(-4)}`
+    : null;
+  const metricItems: Array<{
+    key: string;
+    label: string;
+    value: string;
+    icon?: React.ComponentType<{ className?: string }>;
+    highlight?: boolean;
+  }> = [];
+  if (cycleValue != null) {
+    metricItems.push({ key: "cycles", label: "Total Cycles", value: cycleValue, icon: Cpu });
+  }
+  if (durationLabel != null && durationValue != null) {
+    metricItems.push({
+      key: "duration",
+      label: durationLabel,
+      value: durationValue,
+      icon: Zap,
+      highlight: true,
+    });
+  }
+  if (costLabel != null && costValue != null) {
+    metricItems.push({ key: "cost", label: costLabel, value: costValue, icon: DollarSign });
+  }
+  if (proverValue != null) {
+    metricItems.push({ key: "prover", label: "Prover", value: proverValue });
+  }
+  const showProofMetrics = metricItems.length > 0;
+  const metricsColumnsLgClass =
+    metricItems.length >= 4
+      ? "lg:grid-cols-4"
+      : metricItems.length === 3
+        ? "lg:grid-cols-3"
+        : metricItems.length === 2
+          ? "lg:grid-cols-2"
+          : "lg:grid-cols-1";
+  const cycleBackfillJobId =
+    expanded &&
+    isCycleIndexingPending
+      ? job.jobId
+      : null;
+
+  // While expanded: for succeeded Boundless jobs missing cycles, poll single-job
+  // reads so indexer backfill can appear without a page reload.
+  useEffect(() => {
+    if (!cycleBackfillJobId) return;
+
+    let cancelled = false;
+    let intervalId: number | null = null;
+
+    const refresh = async () => {
+      if (cycleBackfillInFlightRef.current) return;
+      cycleBackfillInFlightRef.current = true;
+      try {
+        const response = await getProofJob(cycleBackfillJobId);
+        if (cancelled) return;
+
+        setJob(response.job);
+        onJobUpdateRef.current?.(response.job);
+
+        const refreshedAttempt = getSuccessfulAttempt(response.job);
+        if (isPositiveNumber(refreshedAttempt?.totalCycles) && intervalId != null) {
+          window.clearInterval(intervalId);
+          intervalId = null;
+        }
+      } catch {
+        // ignore — cycles will stay unavailable until a later refresh succeeds
+      } finally {
+        cycleBackfillInFlightRef.current = false;
+      }
+    };
+
+    void refresh();
+    intervalId = window.setInterval(refresh, 10_000);
+
+    return () => {
+      cancelled = true;
+      if (intervalId != null) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [cycleBackfillJobId]);
+
+  const stellarTxUrl =
+    job.claim.txHash && /^[0-9a-f]{64}$/i.test(job.claim.txHash)
+      ? `${STELLAR_EXPLORER_TESTNET_BASE}/tx/${job.claim.txHash}`
+      : null;
   const isClaimed = job.claim.status === "succeeded";
   const canRetryClaim = job.status === "succeeded" && job.claim.status === "failed";
 
@@ -120,8 +349,8 @@ export function ProofJobCard({
     ];
   }
 
-  const showClaimInfo =
-    job.status === "succeeded" && claimAttempts.length > 0;
+  const showClaimInfo = job.status === "succeeded";
+  const detailsId = `proof-job-details-${job.jobId}`;
 
   async function handleRetryClaim() {
     setRetrying(true);
@@ -130,6 +359,7 @@ export function ProofJobCard({
       const response = await retryFailedClaim(job.jobId);
       setJob(response.job);
       onJobUpdate?.(response.job);
+      setFastPolling(true);
     } catch (err) {
       setRetryError(err instanceof Error ? err.message : "retry failed");
     } finally {
@@ -149,7 +379,11 @@ export function ProofJobCard({
     >
       {/* Main row - always visible */}
       <button
+        type="button"
         onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        aria-label={expanded ? "Hide Proof Details" : "Show Proof Details"}
         className="flex w-full cursor-pointer items-center gap-3 bg-transparent px-4 py-3 text-left transition-colors hover:bg-[rgba(16,38,64,0.25)]"
       >
         {/* Score */}
@@ -191,7 +425,7 @@ export function ProofJobCard({
 
       {/* Expanded details */}
       {expanded && (
-        <div className="grid gap-4 border-t border-border/20 px-4 py-4">
+        <div id={detailsId} className="grid gap-4 border-t border-border/20 px-4 py-4">
           {/* Stats grid */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatItem icon={Trophy} label="Score" value={score.toLocaleString()} />
@@ -204,64 +438,25 @@ export function ProofJobCard({
             <StatItem label="Tape Size" value={formatBytes(job.tape.sizeBytes)} />
           </div>
 
-          {/* Proof results — VastAI provides cycles/segments/elapsed; Boundless does not */}
-          {result &&
-            (() => {
-              const hasProverStats = result.stats.total_cycles > 0 || result.stats.segments > 0;
-              const successAttempt = getSuccessfulAttempt(job);
-              const wallClockMs = successAttempt ? computeWallClockMs(successAttempt) : null;
-              const maxPriceUsd = successAttempt?.maxPriceUsd;
-
-              const actualCostUsd = successAttempt?.actualCostUsd;
-              const proverAddr = successAttempt?.proverAddress;
-
-              return hasProverStats ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {/* Proof metrics */}
+          {showProofMetrics && (
+            <div>
+              <h4 className="m-0 mb-2 font-display text-[0.65rem] uppercase tracking-[0.08em] text-muted-foreground">
+                Proof Metrics
+              </h4>
+              <div className={cn("grid grid-cols-2 gap-3", metricsColumnsLgClass)}>
+                {metricItems.map((metric) => (
                   <StatItem
-                    icon={Cpu}
-                    label="Total Cycles"
-                    value={result.stats.total_cycles.toLocaleString()}
+                    key={metric.key}
+                    icon={metric.icon}
+                    label={metric.label}
+                    value={metric.value}
+                    highlight={metric.highlight}
                   />
-                  <StatItem label="Segments" value={result.stats.segments.toLocaleString()} />
-                  <StatItem
-                    icon={Zap}
-                    label="Proved In"
-                    value={formatDuration(result.elapsedMs)}
-                    highlight
-                  />
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {wallClockMs != null && (
-                    <StatItem
-                      icon={Zap}
-                      label="Fulfilled In"
-                      value={formatDuration(wallClockMs)}
-                      highlight
-                    />
-                  )}
-                  {actualCostUsd != null ? (
-                    <StatItem
-                      icon={DollarSign}
-                      label="Actual Cost"
-                      value={formatCostUsd(actualCostUsd)}
-                    />
-                  ) : maxPriceUsd != null ? (
-                    <StatItem
-                      icon={DollarSign}
-                      label="Max Cost"
-                      value={formatCostUsd(maxPriceUsd)}
-                    />
-                  ) : null}
-                  {proverAddr && (
-                    <StatItem
-                      label="Prover"
-                      value={`${proverAddr.slice(0, 6)}...${proverAddr.slice(-4)}`}
-                    />
-                  )}
-                </div>
-              );
-            })()}
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Attempt history */}
           {job.proverAttempts && job.proverAttempts.length > 0 && (
@@ -291,7 +486,7 @@ export function ProofJobCard({
                           attempt.outcome === "in_progress" && "text-primary",
                         )}
                       >
-                        {attempt.outcome === "in_progress" ? "In Progress" : attempt.outcome}
+                        {attemptOutcomeLabel(attempt.outcome)}
                       </span>
                       {attempt.endedAt && (
                         <span className="text-muted-foreground">{timeAgo(attempt.endedAt)}</span>
@@ -305,7 +500,7 @@ export function ProofJobCard({
                           onClick={(e) => e.stopPropagation()}
                         >
                           Tx
-                          <ExternalLink className="size-3" />
+                          <ExternalLink className="size-3" aria-hidden="true" />
                         </a>
                       )}
                       {explorerUrl && (
@@ -317,12 +512,13 @@ export function ProofJobCard({
                           onClick={(e) => e.stopPropagation()}
                         >
                           Explorer
-                          <ExternalLink className="size-3" />
+                          <ExternalLink className="size-3" aria-hidden="true" />
                         </a>
                       )}
                       {attempt.error && (
                         <ErrorDetailDialog error={attempt.errorDetail ?? attempt.error}>
                           <button
+                            type="button"
                             className="m-0 w-full cursor-pointer truncate bg-transparent text-left text-xs text-destructive/80 hover:text-destructive"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -337,16 +533,17 @@ export function ProofJobCard({
             </div>
           )}
 
-          {/* Claim status — shown when proof succeeded and claim has been attempted */}
+          {/* Claim status */}
           {showClaimInfo && (
             <div>
               <h4 className="m-0 mb-2 font-display text-[0.65rem] uppercase tracking-[0.08em] text-muted-foreground">
                 Claim
-                <span className={cn("ml-2 normal-case tracking-normal", claimStatusColor(job.claim.status))}>
-                  {claimStatusLabel(job.claim.status)}
+                <span className={cn("ml-2 normal-case tracking-normal", claimStatusColor(job.claim.status, job.claim.txHash))}>
+                  {claimStatusLabel(job.claim.status, job.claim.txHash)}
                 </span>
                 {canRetryClaim && (
                   <button
+                    type="button"
                     onClick={handleRetryClaim}
                     disabled={retrying}
                     className={cn(
@@ -355,70 +552,85 @@ export function ProofJobCard({
                     )}
                   >
                     <RotateCw className={cn("size-3", retrying && "animate-spin")} />
-                    {retrying ? "Retrying..." : "Retry"}
+                    {retrying ? "Retrying…" : "Retry"}
                   </button>
                 )}
               </h4>
               {retryError && (
-                <p className="m-0 mb-2 text-xs text-destructive/80">Retry error: {retryError}</p>
+                <p className="m-0 mb-2 text-xs text-destructive/80">
+                  Retry failed. Refresh and try again: {retryError}
+                </p>
               )}
-              <div className="grid gap-1.5">
-                {claimAttempts.map((attempt) => (
-                  <div
-                    key={attempt.index}
-                    className="flex flex-wrap items-center gap-2 rounded-lg border border-border/15 bg-[rgba(8,16,29,0.4)] px-3 py-2 text-xs"
-                  >
-                    <span className="tabular-nums text-muted-foreground">
-                      #{attempt.index + 1}
-                    </span>
-                    <span
-                      className={cn(
-                        "font-display uppercase tracking-wide",
-                        attempt.outcome === "success" && "text-secondary",
-                        attempt.outcome === "failed" && "text-destructive",
-                        attempt.outcome === "in_progress" && "text-primary",
-                      )}
+              {claimAttempts.length === 0 ? (
+                <p className="m-0 text-xs text-muted-foreground">
+                  No claim attempts yet. Submission starts automatically.
+                </p>
+              ) : (
+                <div className="grid gap-1.5">
+                  {claimAttempts.map((attempt) => (
+                    <div
+                      key={attempt.index}
+                      className="flex flex-wrap items-center gap-2 rounded-lg border border-border/15 bg-[rgba(8,16,29,0.4)] px-3 py-2 text-xs"
                     >
-                      {attempt.outcome === "in_progress" ? "In Progress" : attempt.outcome}
-                    </span>
-                    {attempt.endedAt && (
-                      <span className="text-muted-foreground">{timeAgo(attempt.endedAt)}</span>
-                    )}
-                    {attempt.txHash && (
-                      <a
-                        href={`${STELLAR_EXPLORER_TESTNET_BASE}/tx/${attempt.txHash}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="ml-auto inline-flex items-center gap-1 text-secondary no-underline hover:underline"
-                        onClick={(e) => e.stopPropagation()}
+                      <span className="tabular-nums text-muted-foreground">
+                        #{attempt.index + 1}
+                      </span>
+                      <span
+                        className={cn(
+                          "font-display uppercase tracking-wide",
+                          attempt.outcome === "success" && "text-secondary",
+                          attempt.outcome === "failed" && "text-destructive",
+                          attempt.outcome === "in_progress" && "text-primary",
+                        )}
                       >
-                        Tx
-                        <ExternalLink className="size-3" />
-                      </a>
-                    )}
-                    {attempt.error && (
-                      <ErrorDetailDialog error={attempt.errorDetail ?? attempt.error}>
-                        <button
-                          className="m-0 w-full cursor-pointer truncate bg-transparent text-left text-xs text-destructive/80 hover:text-destructive"
+                        {attemptOutcomeLabel(attempt.outcome)}
+                      </span>
+                      {attempt.endedAt && (
+                        <span className="text-muted-foreground">{timeAgo(attempt.endedAt)}</span>
+                      )}
+                      {attempt.txHash && /^[0-9a-f]{64}$/i.test(attempt.txHash) && (
+                        <a
+                          href={`${STELLAR_EXPLORER_TESTNET_BASE}/tx/${attempt.txHash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-auto inline-flex items-center gap-1 text-secondary no-underline hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {attempt.error}
-                        </button>
-                      </ErrorDetailDialog>
-                    )}
-                  </div>
-                ))}
-              </div>
+                          Tx
+                          <ExternalLink className="size-3" aria-hidden="true" />
+                        </a>
+                      )}
+                      {syntheticTxNote(attempt.txHash) && (
+                        <p className="m-0 w-full text-xs text-muted-foreground">
+                          {syntheticTxNote(attempt.txHash)}
+                        </p>
+                      )}
+                      {attempt.error && (
+                        <ErrorDetailDialog error={attempt.errorDetail ?? attempt.error}>
+                          <button
+                            type="button"
+                            className="m-0 w-full cursor-pointer truncate bg-transparent text-left text-xs text-destructive/80 hover:text-destructive"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {attempt.error}
+                          </button>
+                        </ErrorDetailDialog>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
           {/* Links */}
           <div className="flex flex-wrap items-center gap-3">
             <button
+              type="button"
               onClick={() => navigate(`/?replay=${job.jobId}`)}
               className="inline-flex cursor-pointer items-center gap-1.5 bg-transparent text-sm text-primary transition-colors hover:text-primary/80"
             >
-              <Play className="size-3.5" />
+              <Play className="size-3.5" aria-hidden="true" />
               Play Tape
             </button>
             <a
@@ -426,7 +638,7 @@ export function ProofJobCard({
               download
               className="inline-flex items-center gap-1.5 text-sm text-primary no-underline hover:underline"
             >
-              <Download className="size-3.5" />
+              <Download className="size-3.5" aria-hidden="true" />
               Download Tape
             </a>
             {stellarTxUrl && (
@@ -436,7 +648,7 @@ export function ProofJobCard({
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm text-secondary no-underline hover:underline"
               >
-                <ExternalLink className="size-3.5" />
+                <ExternalLink className="size-3.5" aria-hidden="true" />
                 Stellar Tx
               </a>
             )}
