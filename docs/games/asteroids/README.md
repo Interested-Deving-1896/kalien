@@ -21,9 +21,11 @@ ZK/Stellar integration.
 | `12-GUEST-OPTIMIZATION.md` | RISC0 guest and proving optimization notes |
 | `13-ORIGINAL-RULESET-VARIANCE-AUDIT.md` | Current-vs-original gameplay variance audit |
 | `14-VARIANCE-RESOLUTION-PLAN.md` | Resolution strategy for selected variance items |
-| `15-DOCS-PARITY-CHECKLIST.md` | Code-backed docs parity checklist (current session) |
+| `15-DOCS-PARITY-CHECKLIST.md` | Latest docs parity checklist (dated; refresh when implementation changes) |
 
 ## Scope
-- These files are current truth.
-- Historical drafts are intentionally removed.
-- If a decision changes, update the canonical file directly.
+
+- These files are source-of-truth specs.
+- If a decision changes, update the corresponding canonical file directly.
+
+See [docs/README.md](../../README.md) for global docs policy.

@@ -1,11 +1,14 @@
 # Games Docs Guide
 
-Game-specific documentation lives here.
+Game-specific documentation lives in this directory.
 
 ## Domains
-- `asteroids/` - Canonical docs for gameplay, deterministic verification,
-  ZK integration, and Stellar settlement.
+
+- `asteroids/`: canonical docs for gameplay, deterministic verification, ZK integration, and Stellar settlement.
 
 ## Start Here
-- `asteroids/README.md`
-- `asteroids/00-OVERVIEW.md`
+
+- [docs/games/asteroids/README.md](asteroids/README.md)
+- [docs/games/asteroids/00-OVERVIEW.md](asteroids/00-OVERVIEW.md)
+
+See [docs/README.md](../README.md) for global docs policy.
