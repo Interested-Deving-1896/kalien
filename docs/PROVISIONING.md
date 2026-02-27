@@ -293,7 +293,7 @@ npx wrangler deploy
 
 2. **Submit a known-good tape** — verify it completes well under 10 min:
    ```bash
-   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw?receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21' \
+   curl -X POST 'https://risc0-kalien.stellar.buzz/api/jobs/prove-tape/raw?receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21&seed_id=0&claimant=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' \
      -H "x-api-key: $API_KEY" \
      -H "Content-Type: application/octet-stream" \
      --data-binary @test-fixtures/test-medium.tape
@@ -309,8 +309,7 @@ npx wrangler deploy
 
 4. **Submit a job via the worker** and confirm end-to-end success:
    ```bash
-   curl -X POST https://your-worker.example.com/api/proofs/jobs \
-     -H "x-claimant-address: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" \
+   curl -X POST 'https://your-worker.example.com/api/proofs/jobs?seed_id=0&claimant=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' \
      -H "Content-Type: application/octet-stream" \
      --data-binary @test-fixtures/test-medium.tape
    ```

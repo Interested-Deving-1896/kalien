@@ -237,7 +237,7 @@ fn pad_to_word_boundary(mut data: Vec<u8>) -> Vec<u8> {
 /// - `options`: proving and policy options (seed_id, claimant, receipt mode, etc).
 ///
 /// Behavior:
-/// - normalizes claimant before encoding to guest stdin,
+/// - validates and encodes claimant into compact journal bytes for guest stdin,
 /// - enforces dev-mode safety checks,
 /// - optionally verifies the produced receipt,
 /// - decodes the guest-emitted raw journal into structured fields.
