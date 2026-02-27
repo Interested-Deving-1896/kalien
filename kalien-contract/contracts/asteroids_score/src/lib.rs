@@ -18,17 +18,24 @@ enum DataKey {
     Paused,
     Claimed(BytesN<32>),
     Best(Address, u32),
+    // temporary: key=window_number, value=random_seed.
+    // Deterministic key keeps simulation and submission footprints aligned.
+    ValidSeed(u32),
+    // temporary: key=seed, value=window_number. Populated via `index_seed`.
+    // This enables O(1) seed validation in submit_score (no window scan loop).
+    SeedWindow(u32),
 }
 
 const RULES_DIGEST: u32 = 0x4153_5433; // "AST3"
 const JOURNAL_BASE_LEN: u32 = 24; // 6 x u32 (seed..rules_digest)
-const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 14 days
-const INSTANCE_TTL_BUMP: u32 = 172_800; // 20 days
+const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 7 days  (at ~5s/ledger: 17280 ledgers/day)
+const INSTANCE_TTL_BUMP: u32 = 172_800; // 10 days (at ~5s/ledger)
 const TEMP_TTL_THRESHOLD: u32 = 25_920; // ~36h
 const TEMP_TTL_BUMP: u32 = 34_560; // ~48h
 const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
 const SEED_INTERVAL: u64 = 600; // 10 minutes in seconds
-const MAX_SEED_AGE: u32 = 143; // current bucket + 143 previous = 144 total (24h)
+                                // 24h fixed-window policy: now + previous 143 windows = 144 × 10 min.
+const SEED_MAX_AGE_WINDOWS: u32 = 143;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -119,10 +126,8 @@ impl AsteroidsScoreContract {
             return Err(ScoreError::InvalidRulesDigest);
         }
 
-        // Validate seed is a recent 10-minute time bucket
-        let current_bucket = (env.ledger().timestamp() / SEED_INTERVAL) as u32;
-        let min_bucket = current_bucket.saturating_sub(MAX_SEED_AGE);
-        if seed > current_bucket || seed < min_bucket {
+        // Validate seed is indexed and within the 24h submission window.
+        if !is_valid_seed(&env, seed) {
             return Err(ScoreError::SeedExpired);
         }
 
@@ -153,11 +158,9 @@ impl AsteroidsScoreContract {
         let image_id: BytesN<32> = env.storage().instance().get(&DataKey::ImageId).unwrap();
         let token_id: Address = env.storage().instance().get(&DataKey::TokenId).unwrap();
 
-        // Cross-contract call to RISC Zero router to verify the proof
-        let router_client = risc0_router::Client::new(&env, &router_id);
-        router_client.verify(&seal, &image_id, &journal_digest);
-
-        // Mark journal as claimed
+        // CEI: write effects before cross-contract interactions so that a re-entrant
+        // call through a malicious router sees Claimed and cannot double-mint.
+        // If router_client.verify panics the host rolls back all writes atomically.
         env.storage().temporary().set(&claimed_key, &());
         env.storage().temporary().set(&best_key, &final_score);
         env.storage()
@@ -166,6 +169,11 @@ impl AsteroidsScoreContract {
         env.storage()
             .temporary()
             .extend_ttl(&best_key, TEMP_TTL_THRESHOLD, TEMP_TTL_BUMP);
+
+        // Cross-contract call to RISC Zero router to verify the proof.
+        // If this panics the host reverts the transaction and all writes above.
+        let router_client = risc0_router::Client::new(&env, &router_id);
+        router_client.verify(&seal, &image_id, &journal_digest);
 
         // Mint only the improvement delta to the claimant.
         let token_client = token::StellarAssetClient::new(&env, &token_id);
@@ -249,6 +257,16 @@ impl AsteroidsScoreContract {
         extend_instance_ttl(&env);
     }
 
+    /// Admin: update the token address.
+    pub fn set_token_id(env: Env, new_token_id: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenId, &new_token_id);
+        extend_instance_ttl(&env);
+    }
+
     /// Read the current image ID.
     pub fn image_id(env: Env) -> BytesN<32> {
         env.storage().instance().get(&DataKey::ImageId).unwrap()
@@ -269,9 +287,51 @@ impl AsteroidsScoreContract {
         RULES_DIGEST
     }
 
-    /// Read the current seed bucket derived from the ledger timestamp.
+    /// Return the current window's random seed, materializing it on first call per window.
+    ///
+    /// This method only writes `ValidSeed(window) -> seed` because the key is deterministic.
+    /// The reverse index `SeedWindow(seed) -> window` is populated separately via
+    /// `index_seed(window, seed)` to keep key footprints deterministic in simulation.
     pub fn current_seed(env: Env) -> u32 {
-        (env.ledger().timestamp() / SEED_INTERVAL) as u32
+        extend_instance_ttl(&env);
+        get_or_materialize_seed(&env)
+    }
+
+    /// Index a materialized window seed for O(1) lookup during `submit_score`.
+    ///
+    /// This call is permissionless and deterministic:
+    /// - verifies `ValidSeed(window) == seed`
+    /// - enforces that `window` is within the active 24h range
+    /// - stores `SeedWindow(seed) = window` in temporary storage
+    ///
+    /// Returns `true` when the mapping is valid/present and `false` otherwise.
+    pub fn index_seed(env: Env, window: u32, seed: u32) -> bool {
+        extend_instance_ttl(&env);
+
+        let now_window = (env.ledger().timestamp() / SEED_INTERVAL) as u32;
+        let oldest_window = now_window.saturating_sub(SEED_MAX_AGE_WINDOWS);
+        if window < oldest_window || window > now_window {
+            return false;
+        }
+
+        let materialized = env
+            .storage()
+            .temporary()
+            .get::<_, u32>(&DataKey::ValidSeed(window));
+        if materialized != Some(seed) {
+            return false;
+        }
+
+        // Keep the newest mapping if a rare seed collision occurs across windows.
+        let index_key = DataKey::SeedWindow(seed);
+        if let Some(existing) = env.storage().temporary().get::<_, u32>(&index_key) {
+            if existing >= window {
+                return true;
+            }
+        }
+
+        env.storage().temporary().set(&index_key, &window);
+        true
     }
 
     /// Verify a RISC Zero proof without minting or modifying state.
@@ -296,6 +356,54 @@ impl AsteroidsScoreContract {
 
         Ok(final_score)
     }
+}
+
+/// Return the current window's seed, generating a new one when first requested.
+///
+/// The random seed VALUE is generated with `env.prng()` and stored under the
+/// deterministic window-number key in temporary storage.  Do not extend TTL:
+/// seeds should expire naturally after temporary storage TTL.
+fn get_or_materialize_seed(env: &Env) -> u32 {
+    let window = (env.ledger().timestamp() / SEED_INTERVAL) as u32;
+    if let Some(seed) = env
+        .storage()
+        .temporary()
+        .get::<_, u32>(&DataKey::ValidSeed(window))
+    {
+        return seed;
+    }
+
+    let seed = env.prng().gen_range::<u64>(0..=u32::MAX as u64) as u32;
+    env.storage()
+        .temporary()
+        .set(&DataKey::ValidSeed(window), &seed);
+    seed
+}
+
+/// Returns true if `seed` is indexed and still within the 24h window range.
+fn is_valid_seed(env: &Env, seed: u32) -> bool {
+    let now_window = (env.ledger().timestamp() / SEED_INTERVAL) as u32;
+    let seed_window = match env
+        .storage()
+        .temporary()
+        .get::<_, u32>(&DataKey::SeedWindow(seed))
+    {
+        Some(window) => window,
+        None => return false,
+    };
+
+    if seed_window > now_window {
+        return false;
+    }
+    if now_window - seed_window > SEED_MAX_AGE_WINDOWS {
+        return false;
+    }
+
+    // Ensure the reverse index points to an active window->seed entry.
+    env.storage()
+        .temporary()
+        .get::<_, u32>(&DataKey::ValidSeed(seed_window))
+        == Some(seed)
 }
 
 /// Read a u32 from bytes at the given offset in little-endian order.
