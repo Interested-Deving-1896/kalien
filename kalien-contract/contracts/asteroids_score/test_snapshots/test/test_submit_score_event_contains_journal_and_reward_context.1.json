@@ -45,6 +45,8 @@
         }
       ]
     ],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -157,7 +159,7 @@
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 123
+                    "u32": 1577546140
                   }
                 ]
               },
@@ -184,7 +186,7 @@
                     "symbol": "Claimed"
                   },
                   {
-                    "bytes": "4e7914e0e887954d198de261af3b171a3cc16a9a7ea62e0cdc74fae2eccc4bf8"
+                    "bytes": "83510b89b0ce485f6b8b3abadc6697ec8ad5ffe4d5a670c7e1f89424691c3648"
                   }
                 ]
               },
@@ -195,6 +197,60 @@
           "ext": "v0"
         },
         "live_until": 34560
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "SeedWindow"
+                  },
+                  {
+                    "u32": 1577546140
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 123
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "ValidSeed"
+                  },
+                  {
+                    "u32": 123
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 1577546140
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
       },
       {
         "entry": {
@@ -517,7 +573,7 @@
                     "symbol": "journal_digest"
                   },
                   "val": {
-                    "bytes": "4e7914e0e887954d198de261af3b171a3cc16a9a7ea62e0cdc74fae2eccc4bf8"
+                    "bytes": "83510b89b0ce485f6b8b3abadc6697ec8ad5ffe4d5a670c7e1f89424691c3648"
                   }
                 },
                 {
@@ -557,7 +613,7 @@
                     "symbol": "seed"
                   },
                   "val": {
-                    "u32": 123
+                    "u32": 1577546140
                   }
                 },
                 {

@@ -48,6 +48,8 @@
     [],
     [],
     [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -160,7 +162,7 @@
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 10
+                    "u32": 1577546140
                   }
                 ]
               },
@@ -187,7 +189,7 @@
                     "symbol": "Claimed"
                   },
                   {
-                    "bytes": "1b6426c779d25daf351291c22d7de39867cab3ecdd3ff92824d112c66d6a4bc4"
+                    "bytes": "33eb35bb4fd3e49380ec135ddc9cd7a05917008e0fd9e15e59b970dcd992d1e6"
                   }
                 ]
               },
@@ -212,7 +214,7 @@
                     "symbol": "Claimed"
                   },
                   {
-                    "bytes": "62c33d4afbcf368056b6f749ee364c443be698d0cd7e29a737551e8b4e50ffb4"
+                    "bytes": "d41cb4142c8750ec08fba0c1a491858eb02f87cdefaa6919b577bfb709127147"
                   }
                 ]
               },
@@ -223,6 +225,60 @@
           "ext": "v0"
         },
         "live_until": 34560
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "SeedWindow"
+                  },
+                  {
+                    "u32": 1577546140
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 10
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "ValidSeed"
+                  },
+                  {
+                    "u32": 10
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 1577546140
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
       },
       {
         "entry": {

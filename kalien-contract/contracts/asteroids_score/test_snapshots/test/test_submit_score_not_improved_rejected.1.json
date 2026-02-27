@@ -48,6 +48,8 @@
     [],
     [],
     [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -160,7 +162,7 @@
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 9
+                    "u32": 1577546140
                   }
                 ]
               },
@@ -187,7 +189,7 @@
                     "symbol": "Claimed"
                   },
                   {
-                    "bytes": "16f2040c321cf4cf6f053fc04b02b7f53fa919bd5d2af3a2805f1b0b90a42804"
+                    "bytes": "5d63a5f72dc9102b5a4b0f386c71c61532a30cac030f613fcf50da539dc3c6ec"
                   }
                 ]
               },
@@ -198,6 +200,60 @@
           "ext": "v0"
         },
         "live_until": 34560
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "SeedWindow"
+                  },
+                  {
+                    "u32": 1577546140
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 9
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "ValidSeed"
+                  },
+                  {
+                    "u32": 9
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 1577546140
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
       },
       {
         "entry": {

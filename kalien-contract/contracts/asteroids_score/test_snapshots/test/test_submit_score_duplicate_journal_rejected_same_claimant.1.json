@@ -46,6 +46,8 @@
       ]
     ],
     [],
+    [],
+    [],
     []
   ],
   "ledger": {
@@ -158,7 +160,7 @@
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 7
+                    "u32": 1577546140
                   }
                 ]
               },
@@ -185,7 +187,7 @@
                     "symbol": "Claimed"
                   },
                   {
-                    "bytes": "92f5906779accc833b59065810c067754ec106c0bc19ac3f799f831d447cd6b7"
+                    "bytes": "4c7596dc5491981ac5ee5ec3ab2add6d7d8707f5e7e43242713c7e606dc42742"
                   }
                 ]
               },
@@ -196,6 +198,60 @@
           "ext": "v0"
         },
         "live_until": 34560
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "SeedWindow"
+                  },
+                  {
+                    "u32": 1577546140
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 7
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "ValidSeed"
+                  },
+                  {
+                    "u32": 7
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 1577546140
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
       },
       {
         "entry": {
