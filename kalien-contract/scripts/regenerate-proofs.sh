@@ -36,23 +36,59 @@ TOTAL=0
 # ---------------------------------------------------------------------------
 usage() {
   cat <<'USAGE_EOF'
-Usage: kalien-contract/scripts/regenerate-proofs.sh [prover-url]
+Usage: kalien-contract/scripts/regenerate-proofs.sh [prover-url] [--seed-id <u32>] [--claimant <addr>]
 
 Defaults:
   prover-url  http://127.0.0.1:8080
+  seed-id     0
+  claimant    GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
 
 Examples:
   ./scripts/regenerate-proofs.sh
   ./scripts/regenerate-proofs.sh https://<vast-host>:<port>
+  ./scripts/regenerate-proofs.sh --seed-id 0 --claimant GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
 USAGE_EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
+PROVER_URL="http://127.0.0.1:8080"
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --seed-id)
+      SEED_ID="${2:-}"
+      shift 2
+      ;;
+    --claimant)
+      CLAIMANT="${2:-}"
+      shift 2
+      ;;
+    *)
+      if [[ "$1" == --* ]]; then
+        err "unknown option: $1"
+        usage
+        exit 1
+      fi
+      PROVER_URL="$1"
+      shift
+      ;;
+  esac
+done
+
+if ! [[ "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  err "--seed-id must be an unsigned integer"
+  exit 1
 fi
 
-PROVER_URL="${1:-http://127.0.0.1:8080}"
+if [[ -z "${CLAIMANT// }" ]]; then
+  err "--claimant cannot be empty"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Regenerate + verify a single fixture
@@ -75,6 +111,8 @@ regenerate_fixture() {
   if ! bun run "$GENERATE_SCRIPT" \
     --tape "$tape_path" \
     --prover "$PROVER_URL" \
+    --seed-id "$SEED_ID" \
+    --claimant "$CLAIMANT" \
     --out "$FIXTURES_DIR/${out_prefix}.json"; then
     err "Proof generation failed for $label"
     FAILED=$((FAILED + 1))
@@ -118,6 +156,8 @@ regenerate_fixture() {
 echo "================================================"
 echo "Regenerate Groth16 Proof Fixtures"
 echo "Prover: $PROVER_URL"
+echo "Seed ID: $SEED_ID"
+echo "Claimant: $CLAIMANT"
 echo "$(date)"
 echo "================================================"
 echo ""
