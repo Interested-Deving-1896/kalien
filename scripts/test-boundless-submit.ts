@@ -66,8 +66,8 @@ const ORDER_STREAM_URL = "https://base-mainnet.boundless.network";
 const RPC_URL = "https://base-mainnet.public.blastapi.io";
 
 const RELAYER_API_KEY = env.RELAYER_API_KEY;
-const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmRCff7XUQm4rYDALBBxMZmv5yMRG6nHXUNCjgd8JdCMwr";
-const IMAGE_ID = "0xc2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5e3a0";
+const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmNy4uXDFps6znakg8sHygCf2acRnVyBBsCAEV9rvEiaZW";
+const IMAGE_ID = "0xb7b997df521f1caee0fa5004f94e2623dce78aabf914f350c476ca2c19832e8f";
 
 // Groth16V3_0 selector — explicitly request Groth16 proofs for Stellar
 const GROTH16_SELECTOR = "0x73c457ba" as const;

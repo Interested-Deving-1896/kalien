@@ -27,8 +27,8 @@ declare namespace Cloudflare {
 		RELAYER_PLUGIN_ID: "";
 		RELAYER_REQUEST_TIMEOUT_MS: "30000";
 		BOUNDLESS_RPC_URL: "https://base-mainnet.public.blastapi.io";
-		BOUNDLESS_IMAGE_URL: "https://gateway.pinata.cloud/ipfs/QmRCff7XUQm4rYDALBBxMZmv5yMRG6nHXUNCjgd8JdCMwr";
-		BOUNDLESS_IMAGE_ID: "0xc2d61eb93372c44376c6c46eea2656d3c88a67eba4998456d014908d24d5e3a0";
+		BOUNDLESS_IMAGE_URL: "https://gateway.pinata.cloud/ipfs/QmNy4uXDFps6znakg8sHygCf2acRnVyBBsCAEV9rvEiaZW";
+		BOUNDLESS_IMAGE_ID: "0xb7b997df521f1caee0fa5004f94e2623dce78aabf914f350c476ca2c19832e8f";
 		BOUNDLESS_MAX_PRICE_USD: "0.02";
 		BOUNDLESS_MIN_PRICE_USD: "0.0002";
 		BOUNDLESS_FLAT_PERIOD_SEC: "60";
