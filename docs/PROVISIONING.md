@@ -44,13 +44,16 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 
 ### Cloudflare Worker Gateway (`worker/`)
 
+Note: This document includes historical tuning proposals. The current deployed
+`wrangler.jsonc` value for `MAX_JOB_WALL_TIME_MS` is `2100000` (~35 minutes).
+
 | Setting | Current Value | Env Var | File | Purpose |
 |---------|--------------|---------|------|---------|
 | Poll timeout (absolute) | **11 min** (660,000 ms) | `PROVER_POLL_TIMEOUT_MS` | `constants.ts:10`, `wrangler.jsonc:15` | Safety bound for a single `pollProver()` loop. In practice the DO alarm cadence is governed by `PROVER_POLL_BUDGET_MS` + `PROVER_POLL_INTERVAL_MS`. |
 | Poll interval | **3 s** (3,000 ms) | `PROVER_POLL_INTERVAL_MS` | `constants.ts:9`, `wrangler.jsonc:14` | Sleep between GET status calls inside `pollProver()`. |
 | Poll budget | **45 s** (45,000 ms) | `PROVER_POLL_BUDGET_MS` | `constants.ts:12`, `wrangler.jsonc:16` | Per-alarm-invocation budget. The DO alarm fires, polls for up to 45 s, then yields and reschedules. Keeps each alarm invocation under the CF CPU limit. |
 | HTTP request timeout | **30 s** (30,000 ms) | `PROVER_REQUEST_TIMEOUT_MS` | `constants.ts:11`, `wrangler.jsonc:17` | `fetchWithTimeout` deadline for each individual GET/POST to the prover API. |
-| Wall-time cap | **11 min** (660,000 ms) | `MAX_JOB_WALL_TIME_MS` | `constants.ts:13`, `wrangler.jsonc:19` | Hard ceiling on total job lifetime. Checked both in the queue consumer (`consumer.ts:39-48`) and the DO alarm loop (`coordinator.ts:434-449`). |
+| Wall-time cap | **35 min** (2,100,000 ms) | `MAX_JOB_WALL_TIME_MS` | `constants.ts:13`, `wrangler.jsonc:19` | Hard ceiling on total job lifetime. Checked both in the queue consumer (`consumer.ts:39-48`) and the DO alarm loop (`coordinator.ts:434-449`). |
 | Max queue retries | **10** | `MAX_QUEUE_RETRIES` / `max_retries` | `constants.ts:22`, `wrangler.jsonc:42` | Queue delivery attempts before the message goes to the DLQ. Must match in both places. |
 | Retry delay cap | **60 s** | `MAX_RETRY_DELAY_SECONDS` | `constants.ts:17` | Ceiling for exponential backoff: `min(2^(attempt-1), 60)`, floored at 2 s. |
 | Max completed jobs | **200** | `MAX_COMPLETED_JOBS` | `constants.ts:14`, `wrangler.jsonc:20` | DO evicts oldest completed jobs beyond this count. |
@@ -218,7 +221,7 @@ t=603s   DO alarm → poll → GET returns "failed" (proof_timeout)
 t=660s   Prover: if proof still running after 60s grace →
          └── std::process::abort() → supervisord restarts process
 
-t=720s   Worker: wall-time cap (MAX_JOB_WALL_TIME_MS)
+t=2100s  Worker: wall-time cap (MAX_JOB_WALL_TIME_MS)
          └── Hard kill regardless of retry state
 ```
 
@@ -268,7 +271,7 @@ Update `wrangler.jsonc`:
 
 ```jsonc
 "PROVER_POLL_TIMEOUT_MS": "660000",
-"MAX_JOB_WALL_TIME_MS": "660000"
+"MAX_JOB_WALL_TIME_MS": "2100000"
 ```
 
 Deploy:

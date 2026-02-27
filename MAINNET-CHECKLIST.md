@@ -41,12 +41,14 @@ jobs and consume expensive GPU time.
       Alternatively store it as a Wrangler secret.
 - [ ] **Run automated preflight checks** before every deploy:
       ```bash
-      WORKER_CONFIG=wrangler.jsonc \
-      PROVER_ENV=kalien-verifier/api-server/.env \
-      ./scripts/mainnet-security-preflight.sh
+      # Contract + fixture verification (mock + optional Groth16 checks)
+      bash kalien-contract/scripts/deploy-and-test.sh --proof-mode all
+
+      # Prover endpoint smoke check
+      bash scripts/smoke-test-prover.sh --url "$PROVER_BASE_URL"
       ```
       This catches placeholder URLs, insecure transport flags, weak/missing
-      API key config, and dev-mode leaks early.
+      API key config, and prover health regressions early.
 
 ---
 
@@ -64,7 +66,7 @@ Switch all Stellar references from testnet to mainnet.
 - [ ] **Choose a mainnet Soroban RPC provider** and confirm rate limits,
       availability SLAs, and pricing.
 - [ ] **Add frontend environment variables** for mainnet. The client integration
-      spec (`docs/games/asteroids/10-CLIENT-INTEGRATION-SPEC.md:106-112`)
+      spec (`docs/games/asteroids/11-CLIENT-INTEGRATION-SPEC.md:106-112`)
       defines these — they need actual values:
       ```
       VITE_RPC_URL=<mainnet RPC>
@@ -81,7 +83,7 @@ Switch all Stellar references from testnet to mainnet.
       the Groth16 verifier is
       `CB54QOGYJJOSLNHRCHTSVGKJ3D5K6B5YO7DD6CRHRBCRNPF2VX2VCMV7`. These
       may differ on mainnet — verify with the RISC Zero / Stellar teams.
-- [ ] **Update `deploy-and-test.sh`** (or create a separate mainnet deployment
+- [ ] **Update `kalien-contract/scripts/deploy-and-test.sh`** (or create a separate mainnet deployment
       script) to use `NETWORK="mainnet"` and the mainnet router contract ID.
 
 ---
@@ -93,7 +95,7 @@ Deploy the KALIEN token on mainnet and configure minting authority.
 - [ ] **Create the mainnet issuer account** with enough XLM for reserves.
       This account will issue the KALIEN Stellar Asset Contract (SAC) token.
 - [ ] **Deploy the SAC token** on mainnet. The testnet script
-      (`deploy-and-test.sh:176-200`) creates an asset `KALIEN:<issuer>` and wraps
+      (`kalien-contract/scripts/deploy-and-test.sh:176-200`) creates an asset `KALIEN:<issuer>` and wraps
       it as a Soroban SAC. Replicate this for mainnet:
       ```bash
       # Create the asset issuer
@@ -142,7 +144,7 @@ Deploy the asteroids_score contract to mainnet.
 - [ ] **Determine the correct `image_id`** for the production RISC0 guest
       program. This is the 32-byte hash that identifies the proving program.
       Get it from the prover build output or `methods/build.rs`. Currently:
-      `755b655c3063e7684eaeb2073ba2a75d6b41e82b1577671bbf29600eca10d83d`
+      `036255e8f470eb40a3d6e9b3c987d064c54bd9cb63a35686096fc889f64a19e8`
       (from `.testnet-state.env`). **Any change to the Rust guest code changes
       this value** — rebuild and re-verify.
 - [ ] **Deploy the contract to mainnet:**
