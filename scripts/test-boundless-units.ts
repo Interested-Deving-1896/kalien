@@ -159,7 +159,7 @@ test("encodes custom max_frames", () => {
   assert(decoded.maxFrames === 777, "custom max_frames mismatch");
 });
 
-test("throws when claimant is not 56 bytes", () => {
+test("throws when claimant is not a valid Stellar address", () => {
   let threw = false;
   try {
     encodeStdin(new Uint8Array([1, 2, 3]), {

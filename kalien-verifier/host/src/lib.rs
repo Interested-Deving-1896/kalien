@@ -1,7 +1,9 @@
 use std::{env, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
-use asteroids_verifier_core::{decode_journal_raw, encode_claimant_for_journal, VerificationJournal};
+use asteroids_verifier_core::{
+    decode_journal_raw, encode_claimant_for_journal, VerificationJournal,
+};
 use methods::{VERIFY_TAPE_ELF, VERIFY_TAPE_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Prover, ProverOpts, Receipt};
 use serde::{Deserialize, Serialize};
@@ -252,8 +254,8 @@ pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
     let tape_len = tape.len() as u32;
     let padded_tape = pad_to_word_boundary(tape);
 
-    let claimant =
-        encode_claimant_for_journal(&options.claimant).map_err(|err| anyhow!("invalid claimant address: {err}"))?;
+    let claimant = encode_claimant_for_journal(&options.claimant)
+        .map_err(|err| anyhow!("invalid claimant address: {err}"))?;
 
     let mut env_builder = ExecutorEnv::builder();
     env_builder.write_slice(&options.max_frames.to_le_bytes());

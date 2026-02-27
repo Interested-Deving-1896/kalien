@@ -2,8 +2,8 @@ use std::{env, fs, path::PathBuf, process};
 
 use anyhow::{anyhow, Context, Result};
 use asteroids_verifier_core::{
-    constants::MAX_FRAMES_DEFAULT, decode_journal_raw, encode_claimant_for_journal, tape::parse_tape,
-    VerificationJournal,
+    constants::MAX_FRAMES_DEFAULT, decode_journal_raw, encode_claimant_for_journal,
+    tape::parse_tape, VerificationJournal,
 };
 use host::SEGMENT_LIMIT_PO2_DEFAULT;
 use methods::VERIFY_TAPE_ELF;
