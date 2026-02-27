@@ -15,7 +15,7 @@ implemented today.
 ```
 Browser (Vite/React)
   │
-  │ POST /api/proofs/jobs (binary .tape + x-claimant-address)
+  │ POST /api/proofs/jobs?seed_id=<u32>&claimant=<G...|C...> (binary .tape)
   ▼
 Cloudflare Worker (Hono API)
   ├── Durable Object: ProofCoordinatorDO
@@ -66,7 +66,7 @@ Claim queue path:
 - Returns service metadata, compatibility expectations, prover compatibility
   status, and the active job (if any).
 - Response includes:
-  - `expected.ruleset` and `expected.rules_digest_hex` (AST3 target)
+  - `expected.ruleset` and `expected.rules_digest_hex` (AST4 target)
   - optional `expected.image_id` (if pinning is enabled)
   - `prover.status` (`"compatible"` or `"degraded"`)
   - on compatible: `prover.ruleset`, `prover.rules_digest_hex`, `prover.image_id`
@@ -74,7 +74,9 @@ Claim queue path:
 
 **`POST /api/proofs/jobs`**
 - Request body: raw tape bytes (`application/octet-stream`).
-- Required header: `x-claimant-address` (validated Stellar strkey).
+- Required query params:
+  - `seed_id` (u32)
+  - `claimant` (validated Stellar `G...` or `C...` address)
 - Validates tape format before accepting.
 - Rejects zero-score tapes (`final_score == 0`) with `400`.
 - On accept (`202`):
@@ -97,7 +99,7 @@ Claim queue path:
 `worker/tape.ts` enforces:
 - Non-empty payload, `<= MAX_TAPE_BYTES` (default 2 MiB)
 - Magic = `0x5A4B5450`, version = `2`
-- Rules tag = `AST3` and header reserved bytes are zero
+- Rules tag = `AST4` and header reserved bytes are zero
 - Exact byte length = header (16) + frameCount + footer (12)
 - CRC-32 checksum match
 
@@ -235,7 +237,7 @@ backs off and tries again rather than failing the job.
 
 **Submission:**
 - `POST {PROVER_BASE_URL}/api/jobs/prove-tape/raw`
-- Query params currently sent by worker: `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`
+- Query params sent by worker: `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`, `seed_id`, `claimant`
 - Auth headers: `x-api-key` and/or `CF-Access-Client-Id` + `CF-Access-Client-Secret`
 - Response: `{ success, job_id, status, status_url }`
 
@@ -257,11 +259,13 @@ interface ProofResultSummary {
   producedReceiptKind: string | null;
   journal: {
     seed: number;
+    seed_id: number;
     frame_count: number;
     final_score: number;
     final_rng_state: number;
     tape_checksum: number;
     rules_digest: number;
+    claimant: string;
   };
   stats: {
     segments: number;
@@ -351,21 +355,26 @@ Bindings:
 ```rust
 struct VerificationJournal {
     seed: u32,
+    seed_id: u32,
     frame_count: u32,
     final_score: u32,
     final_rng_state: u32,
     tape_checksum: u32,
-    rules_digest: u32,  // RULES_DIGEST = 0x41535433 ("AST3")
+    rules_digest: u32,  // RULES_DIGEST = 0x41535434 ("AST4")
+    claimant: String,   // decoded from fixed claimant bytes (kind + 32-byte id)
 }
 ```
 
-Serialized as 24 bytes (6 × u32 LE).
+Serialized as 64 bytes:
+- 7 × u32 LE
+- claimant bytes (`kind + 32-byte id`)
+- 3 reserved zero bytes
 
 ### Host prover behavior
 
 `prove_tape` in `host/src/lib.rs`:
 1. Validates dev-mode policy (`RISC0_DEV_MODE` + `proof_mode`).
-2. Builds executor env with `max_frames`, original `tape_len`, padded tape, `segment_limit_po2`.
+2. Builds executor env with `max_frames`, `seed_id`, fixed claimant bytes (`kind + 32-byte id`), original `tape_len`, padded tape, and `segment_limit_po2`.
 3. Proves using the requested receipt kind (`composite`, `succinct`, or `groth16`).
 4. Detects produced receipt kind from receipt internals.
 5. In non-dev mode, requires produced kind == requested kind.
@@ -380,14 +389,14 @@ Endpoints:
 - `GET /api/jobs/{job_id}`
 - `DELETE /api/jobs/{job_id}`
 
-Auth: `API_KEY` is required by default; `/api/*` requires `x-api-key` or `Authorization: Bearer` header.
-For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
+Auth: when `API_KEY` is configured, `/api/*` requires `x-api-key` or `Authorization: Bearer`.
+For local-only development, leave `API_KEY` unset and run with `RISC0_DEV_MODE=1`.
 
 Job states: `queued` → `running` → `succeeded` | `failed`.
 Single-flight enforced by global semaphore (concurrency 1) + active-job check.
 
 Query param policy gates: `max_frames`, `receipt_kind`, `segment_limit_po2`,
-`verify_mode`.
+`verify_mode`, `seed_id`, `claimant`.
 
 `proof_mode` is forced from `RISC0_DEV_MODE` at prover startup (not a query param).
 

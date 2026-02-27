@@ -338,7 +338,7 @@ info "response: $body"
 # Test 2b: Submit empty body → 400
 echo ""
 echo "[2b] POST empty body"
-empty_query=""
+empty_query="seed_id=${SEED_ID}&claimant=${CLAIMANT}"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${empty_query}" \
   -H "content-type: application/octet-stream" -d '')
 http_code=$(echo "$resp_raw" | tail -1)

@@ -18,10 +18,10 @@ submission and surfaces claim relay status from the worker.
 
 1. User opens app, creates or connects a smart-account wallet.
 2. User plays Asteroids; tape records every frame.
-3. Game over → user submits tape to worker for proving with `x-claimant-address`.
+3. Game over → user submits tape to worker for proving with `seed_id` + `claimant` query params.
 4. UI shows proof pipeline status (queued → proving → done).
 5. Proof succeeds → worker enqueues claim relay job automatically.
-6. Claim relay submits `submit_score(seal, journal_raw, claimant)` on-chain.
+6. Claim relay submits `submit_score(seal, journal_raw)` on-chain.
 7. UI shows claim status (`queued/submitting/retrying/succeeded/failed`) and tx hash when available.
 
 ---
@@ -221,7 +221,7 @@ The browser should never receive privileged backend relay secrets.
 
 ```
 1. Submit proof job to worker
-   POST /api/proofs/jobs (raw tape body + x-claimant-address)
+   POST /api/proofs/jobs?seed_id=<u32>&claimant=<G...|C...> (raw tape body)
 
 2. Poll proof job
    GET /api/proofs/jobs/{id}
