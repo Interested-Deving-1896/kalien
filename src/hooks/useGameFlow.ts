@@ -92,13 +92,15 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
           const buf = await file.arrayBuffer();
           const bytes = new Uint8Array(buf);
           const tape = deserializeTape(bytes);
+          // Tape v4 format does not carry seed_id — set to 0 so the proof
+          // submission guard rejects with a clear message rather than submitting
+          // an unprovable job.
           setLatestRun({
             record: {
               seed: tape.header.seed,
               seedId: 0,
               inputs: tape.inputs,
               finalScore: tape.footer.finalScore,
-              finalRngState: tape.footer.finalRngState,
             },
             frameCount: tape.header.frameCount,
             endedAtMs: Date.now(),

@@ -1,6 +1,3 @@
-import type { ProofJournal } from "./api";
-import { packJournalRaw as packJournalRawBytes } from "../../shared/stellar/journal";
-
 interface Groth16ReceiptLike {
   inner?: {
     Groth16?: {
@@ -89,6 +86,3 @@ export function extractGroth16SealFromArtifact(artifact: unknown): Uint8Array {
   return finalSeal;
 }
 
-export function packJournalRaw(journal: ProofJournal): Uint8Array {
-  return packJournalRawBytes(journal);
-}

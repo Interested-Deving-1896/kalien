@@ -53,7 +53,6 @@ export interface TapeMetadata {
   seedId: number;
   frameCount: number;
   finalScore: number;
-  finalRngState: number;
   checksum: number;
 }
 

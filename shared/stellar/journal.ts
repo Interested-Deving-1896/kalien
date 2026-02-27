@@ -22,8 +22,6 @@ export interface JournalFields {
   seed_id: number;
   frame_count: number;
   final_score: number;
-  final_rng_state: number;
-  tape_checksum: number;
   rules_digest: number;
   claimant: string;
 }
@@ -68,8 +66,8 @@ export function packJournalRaw(journal: JournalFields): Uint8Array {
   view.setUint32(JOURNAL_SEED_ID_OFFSET, journal.seed_id >>> 0, true);
   view.setUint32(JOURNAL_FRAME_COUNT_OFFSET, journal.frame_count >>> 0, true);
   view.setUint32(JOURNAL_FINAL_SCORE_OFFSET, journal.final_score >>> 0, true);
-  view.setUint32(JOURNAL_FINAL_RNG_STATE_OFFSET, journal.final_rng_state >>> 0, true);
-  view.setUint32(JOURNAL_TAPE_CHECKSUM_OFFSET, journal.tape_checksum >>> 0, true);
+  view.setUint32(JOURNAL_FINAL_RNG_STATE_OFFSET, 0 >>> 0, true);
+  view.setUint32(JOURNAL_TAPE_CHECKSUM_OFFSET, 0 >>> 0, true);
   view.setUint32(JOURNAL_RULES_DIGEST_OFFSET, journal.rules_digest >>> 0, true);
   bytes.set(encodeClaimantForJournal(journal.claimant), JOURNAL_CLAIMANT_OFFSET);
   return bytes;
@@ -93,8 +91,6 @@ export function unpackJournalRaw(bytes: Uint8Array): JournalFields {
     seed_id: view.getUint32(JOURNAL_SEED_ID_OFFSET, true),
     frame_count: view.getUint32(JOURNAL_FRAME_COUNT_OFFSET, true),
     final_score: view.getUint32(JOURNAL_FINAL_SCORE_OFFSET, true),
-    final_rng_state: view.getUint32(JOURNAL_FINAL_RNG_STATE_OFFSET, true),
-    tape_checksum: view.getUint32(JOURNAL_TAPE_CHECKSUM_OFFSET, true),
     rules_digest: view.getUint32(JOURNAL_RULES_DIGEST_OFFSET, true),
     claimant: decodeClaimantFromJournal(
       bytes.slice(JOURNAL_CLAIMANT_OFFSET, JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN),

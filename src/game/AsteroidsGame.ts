@@ -62,7 +62,6 @@ import { LiveInputSource, TapeInputSource } from "./input-source";
 import {
   clamp,
   getGameRng,
-  getGameRngState,
   randomInt,
   setGameSeed,
   wrapXQ12_4,
@@ -176,7 +175,6 @@ export interface GameRunRecord {
   seedId: number;
   inputs: Uint8Array;
   finalScore: number;
-  finalRngState: number;
 }
 
 export class AsteroidsGame {
@@ -1572,7 +1570,6 @@ export class AsteroidsGame {
         seedId: this.gameSeedId,
         inputs: this.replayTape.inputs,
         finalScore: this.replayTape.footer.finalScore,
-        finalRngState: this.replayTape.footer.finalRngState,
       };
     }
 
@@ -1585,14 +1582,13 @@ export class AsteroidsGame {
       seedId: this.gameSeedId,
       inputs: this.recorder.getInputs(),
       finalScore: this.score,
-      finalRngState: getGameRngState(),
     };
   }
 
   /** Build a serialized tape from the current recording. */
   getTape(): Uint8Array | null {
     if (!this.recorder) return null;
-    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score, getGameRngState());
+    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score);
   }
 
   // =========================================================================
@@ -1603,6 +1599,8 @@ export class AsteroidsGame {
   loadReplay(tapeData: Uint8Array): void {
     const tape = deserializeTape(tapeData);
     this.audio.enable();
+    // Tape v3 does not carry seed_id; use the pending chain seed if available,
+    // otherwise fall back to 0 (replays are visual-only and not submitted for proving).
     this.startNewGame(tape.header.seed, this.pendingSeedId ?? 0);
     this.mode = "replay";
     this.replaySpeed = 1;

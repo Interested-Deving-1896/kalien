@@ -9,7 +9,7 @@ import { JOURNAL_LEN, unpackJournalRaw } from "../../shared/stellar/journal";
  *
  * The Boundless seal is 260 bytes: 4-byte selector + 256-byte Groth16 proof.
  * The journal is 64 bytes:
- *   - 7 x u32 LE (seed, seed_id, frame_count, final_score, final_rng_state, tape_checksum, rules_digest)
+ *   - 7 x u32 LE (seed, seed_id, frame_count, final_score, reserved_0, reserved_1, rules_digest)
  *   - claimant bytes (1-byte kind + 32-byte id) + 3 reserved bytes
  */
 export function adaptFulfillmentToProverResponse(

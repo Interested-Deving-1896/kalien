@@ -100,7 +100,6 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
           run.record.seed,
           run.record.inputs,
           run.record.finalScore,
-          run.record.finalRngState,
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : "failed to serialize tape";

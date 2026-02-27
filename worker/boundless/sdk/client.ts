@@ -170,8 +170,8 @@ export class BoundlessClient {
         seed_id: metadata.seedId >>> 0,
         frame_count: tapeMeta.frameCount,
         final_score: tapeMeta.finalScore,
-        final_rng_state: tapeMeta.finalRngState,
-        tape_checksum: tapeMeta.checksum,
+        final_rng_state: 0,
+        tape_checksum: 0,
         rules_digest: EXPECTED_RULES_DIGEST,
         claimant: metadata.claimantAddress,
       });

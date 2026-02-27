@@ -5,7 +5,7 @@
  *
  * HEADER (16 bytes):
  *   [0..3]   u32    magic           = 0x5A4B5450 ("ZKTP")
- *   [4]      u8     version         = 3
+ *   [4]      u8     version         = 4
  *   [5]      u8     rules_tag       = 4
  *   [6..7]   u8[2]  reserved        = 0
  *   [8..11]  u32    seed
@@ -21,18 +21,17 @@
  *     bit 2 (0x4): thrust
  *     bit 3 (0x8): fire
  *
- * FOOTER (12 bytes):
+ * FOOTER (8 bytes):
  *   [bodyEnd+0 .. bodyEnd+3]   u32  finalScore
- *   [bodyEnd+4 .. bodyEnd+7]   u32  finalRngState  (informational; not validated by prover)
- *   [bodyEnd+8 .. bodyEnd+11]  u32  checksum (CRC-32 of header + packed body)
+ *   [bodyEnd+4 .. bodyEnd+7]   u32  checksum (CRC-32 of header + packed body)
  */
 
 import { RULES_TAG } from "./constants";
 
 export const TAPE_MAGIC = 0x5a4b5450;
-export const TAPE_VERSION = 3;
+export const TAPE_VERSION = 4;
 export const TAPE_HEADER_SIZE = 16;
-export const TAPE_FOOTER_SIZE = 12;
+export const TAPE_FOOTER_SIZE = 8;
 
 export interface TapeHeader {
   magic: number;
@@ -44,7 +43,6 @@ export interface TapeHeader {
 
 export interface TapeFooter {
   finalScore: number;
-  finalRngState: number;
   checksum: number;
 }
 
@@ -111,7 +109,6 @@ export function serializeTape(
   seed: number,
   inputs: Uint8Array,
   finalScore: number,
-  finalRngState: number,
 ): Uint8Array {
   const frameCount = inputs.length;
   const bodyBytes = (frameCount + 1) >> 1;
@@ -137,11 +134,10 @@ export function serializeTape(
   // Footer
   const footerOffset = TAPE_HEADER_SIZE + bodyBytes;
   view.setUint32(footerOffset, finalScore >>> 0, true);
-  view.setUint32(footerOffset + 4, finalRngState >>> 0, true);
 
   // CRC-32 over header + packed body
   const checksum = crc32(data.subarray(0, footerOffset));
-  view.setUint32(footerOffset + 8, checksum >>> 0, true);
+  view.setUint32(footerOffset + 4, checksum >>> 0, true);
 
   return data;
 }
@@ -190,7 +186,7 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
   const footerOffset = TAPE_HEADER_SIZE + bodyBytes;
 
   // Verify CRC-32 over header + packed body.
-  const storedChecksum = view.getUint32(footerOffset + 8, true);
+  const storedChecksum = view.getUint32(footerOffset + 4, true);
   const computed = crc32(data.subarray(0, footerOffset));
   if (computed !== storedChecksum) {
     throw new Error(
@@ -209,12 +205,11 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
   }
 
   const finalScore = view.getUint32(footerOffset, true);
-  const finalRngState = view.getUint32(footerOffset + 4, true);
 
   return {
     header: { magic, version, rulesTag, seed, frameCount },
     inputs,
-    footer: { finalScore, finalRngState, checksum: storedChecksum },
+    footer: { finalScore, checksum: storedChecksum },
   };
 }
 

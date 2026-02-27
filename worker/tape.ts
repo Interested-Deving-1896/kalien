@@ -50,8 +50,7 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
 
   const footerOffset = TAPE_HEADER_SIZE + bodyBytes;
   const finalScore = view.getUint32(footerOffset, true);
-  const finalRngState = view.getUint32(footerOffset + 4, true);
-  const checksum = view.getUint32(footerOffset + 8, true);
+  const checksum = view.getUint32(footerOffset + 4, true);
 
   if (finalScore === 0) {
     throw new Error("tape final_score must be greater than zero");
@@ -70,7 +69,6 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
     seedId: 0,
     frameCount,
     finalScore,
-    finalRngState,
     checksum,
   };
 }

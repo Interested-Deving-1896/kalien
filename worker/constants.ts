@@ -5,9 +5,9 @@ export const OPENZEPPELIN_CHANNELS_HOSTNAME = "channels.openzeppelin.com";
 export const DEFAULT_RELAYER_REQUEST_TIMEOUT_MS = 30_000;
 
 export const TAPE_MAGIC = 0x5a4b5450;
-export const TAPE_VERSION = 3;
+export const TAPE_VERSION = 4;
 export const TAPE_HEADER_SIZE = 16;
-export const TAPE_FOOTER_SIZE = 12;
+export const TAPE_FOOTER_SIZE = 8;
 
 export const DEFAULT_MAX_TAPE_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_POLL_INTERVAL_MS = 3_000;
