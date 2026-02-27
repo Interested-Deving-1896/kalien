@@ -16,6 +16,7 @@ dist
 # IDE (keep .vscode for shared OXC/project settings)
 .idea
 .claude
+.codex/
 *.swp
 *.swo
 

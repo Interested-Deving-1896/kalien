@@ -25,9 +25,9 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 
 ## Parity Checks
 1. Tape contract
-- `magic = 0x5A4B5450`, `version = 2`, `rules_tag = 4 (AST4)`.
-- Header reserved bytes `[6..7]` and input high nibble must be zero.
-- Length is exact (`header + frameCount + footer`), CRC must match.
+- `magic = 0x5A4B5450`, `version = 4`, `rules_tag = 4 (AST4)`.
+- Header reserved bytes `[6..7]` must be zero.
+- Body is nibble-packed: `ceil(frameCount / 2)` bytes. CRC-32 covers header + body.
 
 2. Deterministic gameplay constants
 - `SHIP_RESPAWN_FRAMES = 75`, `SHIP_SPAWN_INVULNERABLE_FRAMES = 120`.
@@ -45,7 +45,7 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 
 5. Verifier journal/output
 - Success journal is 64 bytes / 8 fields:
-  - `seed`, `seed_id`, `frame_count`, `final_score`, `final_rng_state`, `tape_checksum`, `rules_digest`, `claimant`.
+  - `seed`, `seed_id`, `frame_count`, `final_score`, `reserved(0)`, `reserved(0)`, `rules_digest`, `claimant`.
 - Claimant is encoded as fixed bytes (`kind + 32-byte id`) and decoded as `G...`/`C...`.
 - Rules digest is `0x4153_5434` (`AST4`).
 

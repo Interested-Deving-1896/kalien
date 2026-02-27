@@ -348,7 +348,7 @@ Rust prover core.
       2. Submit to prover and get Groth16 proof
       3. Submit proof to testnet contract with Groth16 verifier
       4. Confirm token minting succeeds
-- [ ] **Validate the `RULES_DIGEST` constant** (`0x4153_5433` / "AST3").
+- [ ] **Validate the `RULES_DIGEST` constant** (`0x4153_5434` / "AST4").
       This is baked into both the guest and contract. It serves as a versioning
       marker — if game rules change, bump this value.
 

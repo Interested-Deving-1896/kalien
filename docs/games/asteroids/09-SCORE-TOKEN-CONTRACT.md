@@ -78,8 +78,8 @@ Fixed length: `64` bytes.
   - `seed_id`
   - `frame_count`
   - `final_score`
-  - `final_rng_state`
-  - `tape_checksum`
+  - `reserved` (always 0)
+  - `reserved` (always 0)
   - `rules_digest`
 - claimant payload at `28..60`
   - byte `28`: claimant kind (`0 = account`, `1 = contract`)

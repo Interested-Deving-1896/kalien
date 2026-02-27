@@ -250,8 +250,8 @@ function packJournal(journal: ProofJournal): Uint8Array {
   view.setUint32(0, journal.seed, true);
   view.setUint32(4, journal.frame_count, true);
   view.setUint32(8, journal.final_score, true);
-  view.setUint32(12, journal.final_rng_state, true);
-  view.setUint32(16, journal.tape_checksum, true);
+  view.setUint32(12, 0, true);              // reserved
+  view.setUint32(16, 0, true);              // reserved
   view.setUint32(20, journal.rules_digest, true);
   return new Uint8Array(buf);
 }

@@ -98,13 +98,13 @@ Claim queue path:
 
 `worker/tape.ts` enforces:
 - Non-empty payload, `<= MAX_TAPE_BYTES` (default 2 MiB)
-- Magic = `0x5A4B5450`, version = `2`
+- Magic = `0x5A4B5450`, version = `4`
 - Rules tag = `AST4` and header reserved bytes are zero
-- Exact byte length = header (16) + frameCount + footer (12)
+- Exact byte length = header (16) + ceil(frameCount/2) + footer (8)
 - CRC-32 checksum match
 
 Metadata extracted from the tape and stored with the job record:
-- `seed`, `frameCount`, `finalScore`, `finalRngState`, `checksum`
+- `seed`, `frameCount`, `finalScore`, `checksum`
 
 ### Job state model
 
@@ -144,7 +144,7 @@ interface ProofJobRecord {
   tape: {
     sizeBytes: number;
     key: string;               // R2 key
-    metadata: TapeMetadata;    // seed, frameCount, finalScore, finalRngState, checksum
+    metadata: TapeMetadata;    // seed, frameCount, finalScore, checksum
   };
   queue: {
     attempts: number;
@@ -262,8 +262,6 @@ interface ProofResultSummary {
     seed_id: number;
     frame_count: number;
     final_score: number;
-    final_rng_state: number;
-    tape_checksum: number;
     rules_digest: number;
     claimant: string;
   };
@@ -358,15 +356,15 @@ struct VerificationJournal {
     seed_id: u32,
     frame_count: u32,
     final_score: u32,
-    final_rng_state: u32,
-    tape_checksum: u32,
+    reserved_0: u32,    // always 0
+    reserved_1: u32,    // always 0
     rules_digest: u32,  // RULES_DIGEST = 0x41535434 ("AST4")
     claimant: String,   // decoded from fixed claimant bytes (kind + 32-byte id)
 }
 ```
 
 Serialized as 64 bytes:
-- 7 × u32 LE
+- 7 x u32 LE (bytes 16-23 are reserved zeros)
 - claimant bytes (`kind + 32-byte id`)
 - 3 reserved zero bytes
 
