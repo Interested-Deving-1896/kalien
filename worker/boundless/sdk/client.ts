@@ -25,7 +25,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 import { safeErrorMessage, sleep } from "../../utils";
-import { MAX_INLINE_STDIN_BYTES } from "../config";
+import { BOUNDLESS_INDEXER_URLS, MAX_INLINE_STDIN_BYTES } from "../config";
 import { boundlessMarketAbi, eip712Types } from "../abi";
 import { encodeStdin } from "../stdin";
 import { uploadInput } from "../storage";
@@ -42,11 +42,17 @@ import type {
 import {
   buildRequestId,
   boundlessExplorerUrl,
-  decodeRequestId,
   hexToUint8Array,
   requestIdToHex,
   uint8ArrayToHex,
 } from "./utils";
+
+function parsePositiveNumber(value: string | number | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
 
 // Predicate type name mapping for the order stream JSON format
 const PREDICATE_TYPE_NAMES: Record<number, string> = {
@@ -332,6 +338,7 @@ export class BoundlessClient {
     if (!fulfilled) {
       // Check if a prover has locked the order
       let locked: boolean | undefined;
+      let lockPriceWei: bigint | undefined;
       try {
         locked = await publicClient.readContract({
           address: config.marketAddress,
@@ -343,10 +350,24 @@ export class BoundlessClient {
         // Non-fatal — lock status is advisory; default to undefined (unknown)
       }
 
+      // Read lock price while it's still available (cleared after payment)
+      if (locked) {
+        try {
+          const [, , , , price] = await publicClient.readContract({
+            address: config.marketAddress,
+            abi: boundlessMarketAbi,
+            functionName: "requestLocks",
+            args: [requestId],
+          });
+          if (price > 0n) lockPriceWei = price;
+        } catch { /* non-fatal */ }
+      }
+
       return {
         type: "running",
         status: "running",
         locked,
+        lockPriceWei,
       };
     }
 
@@ -380,20 +401,27 @@ export class BoundlessClient {
       };
     }
 
-    // 3. Read settlement price from requestLocks (non-fatal if it fails)
-    let actualCostUsd: number | null = null;
-    try {
-      const [lockPrice] = await publicClient.readContract({
-        address: config.marketAddress,
-        abi: boundlessMarketAbi,
-        functionName: "requestLocks",
-        args: [requestId],
-      });
-      if (lockPrice > 0n) {
+    // 3. Fetch settlement cost + cycle counts in parallel — both non-fatal enrichment
+    const [costResult, cyclesResult] = await Promise.allSettled([
+      (async (): Promise<number | null> => {
+        const [, , , , lockPrice] = await publicClient.readContract({
+          address: config.marketAddress,
+          abi: boundlessMarketAbi,
+          functionName: "requestLocks",
+          args: [requestId],
+        });
+        if (lockPrice <= 0n) return null;
         const ethPrice = await fetchEthPriceUsd(config.rpcUrl, Number(config.chainId));
-        actualCostUsd = weiToUsd(lockPrice, ethPrice);
-      }
-    } catch { /* non-fatal — settlement price is advisory */ }
+        return weiToUsd(lockPrice, ethPrice);
+      })(),
+      this.fetchCyclesFromIndexer(requestId),
+    ]);
+
+    const actualCostUsd = costResult.status === "fulfilled" ? costResult.value : null;
+    const { programCycles, totalCycles } =
+      cyclesResult.status === "fulfilled"
+        ? cyclesResult.value
+        : { programCycles: null, totalCycles: null };
 
     // 4. Convert fulfillment to the prover response format
     const proverResponse = adaptFulfillmentToProverResponse(fulfillmentData);
@@ -405,6 +433,8 @@ export class BoundlessClient {
         actualCostUsd,
         proverAddress: fulfillmentData.proverAddress,
         fulfillmentTxHash: fulfillmentData.fulfillmentTxHash,
+        programCycles,
+        totalCycles,
       },
     };
   }
@@ -454,15 +484,6 @@ export class BoundlessClient {
    */
   explorerUrl(requestId: bigint): string {
     return boundlessExplorerUrl(requestId);
-  }
-
-  /**
-   * Decode a request ID bigint back into its constituent address + nonce.
-   *
-   * @param requestId - bigint request ID
-   */
-  decodeRequestId(requestId: bigint): { address: string; nonce: number } {
-    return decodeRequestId(requestId);
   }
 
   // ── Private helpers ───────────────────────────────────────────────────
@@ -688,6 +709,93 @@ export class BoundlessClient {
 
     return { seal, journal, proverAddress: null, fulfillmentTxHash: null };
   }
+
+  private async fetchCyclesFromIndexer(
+    requestId: bigint,
+  ): Promise<{ programCycles: number | null; totalCycles: number | null }> {
+    return fetchBoundlessCycles(this.config.chainId.toString(), requestIdToHex(requestId));
+  }
+}
+
+/**
+ * Fetch cycle counts for a fulfilled request from the Boundless Indexer API.
+ *
+ * The indexer computes program_cycles and total_cycles via Bento re-execution.
+ * These may be null if Bento hasn't processed the request yet.
+ * Returns null values for chains without a known indexer URL.
+ *
+ * Exported so the coordinator can call it for lazy backfill on read.
+ */
+export async function fetchBoundlessCycles(
+  chainId: string,
+  requestIdHex: string,
+): Promise<{ programCycles: number | null; totalCycles: number | null }> {
+  const primaryIndexerUrl = BOUNDLESS_INDEXER_URLS[chainId];
+  const candidateUrls = [
+    ...(primaryIndexerUrl ? [`${primaryIndexerUrl}/v1/market/requests/${requestIdHex}`] : []),
+    // Fallback to Explorer's public API; it proxies indexer backends server-side.
+    `https://explorer.boundless.network/api/orders/${requestIdHex}`,
+  ];
+
+  const cycleResults = await Promise.all(
+    candidateUrls.map(async (url) => {
+      try {
+        const resp = await fetch(url, {
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (!resp.ok) {
+          return null;
+        }
+
+        const payload = (await resp.json()) as unknown;
+        const entry = Array.isArray(payload)
+          ? ((payload[0] ?? null) as {
+              program_cycles?: string | number | null;
+              total_program_cycles?: string | number | null;
+              total_cycles?: string | number | null;
+            } | null)
+          : payload && typeof payload === "object"
+            ? (payload as {
+                program_cycles?: string | number | null;
+                total_program_cycles?: string | number | null;
+                total_cycles?: string | number | null;
+              })
+            : null;
+        if (!entry) {
+          return null;
+        }
+
+        const programCycles = parsePositiveNumber(entry.program_cycles ?? entry.total_program_cycles);
+        const totalCycles = parsePositiveNumber(entry.total_cycles);
+        if (totalCycles == null && programCycles == null) {
+          return null;
+        }
+
+        return { source: url, programCycles, totalCycles };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const firstWithCycles = cycleResults.find((result) => result != null);
+  if (firstWithCycles) {
+    if (firstWithCycles.totalCycles != null) {
+      console.log("[boundless] indexer cycles", {
+        programCycles: firstWithCycles.programCycles,
+        totalCycles: firstWithCycles.totalCycles,
+        requestId: requestIdHex,
+        source: firstWithCycles.source,
+      });
+    }
+
+    return {
+      programCycles: firstWithCycles.programCycles,
+      totalCycles: firstWithCycles.totalCycles,
+    };
+  }
+
+  return { programCycles: null, totalCycles: null };
 }
 
 /**

@@ -10,9 +10,11 @@ import {
   MIN_PROVER_POLL_INTERVAL_MS,
   JOB_KEY_PREFIX,
   MAX_TOTAL_PROVER_ATTEMPTS,
+  ORPHAN_SCAN_DONE_KEY,
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
-import { pollBoundless, pollBoundlessOnce } from "../boundless/client";
+import { BoundlessClient, fetchBoundlessCycles } from "../boundless/sdk/client";
+import { fetchEthPriceUsd, weiToUsd } from "../boundless/pricing";
 import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
@@ -36,6 +38,8 @@ import {
   safeErrorMessage,
 } from "../utils";
 
+const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
+
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
   return env.PROOF_COORDINATOR.get(id);
@@ -51,9 +55,11 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     ...a,
     errorDetail: a.errorDetail ?? null,
     errorCode: a.errorCode ?? null,
-    actualCostUsd: a.actualCostUsd ?? null,
+    actualCostUsd: a.actualCostUsd != null && a.actualCostUsd <= 1000 ? a.actualCostUsd : null,
     proverAddress: a.proverAddress ?? null,
     fulfillmentTxHash: a.fulfillmentTxHash ?? null,
+    programCycles: a.programCycles ?? null,
+    totalCycles: a.totalCycles ?? null,
   }));
   if (proverAttempts.length === 0 && job.prover.jobId) {
     const backend: ProverBackend = job.prover.statusUrl?.startsWith("boundless:")
@@ -80,6 +86,8 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
         actualCostUsd: null,
         proverAddress: null,
         fulfillmentTxHash: null,
+        programCycles: null,
+        totalCycles: null,
       },
     ];
   }
@@ -269,6 +277,58 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return job.prover.statusUrl?.startsWith("boundless:") === true;
   }
 
+  private getLatestSuccessfulAttempt(job: ProofJobRecord): ProverAttempt | null {
+    for (let i = job.proverAttempts.length - 1; i >= 0; i -= 1) {
+      const attempt = job.proverAttempts[i];
+      if (attempt.outcome === "success") {
+        return attempt;
+      }
+    }
+    return null;
+  }
+
+  private isBoundlessSuccessAttempt(job: ProofJobRecord, attempt: ProverAttempt): boolean {
+    return (
+      attempt.backend === "boundless" ||
+      attempt.statusUrl?.startsWith("boundless:") === true ||
+      this.isBoundlessJob(job)
+    );
+  }
+
+  private normalizeBoundlessRequestId(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    const normalized = trimmed.startsWith("boundless:")
+      ? trimmed.slice("boundless:".length)
+      : trimmed;
+    if (/^0x[0-9a-f]+$/i.test(normalized)) return normalized;
+    return null;
+  }
+
+  private getBoundlessRequestId(job: ProofJobRecord, attempt: ProverAttempt): string | null {
+    const candidates = [
+      attempt.proverJobId,
+      attempt.statusUrl,
+      job.prover.jobId,
+      job.prover.statusUrl,
+    ];
+
+    for (const candidate of candidates) {
+      const requestId = this.normalizeBoundlessRequestId(candidate);
+      if (requestId) return requestId;
+    }
+    return null;
+  }
+
+  private getBoundlessChainId(): string {
+    const raw = this.env.BOUNDLESS_CHAIN_ID?.trim();
+    if (!raw) return DEFAULT_BOUNDLESS_CHAIN_ID;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BOUNDLESS_CHAIN_ID;
+    return String(parsed);
+  }
+
   async createJob(
     tapeInfo: Omit<ProofTapeInfo, "key"> & { claimantAddress: string },
   ): Promise<CreateJobAccepted> {
@@ -300,7 +360,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         segmentLimitPo2: null,
         lastPolledAt: null,
         pollingErrors: 0,
-        recoveryAttempts: 0,
       },
       proverAttempts: [],
       claimAttempts: [],
@@ -329,6 +388,46 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   async getJob(jobId: string): Promise<ProofJobRecord | null> {
     return this.loadJob(jobId);
+  }
+
+  /**
+   * Lazy backfill: if a succeeded Boundless job has null cycle counts,
+   * re-check the indexer (Bento processes cycles asynchronously) and
+   * persist the result so subsequent reads are free.
+   *
+   * Returns the (possibly enriched) job record, or null if not found.
+   */
+  async enrichBoundlessCycles(jobId: string): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job) return null;
+
+    // Only enrich succeeded Boundless jobs missing cycle data
+    if (job.status !== "succeeded") return job;
+    const attempt = this.getLatestSuccessfulAttempt(job);
+    if (!attempt || attempt.totalCycles != null) return job;
+    if (!this.isBoundlessSuccessAttempt(job, attempt)) return job;
+
+    const requestIdHex = this.getBoundlessRequestId(job, attempt);
+    if (!requestIdHex) return job;
+
+    try {
+      const chainId = this.getBoundlessChainId();
+      const { programCycles, totalCycles } = await fetchBoundlessCycles(
+        chainId,
+        requestIdHex,
+      );
+      if (totalCycles != null) {
+        attempt.programCycles = programCycles;
+        attempt.totalCycles = totalCycles;
+        await this.saveJob(job);
+      }
+    } catch (error) {
+      // Non-fatal — indexer may be down; next read will retry.
+      console.warn(
+        `[coordinator] cycle backfill failed for ${jobId} (${requestIdHex}): ${safeErrorMessage(error)}`,
+      );
+    }
+    return job;
   }
 
   async getActiveJob(): Promise<ProofJobRecord | null> {
@@ -456,7 +555,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     proverJobId: string,
     statusUrl: string,
     segmentLimitPo2: number,
-    recoveryAttempts?: number,
     ipfsCid?: string,
     maxPriceUsd?: number,
   ): Promise<ProofJobRecord | null> {
@@ -474,7 +572,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.statusUrl = statusUrl;
     job.prover.segmentLimitPo2 = segmentLimitPo2;
     job.prover.pollingErrors = 0;
-    job.prover.recoveryAttempts = recoveryAttempts ?? job.prover.recoveryAttempts;
     if (ipfsCid) {
       job.prover.ipfsCid = ipfsCid;
     }
@@ -501,6 +598,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         actualCostUsd: null,
         proverAddress: null,
         fulfillmentTxHash: null,
+        programCycles: null,
+        totalCycles: null,
       };
       job.proverAttempts.push(attempt);
       await this.saveJob(job);
@@ -524,6 +623,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       actualCostUsd?: number | null;
       proverAddress?: string | null;
       fulfillmentTxHash?: string | null;
+      programCycles?: number | null;
+      totalCycles?: number | null;
     },
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
@@ -833,6 +934,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       actualCostUsd?: number | null;
       proverAddress?: string | null;
       fulfillmentTxHash?: string | null;
+      programCycles?: number | null;
+      totalCycles?: number | null;
     },
   ): Promise<void> {
     const current = job.proverAttempts.find((a) => a.outcome === "in_progress");
@@ -846,6 +949,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         if (enrichment.actualCostUsd !== undefined) current.actualCostUsd = enrichment.actualCostUsd;
         if (enrichment.proverAddress !== undefined) current.proverAddress = enrichment.proverAddress;
         if (enrichment.fulfillmentTxHash !== undefined) current.fulfillmentTxHash = enrichment.fulfillmentTxHash;
+        if (enrichment.programCycles !== undefined) current.programCycles = enrichment.programCycles;
+        if (enrichment.totalCycles !== undefined) current.totalCycles = enrichment.totalCycles;
       }
       await this.saveJob(job);
     }
@@ -990,7 +1095,22 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         return;
       }
 
-      await this.markSucceeded(activeJobId, summary, artifactStorageKey, pollResult.metadata ?? undefined);
+      // Compute actualCostUsd from cached lockPriceWei if available
+      const metadata = { ...(pollResult.metadata ?? { actualCostUsd: null, proverAddress: null, fulfillmentTxHash: null }) };
+      if (metadata.actualCostUsd == null) {
+        const currentAttempt = job.proverAttempts?.find((a) => a.outcome === "in_progress");
+        if (currentAttempt?.lockPriceWei) {
+          try {
+            const boundlessConfig = resolveBoundlessConfig(this.env);
+            if (boundlessConfig) {
+              const ethPrice = await fetchEthPriceUsd(boundlessConfig.rpcUrl, Number(boundlessConfig.chainId));
+              metadata.actualCostUsd = weiToUsd(BigInt(currentAttempt.lockPriceWei), ethPrice);
+            }
+          } catch { /* non-fatal */ }
+        }
+      }
+
+      await this.markSucceeded(activeJobId, summary, artifactStorageKey, metadata);
       return;
     }
 
@@ -1025,7 +1145,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         job.prover.statusUrl = null;
         job.prover.lastPolledAt = nowIso();
         job.prover.pollingErrors += 1;
-        job.prover.recoveryAttempts += 1;
         job.status = "retrying";
         job.updatedAt = nowIso();
         job.queue.lastError = pollResult.message;
@@ -1067,8 +1186,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     // Recover orphaned non-terminal jobs that predate ACTIVE_JOBS_KEY.
     // These jobs were created before we started tracking active job IDs, so
-    // the alarm would never pick them up. We scan once to adopt them.
-    {
+    // the alarm would never pick them up. We scan once to adopt them, then
+    // persist a flag so subsequent alarm() calls skip this O(n) scan entirely.
+    if (!(await this.ctx.storage.get<boolean>(ORPHAN_SCAN_DONE_KEY))) {
       const activeSet = new Set(activeJobIds);
       let orphanFound = false;
       const listPageSize = 128;
@@ -1095,6 +1215,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         startAfter = lastKey;
       }
       /* eslint-enable no-await-in-loop */
+      await this.ctx.storage.put(ORPHAN_SCAN_DONE_KEY, true);
       if (orphanFound) {
         console.log(
           `[proof-worker] adopted ${activeJobIds.length} orphaned job(s) into active set`,
@@ -1142,8 +1263,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
             await this.markFailed(jobId, "boundless config missing during alarm poll");
             continue;
           }
-          pollResult = await pollBoundless(
-            boundlessConfig,
+          pollResult = await new BoundlessClient(boundlessConfig).poll(
             job.prover.jobId,
             DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
           );
@@ -1179,6 +1299,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         if (currentAttempt) {
           const attemptAgeMs = Date.now() - new Date(currentAttempt.startedAt).getTime();
           const isLocked = pollResult.locked === true;
+
+          // Cache the lock price while it's available (contract clears it after payment)
+          if (pollResult.lockPriceWei && !currentAttempt.lockPriceWei) {
+            currentAttempt.lockPriceWei = pollResult.lockPriceWei.toString();
+            await this.saveJob(job);
+          }
 
           // If locked, extend wait up to the full lock deadline; otherwise use poll timeout
           const deadlineMs = isLocked
@@ -1256,7 +1382,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
             await this.saveJob(job);
             continue;
           }
-          pollResult = await pollBoundlessOnce(boundlessConfig, proverJobId);
+          pollResult = await new BoundlessClient(boundlessConfig).pollOnce(proverJobId);
         } else {
           pollResult = await pollProverOnce(this.env, proverJobId);
         }

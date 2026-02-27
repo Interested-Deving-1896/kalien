@@ -6,11 +6,13 @@ import {
   EXPECTED_RULESET,
   OPPORTUNISTIC_POLL_STALE_MS,
 } from "../constants";
+import { fetchBoundlessCycles } from "../boundless/sdk/client";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
 import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
 import { parseAndValidateTape } from "../tape";
+import type { ProofJobRecord, ProverAttempt } from "../types";
 import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
 import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import {
@@ -116,6 +118,83 @@ function jsonError(
 
 function clientIp(c: { req: { raw: Request } }): string {
   return c.req.raw.headers.get("cf-connecting-ip") ?? "unknown";
+}
+
+const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
+
+function latestSuccessfulAttempt(job: ProofJobRecord): ProverAttempt | null {
+  for (let i = job.proverAttempts.length - 1; i >= 0; i -= 1) {
+    const attempt = job.proverAttempts[i];
+    if (attempt.outcome === "success") return attempt;
+  }
+  return null;
+}
+
+function normalizeBoundlessRequestId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.startsWith("boundless:")
+    ? trimmed.slice("boundless:".length)
+    : trimmed;
+  if (!/^0x[0-9a-f]+$/i.test(normalized)) return null;
+  return normalized;
+}
+
+function resolveBoundlessChainId(env: WorkerEnv): string {
+  const raw = env.BOUNDLESS_CHAIN_ID?.trim();
+  if (!raw) return DEFAULT_BOUNDLESS_CHAIN_ID;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BOUNDLESS_CHAIN_ID;
+  return String(parsed);
+}
+
+async function enrichBoundlessCyclesForResponse(
+  env: WorkerEnv,
+  job: ProofJobRecord,
+): Promise<ProofJobRecord> {
+  if (job.status !== "succeeded") return job;
+  if (!job.proverAttempts || job.proverAttempts.length === 0) return job;
+
+  const attempt = latestSuccessfulAttempt(job);
+  if (!attempt || attempt.totalCycles != null) return job;
+
+  const isBoundlessAttempt =
+    attempt.backend === "boundless" ||
+    attempt.statusUrl?.startsWith("boundless:") === true ||
+    job.prover.statusUrl?.startsWith("boundless:") === true;
+  if (!isBoundlessAttempt) return job;
+
+  const requestId =
+    normalizeBoundlessRequestId(attempt.proverJobId) ??
+    normalizeBoundlessRequestId(attempt.statusUrl) ??
+    normalizeBoundlessRequestId(job.prover.jobId) ??
+    normalizeBoundlessRequestId(job.prover.statusUrl);
+  if (!requestId) return job;
+
+  try {
+    const chainId = resolveBoundlessChainId(env);
+    const { programCycles, totalCycles } = await fetchBoundlessCycles(chainId, requestId);
+    if (totalCycles == null) return job;
+
+    const successfulIndex = job.proverAttempts.findIndex(
+      (candidate) => candidate.index === attempt.index && candidate.outcome === "success",
+    );
+    if (successfulIndex < 0) return job;
+
+    const updatedAttempts = [...job.proverAttempts];
+    updatedAttempts[successfulIndex] = {
+      ...updatedAttempts[successfulIndex],
+      programCycles,
+      totalCycles,
+    };
+    return {
+      ...job,
+      proverAttempts: updatedAttempts,
+    };
+  } catch {
+    return job;
+  }
 }
 
 export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
@@ -304,12 +383,43 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     const coordinator = coordinatorStub(c.env);
     const { jobs, total } = await coordinator.listJobsForClaimant(claimantAddress, limit, offset);
 
+    const jobsWithCycleBackfill = await Promise.all(
+      jobs.map(async (job) => {
+        if (job.status !== "succeeded") {
+          return job;
+        }
+
+        const successfulAttempt = latestSuccessfulAttempt(job);
+        if (!successfulAttempt || successfulAttempt.totalCycles != null) {
+          return job;
+        }
+
+        const isBoundlessAttempt =
+          successfulAttempt.backend === "boundless" ||
+          successfulAttempt.statusUrl?.startsWith("boundless:") === true ||
+          job.prover.statusUrl?.startsWith("boundless:") === true;
+        if (!isBoundlessAttempt) {
+          return job;
+        }
+
+        try {
+          const persisted = (await coordinator.enrichBoundlessCycles(
+            job.jobId,
+          )) as ProofJobRecord | null;
+          return enrichBoundlessCyclesForResponse(c.env, persisted ?? job);
+        } catch {
+          // Best-effort only; never fail list reads because of enrichment.
+          return enrichBoundlessCyclesForResponse(c.env, job);
+        }
+      }),
+    );
+
     const nextOffset = offset + jobs.length < total ? offset + limit : null;
 
     c.header("Cache-Control", JOB_LIST_CACHE_CONTROL);
     return c.json({
       success: true,
-      jobs: jobs.map(asPublicJob),
+      jobs: jobsWithCycleBackfill.map(asPublicJob),
       total,
       offset,
       limit,
@@ -358,7 +468,7 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
 
     const coordinator = coordinatorStub(c.env);
-    let job = await coordinator.getJob(jobId);
+    let job = (await coordinator.getJob(jobId)) as ProofJobRecord | null;
     if (!job) {
       return jsonError(c, 404, `job not found: ${jobId}`);
     }
@@ -378,6 +488,20 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       } catch {
         // Best-effort — don't fail the read if kicking the alarm errors.
       }
+    }
+
+    // Lazy backfill: if this is a succeeded Boundless job missing cycle data,
+    // re-check the indexer (Bento populates cycles asynchronously).
+    if (job.status === "succeeded") {
+      try {
+        const enriched = (await coordinator.enrichBoundlessCycles(jobId)) as ProofJobRecord | null;
+        if (enriched) {
+          job = enriched;
+        }
+      } catch {
+        // Best-effort — don't fail the read if enrichment errors.
+      }
+      job = await enrichBoundlessCyclesForResponse(c.env, job);
     }
 
     // Terminal jobs never change — cache longer. In-progress jobs need fresh data.
