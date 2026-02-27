@@ -11,6 +11,7 @@ import type { WorkerEnv } from "../../worker/env";
 import type { ProverGetJobResponse } from "../../worker/types";
 
 const VALID_IMAGE_ID = "a".repeat(64);
+const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
@@ -47,11 +48,13 @@ function validProverGetJobResponse(overrides: Partial<ProverGetJobResponse> = {}
       proof: {
         journal: {
           seed: 42,
+          seed_id: 123,
           frame_count: 100,
           final_score: 1337,
           final_rng_state: 999,
           tape_checksum: 0xdead,
           rules_digest: EXPECTED_RULES_DIGEST,
+          claimant: TEST_CLAIMANT,
         },
         requested_receipt_kind: "groth16",
         produced_receipt_kind: "groth16",
@@ -98,7 +101,7 @@ describe("prover client", () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async () =>
         new Response(
-          JSON.stringify({ status: "ok", image_id: "short", rules_digest: 1, ruleset: "AST3" }),
+          JSON.stringify({ status: "ok", image_id: "short", rules_digest: 1, ruleset: "WRONG" }),
           { status: 200, headers: { "content-type": "application/json" } },
         )) as typeof fetch;
       try {
@@ -294,7 +297,10 @@ describe("prover client", () => {
         );
       }) as typeof fetch;
       try {
-        const result = await submitToProver(makeEnv(), tapeBytes, {});
+        const result = await submitToProver(makeEnv(), tapeBytes, {
+          seedId: 123,
+          claimantAddress: TEST_CLAIMANT,
+        });
         expect(result.type).toBe("success");
         if (result.type === "success") {
           expect(result.jobId).toBe("prover-job-1");
@@ -320,7 +326,10 @@ describe("prover client", () => {
         });
       }) as typeof fetch;
       try {
-        const result = await submitToProver(makeEnv(), tapeBytes, {});
+        const result = await submitToProver(makeEnv(), tapeBytes, {
+          seedId: 123,
+          claimantAddress: TEST_CLAIMANT,
+        });
         expect(result.type).toBe("retry");
       } finally {
         globalThis.fetch = originalFetch;
@@ -340,7 +349,10 @@ describe("prover client", () => {
         return new Response("bad request", { status: 400 });
       }) as typeof fetch;
       try {
-        const result = await submitToProver(makeEnv(), tapeBytes, {});
+        const result = await submitToProver(makeEnv(), tapeBytes, {
+          seedId: 123,
+          claimantAddress: TEST_CLAIMANT,
+        });
         expect(result.type).toBe("fatal");
       } finally {
         globalThis.fetch = originalFetch;

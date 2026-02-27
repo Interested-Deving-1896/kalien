@@ -1,6 +1,5 @@
 use super::*;
 use crate::options_summary;
-use rusqlite::Connection;
 use host::ProveOptions;
 use tempfile::TempDir;
 
@@ -20,6 +19,8 @@ fn sample_job() -> ProofJob {
         tape_size_bytes: 100,
         options: options_summary(&ProveOptions {
             max_frames: 18_000,
+            seed_id: 0,
+            claimant: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".to_string(),
             segment_limit_po2: host::SEGMENT_LIMIT_PO2_DEFAULT,
             receipt_kind: host::ReceiptKind::Composite,
             proof_mode: host::ProofMode::Secure,
@@ -521,49 +522,4 @@ fn delete_removes_result_file() {
         !result_file.exists(),
         "delete should remove result file from disk"
     );
-}
-
-#[test]
-fn open_migrates_legacy_jobs_schema() {
-    let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("jobs.db");
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE jobs (
-                job_id              TEXT PRIMARY KEY,
-                status              TEXT NOT NULL,
-                created_at          INTEGER NOT NULL,
-                started_at          INTEGER,
-                finished_at         INTEGER,
-                tape_size_bytes     INTEGER NOT NULL,
-                opt_max_frames      INTEGER NOT NULL,
-                opt_receipt_kind    TEXT NOT NULL,
-                opt_segment_limit_po2 INTEGER NOT NULL,
-                opt_proof_mode      TEXT NOT NULL,
-                result_path         TEXT,
-                error               TEXT
-            );",
-        )
-        .unwrap();
-    }
-
-    let store = JobStore::open(dir.path()).unwrap();
-    let job = sample_job();
-    store.insert(&job).unwrap();
-
-    let loaded = store.get(job.job_id).unwrap().unwrap();
-    assert_eq!(loaded.job_id, job.job_id);
-
-    let conn = store.conn.lock().unwrap();
-    let mut stmt = conn.prepare("PRAGMA table_info(jobs)").unwrap();
-    let columns: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-
-    assert!(columns.iter().any(|c| c == "opt_verify_mode"));
-    assert!(columns.iter().any(|c| c == "opt_accelerator"));
-    assert!(columns.iter().any(|c| c == "error_code"));
 }

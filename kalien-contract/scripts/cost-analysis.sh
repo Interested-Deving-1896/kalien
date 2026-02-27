@@ -311,9 +311,7 @@ measure_submit_score_groth16() {
     -- \
     submit_score \
     --seal "$seal_hex" \
-    --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR"
-}
+    --journal_raw "$journal_hex"
 
 measure_submit_score_mock() {
   local fixture_prefix="proof-medium-groth16"
@@ -343,9 +341,7 @@ measure_submit_score_mock() {
     -- \
     submit_score \
     --seal "$seal_hex" \
-    --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR"
-}
+    --journal_raw "$journal_hex"
 
 measure_set_image_id() {
   measure_operation "set_image_id (admin)" \

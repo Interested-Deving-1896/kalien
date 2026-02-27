@@ -13,23 +13,53 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
+import { fetchSeedFromContract } from "../src/chain/seed";
 
 const DEFAULT_MAX_FRAMES = 36_000;
+const DEFAULT_RPC_URL = process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
+const DEFAULT_CONTRACT_ID = process.env.SCORE_CONTRACT_ID
+  ?? process.env.VITE_SCORE_CONTRACT_ID
+  ?? "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
 
 // Parse arguments
-let seed = Math.floor(Date.now() / 1000 / 600);
+let explicitSeed: number | null = null;
 let maxFrames = DEFAULT_MAX_FRAMES; // ~5 minutes
 let outputPath = "";
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--seed" && args[i + 1]) {
-    seed = parseInt(args[++i], 16);
+    explicitSeed = parseInt(args[++i], 16);
   } else if (args[i] === "--max-frames" && args[i + 1]) {
     maxFrames = parseInt(args[++i], 10);
   } else if (args[i] === "--output" && args[i + 1]) {
     outputPath = args[++i];
   }
+}
+
+// Resolve seed: use explicit --seed flag, or fetch from contract
+let seed: number;
+if (explicitSeed !== null) {
+  seed = explicitSeed;
+} else {
+  process.stdout.write("Fetching seed from contract...");
+  let fetched: number | null = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    fetched = await fetchSeedFromContract(DEFAULT_CONTRACT_ID, DEFAULT_RPC_URL);
+    if (fetched !== null) break;
+    if (attempt < 5) {
+      process.stdout.write(" retrying...");
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  if (fetched === null) {
+    console.error(
+      "\nNo seed available for the current window. The backend cron may not have fired yet.",
+    );
+    process.exit(1);
+  }
+  seed = fetched;
+  console.log(` 0x${seed.toString(16).padStart(8, "0")}`);
 }
 
 if (!outputPath) {

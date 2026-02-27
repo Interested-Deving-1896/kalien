@@ -4,6 +4,7 @@ use actix_web::{
     HttpResponse, Responder,
 };
 use asteroids_verifier_core::constants::{RULESET_NAME, RULES_DIGEST};
+use asteroids_verifier_core::normalize_claimant_strkey;
 use asteroids_verifier_core::tape::parse_tape;
 use host::accelerator;
 use uuid::Uuid;
@@ -94,10 +95,42 @@ pub(crate) async fn create_prove_job_raw(
     if let Err((msg, code)) = validate_tape_size(body.len(), state.max_tape_bytes) {
         return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code));
     }
-    let options = match state.policy.to_options(&query) {
+    let mut options = match state.policy.to_options(&query) {
         Ok(options) => options,
         Err((msg, code)) => return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code)),
     };
+    let seed_id = match query.seed_id {
+        Some(seed_id) => seed_id,
+        None => {
+            return json_error_with_code(
+                StatusCode::BAD_REQUEST,
+                "missing seed_id query param",
+                Some("missing_seed_id"),
+            )
+        }
+    };
+    let claimant = match query.claimant.as_deref().map(str::trim) {
+        Some(raw) if !raw.is_empty() => match normalize_claimant_strkey(raw) {
+            Ok(normalized) => normalized,
+            Err(_) => {
+                return json_error_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "invalid claimant query param: expected Stellar G... or C... strkey",
+                    Some("invalid_claimant"),
+                )
+            }
+        },
+        _ => {
+            return json_error_with_code(
+                StatusCode::BAD_REQUEST,
+                "missing claimant query param",
+                Some("missing_claimant"),
+            )
+        }
+    };
+    options.seed_id = seed_id;
+    options.claimant = claimant;
+
     if let Err((msg, code)) = validate_non_zero_score_tape(body.as_ref(), options.max_frames) {
         return json_error_with_code(StatusCode::BAD_REQUEST, msg, Some(code));
     }

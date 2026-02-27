@@ -24,30 +24,6 @@ describe("fetchBoundlessCycles", () => {
     }
   });
 
-  it("parses legacy array payloads from the Boundless indexer", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify([
-          {
-            program_cycles: "42259180",
-            total_cycles: "44040192",
-          },
-        ]),
-        { status: 200, headers: { "content-type": "application/json" } },
-      )) as typeof fetch;
-
-    try {
-      const result = await fetchBoundlessCycles("8453", "0xdef");
-      expect(result).toEqual({
-        programCycles: 42259180,
-        totalCycles: 44040192,
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
   it("falls back to Explorer API when primary indexer responds non-200", async () => {
     const originalFetch = globalThis.fetch;
     const calledUrls: string[] = [];

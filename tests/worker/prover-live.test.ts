@@ -20,6 +20,7 @@ import type { WorkerEnv } from "../../worker/env";
 
 const PROVER_BASE_URL = "https://risc0-kalien.stellar.buzz";
 const TAPE_DIR = join(import.meta.dir, "../../test-fixtures");
+const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 function makeEnv(overrides?: Partial<WorkerEnv>): WorkerEnv {
   return {
@@ -63,9 +64,9 @@ describe("live prover integration", () => {
     const health = await getValidatedProverHealth(env, { forceRefresh: true });
 
     expect(health.imageId).toMatch(/^[0-9a-f]{64}$/);
-    expect(health.rulesDigest).toBe(0x41535433 >>> 0);
-    expect(health.rulesDigestHex).toBe("0x41535433");
-    expect(health.ruleset).toBe("AST3");
+    expect(health.rulesDigest).toBe(0x41535434 >>> 0);
+    expect(health.rulesDigestHex).toBe("0x41535434");
+    expect(health.ruleset).toBe("AST4");
   });
 
   it("getValidatedProverHealth rejects wrong expected image_id", async () => {
@@ -89,7 +90,12 @@ describe("live prover integration", () => {
     const tapeBytes = new Uint8Array(readFileSync(join(TAPE_DIR, "test-medium.tape")));
 
     // Submit
-    const submitResult = await submitToProver(env, tapeBytes, { segmentLimitPo2: 21 });
+    const seedId = 1;
+    const submitResult = await submitToProver(env, tapeBytes, {
+      segmentLimitPo2: 21,
+      seedId,
+      claimantAddress: TEST_CLAIMANT,
+    });
     expect(submitResult.type).toBe("success");
     if (submitResult.type !== "success") return;
 
@@ -120,10 +126,12 @@ describe("live prover integration", () => {
     // Verify journal matches tape
     const journal = response.result!.proof.journal;
     expect(journal.seed).toBe(0xdeadbeef >>> 0);
+    expect(journal.seed_id).toBe(seedId);
+    expect(journal.claimant).toBe(TEST_CLAIMANT);
     expect(journal.frame_count).toBe(3980);
     expect(journal.final_score).toBe(90);
     expect(journal.final_rng_state).toBe(0xeb0719ce >>> 0);
-    expect(journal.rules_digest).toBe(0x41535433 >>> 0);
+    expect(journal.rules_digest).toBe(0x41535434 >>> 0);
 
     // Verify Groth16 receipt
     expect(response.result!.proof.requested_receipt_kind).toBe("groth16");
@@ -150,7 +158,12 @@ describe("live prover integration", () => {
     const env = makeEnv();
     const tapeBytes = new Uint8Array(readFileSync(join(TAPE_DIR, "test-real-game.tape")));
 
-    const submitResult = await submitToProver(env, tapeBytes, { segmentLimitPo2: 21 });
+    const seedId = 2;
+    const submitResult = await submitToProver(env, tapeBytes, {
+      segmentLimitPo2: 21,
+      seedId,
+      claimantAddress: TEST_CLAIMANT,
+    });
     expect(submitResult.type).toBe("success");
     if (submitResult.type !== "success") return;
 
@@ -167,10 +180,12 @@ describe("live prover integration", () => {
 
     const journal = pollResult.response.result!.proof.journal;
     expect(journal.seed).toBe(0x43c9c6cd >>> 0);
+    expect(journal.seed_id).toBe(seedId);
+    expect(journal.claimant).toBe(TEST_CLAIMANT);
     expect(journal.frame_count).toBe(13829);
     expect(journal.final_score).toBe(32860);
     expect(journal.final_rng_state).toBe(0xa9713c03 >>> 0);
-    expect(journal.rules_digest).toBe(0x41535433 >>> 0);
+    expect(journal.rules_digest).toBe(0x41535434 >>> 0);
 
     expect(pollResult.response.result!.proof.produced_receipt_kind).toBe("groth16");
 
@@ -186,7 +201,11 @@ describe("live prover integration", () => {
     const env = makeEnv();
     const tapeBytes = new Uint8Array(readFileSync(join(TAPE_DIR, "test-short.tape")));
 
-    const submitResult = await submitToProver(env, tapeBytes, { segmentLimitPo2: 21 });
+    const submitResult = await submitToProver(env, tapeBytes, {
+      segmentLimitPo2: 21,
+      seedId: 3,
+      claimantAddress: TEST_CLAIMANT,
+    });
     // test-short.tape has score=1030 — valid tape, prover should accept
     expect(submitResult.type).toBe("success");
   });

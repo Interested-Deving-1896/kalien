@@ -82,6 +82,8 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
 
   return {
     seed,
+    // seed_id is provided out-of-band by the API request query param (seed_id).
+    seedId: 0,
     frameCount,
     finalScore,
     finalRngState,

@@ -22,6 +22,8 @@ Defaults:
   --url       http://127.0.0.1:8080
   --tape      test-fixtures/test-real-game.tape
   --receipts  groth16
+  --seed-id   0
+  --claimant  GAAAAAAAA...WHF
   --poll      5
 
 Examples:
@@ -34,6 +36,8 @@ USAGE_EOF
 PROVER_URL="http://127.0.0.1:8080"
 TAPE_FILE="$ROOT_DIR/test-fixtures/test-real-game.tape"
 RECEIPTS_CSV="groth16"
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 POLL_INTERVAL=5
 declare -a RECEIPTS=()
 
@@ -49,6 +53,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --receipts)
       RECEIPTS_CSV="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
+      ;;
+    --seed-id)
+      SEED_ID="${2:-}"
+      shift 2
+      ;;
+    --claimant)
+      CLAIMANT="${2:-}"
       shift 2
       ;;
     --poll)
@@ -69,6 +81,16 @@ done
 
 if [[ ! "$POLL_INTERVAL" =~ ^[0-9]+$ || "$POLL_INTERVAL" -lt 1 ]]; then
   echo "ERROR: --poll must be an integer >= 1" >&2
+  exit 1
+fi
+
+if [[ ! "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --seed-id must be an unsigned integer" >&2
+  exit 1
+fi
+
+if [[ -z "${CLAIMANT// }" ]]; then
+  echo "ERROR: --claimant cannot be empty" >&2
   exit 1
 fi
 
@@ -126,6 +148,8 @@ echo "Score:   $SCORE"
 echo "Seed:    $SEED"
 echo "Prover:  $PROVER_URL"
 echo "Receipts:${RECEIPTS[*]}"
+echo "Seed ID: $SEED_ID"
+echo "Claimant:$CLAIMANT"
 
 # ── Health check ─────────────────────────────────────────────────────
 health=$(curl -sf --connect-timeout 10 "$PROVER_URL/health" 2>/dev/null) || {
@@ -151,7 +175,7 @@ run_proof() {
   wait_for_idle
 
   local query
-  query="receipt_kind=${receipt}&verify_mode=policy"
+  query="receipt_kind=${receipt}&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream")

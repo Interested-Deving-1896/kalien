@@ -10,7 +10,6 @@ import {
   MIN_PROVER_POLL_INTERVAL_MS,
   JOB_KEY_PREFIX,
   MAX_TOTAL_PROVER_ATTEMPTS,
-  ORPHAN_SCAN_DONE_KEY,
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
 import { BoundlessClient, fetchBoundlessCycles } from "../boundless/sdk/client";
@@ -46,12 +45,7 @@ export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordina
 }
 
 export function asPublicJob(job: ProofJobRecord): PublicProofJob {
-  // For legacy jobs that predate proverAttempts, synthesize a single attempt
-  // from the prover tracking data so the UI can show meaningful backend/attempt info.
-  // Normalize old attempt records that predate the enrichment fields.
-  // Old records in Durable Object storage will have undefined (not null)
-  // for the new fields. Convert to null for consistent API responses.
-  let proverAttempts = (job.proverAttempts ?? []).map((a) => ({
+  const proverAttempts = (job.proverAttempts ?? []).map((a) => ({
     ...a,
     errorDetail: a.errorDetail ?? null,
     errorCode: a.errorCode ?? null,
@@ -61,36 +55,6 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     programCycles: a.programCycles ?? null,
     totalCycles: a.totalCycles ?? null,
   }));
-  if (proverAttempts.length === 0 && job.prover.jobId) {
-    const backend: ProverBackend = job.prover.statusUrl?.startsWith("boundless:")
-      ? "boundless"
-      : "vast";
-    const outcome: ProverAttempt["outcome"] =
-      job.status === "succeeded"
-        ? "success"
-        : isTerminalProofStatus(job.status)
-          ? "failed"
-          : "in_progress";
-    proverAttempts = [
-      {
-        index: 0,
-        backend,
-        startedAt: job.createdAt,
-        endedAt: job.completedAt,
-        outcome,
-        error: job.error,
-        errorDetail: null,
-        errorCode: null,
-        proverJobId: job.prover.jobId,
-        statusUrl: job.prover.statusUrl,
-        actualCostUsd: null,
-        proverAddress: null,
-        fulfillmentTxHash: null,
-        programCycles: null,
-        totalCycles: null,
-      },
-    ];
-  }
 
   return {
     jobId: job.jobId,
@@ -644,6 +608,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       artifactKey,
       summary,
     };
+    // Journal claimant is the canonical reward recipient used on-chain.
+    // Keep coordinator state aligned with the proof journal once verified.
+    job.claim.claimantAddress = summary.journal.claimant;
     job.error = null;
     job.claim.status = "queued";
     job.claim.lastError = null;
@@ -1183,45 +1150,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       DEFAULT_MAX_JOB_WALL_TIME_MS,
       60_000,
     );
-
-    // Recover orphaned non-terminal jobs that predate ACTIVE_JOBS_KEY.
-    // These jobs were created before we started tracking active job IDs, so
-    // the alarm would never pick them up. We scan once to adopt them, then
-    // persist a flag so subsequent alarm() calls skip this O(n) scan entirely.
-    if (!(await this.ctx.storage.get<boolean>(ORPHAN_SCAN_DONE_KEY))) {
-      const activeSet = new Set(activeJobIds);
-      let orphanFound = false;
-      const listPageSize = 128;
-      let startAfter: string | undefined;
-      /* eslint-disable no-await-in-loop */
-      while (true) {
-        const page = await this.ctx.storage.list<ProofJobRecord>({
-          prefix: JOB_KEY_PREFIX,
-          startAfter,
-          limit: listPageSize,
-        });
-        if (page.size === 0) break;
-        for (const [, value] of page) {
-          if (value && !isTerminalProofStatus(value.status) && !activeSet.has(value.jobId)) {
-            activeJobIds = [...activeJobIds, value.jobId];
-            activeSet.add(value.jobId);
-            await this.addActiveJobId(value.jobId);
-            orphanFound = true;
-          }
-        }
-        const pageKeys = Array.from(page.keys());
-        const lastKey = pageKeys[pageKeys.length - 1];
-        if (!lastKey || page.size < listPageSize) break;
-        startAfter = lastKey;
-      }
-      /* eslint-enable no-await-in-loop */
-      await this.ctx.storage.put(ORPHAN_SCAN_DONE_KEY, true);
-      if (orphanFound) {
-        console.log(
-          `[proof-worker] adopted ${activeJobIds.length} orphaned job(s) into active set`,
-        );
-      }
-    }
 
     if (activeJobIds.length === 0) {
       return;

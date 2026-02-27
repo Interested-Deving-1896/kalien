@@ -1,4 +1,5 @@
 import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../constants";
+import { encodeClaimantForJournal } from "../../shared/stellar/journal";
 
 /**
  * Encode tape bytes into the Boundless GuestEnv V1 (msgpack) format wrapping
@@ -18,8 +19,10 @@ import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../constants";
  * Inner stdin layout (matching `ExecutorEnv::write_slice` calls in the Rust host):
  * ```
  * bytes 0-3:   max_frames (u32 LE)
- * bytes 4-7:   tape_len (u32 LE)
- * bytes 8..N:  padded_tape (4-byte aligned, zero-padded)
+ * bytes 4-7:   seed_id (u32 LE)
+ * bytes 8-40:  claimant bytes (kind(1) + id(32))
+ * bytes 41-44: tape_len (u32 LE)
+ * bytes 45..N: padded_tape (4-byte aligned, zero-padded)
  * ```
  *
  * Reference:
@@ -27,17 +30,29 @@ import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../constants";
  * - Guest: kalien-verifier/methods/guest/src/main.rs:12-23
  * - Boundless input: https://github.com/boundless-xyz/boundless/blob/main/crates/boundless-market/src/input.rs
  */
-export function encodeStdin(tapeBytes: Uint8Array, maxFrames?: number): Uint8Array {
+export function encodeStdin(
+  tapeBytes: Uint8Array,
+  options: {
+    maxFrames?: number;
+    seedId: number;
+    claimantAddress: string;
+  },
+): Uint8Array {
   // 1. Build the raw stdin bytes (matching the Rust host's write_slice calls)
-  const frames = maxFrames ?? DEFAULT_BOUNDLESS_MAX_FRAMES;
+  const frames = options.maxFrames ?? DEFAULT_BOUNDLESS_MAX_FRAMES;
+  const claimantBytes = encodeClaimantForJournal(options.claimantAddress);
+  const claimantLen = claimantBytes.length;
   const tapeLen = tapeBytes.length;
   const paddedLen = (tapeLen + 3) & ~3; // align to 4-byte boundary
-  const stdinLen = 4 + 4 + paddedLen;
+  const tapeOffset = 4 + 4 + claimantLen + 4;
+  const stdinLen = tapeOffset + paddedLen;
   const stdin = new Uint8Array(stdinLen);
   const view = new DataView(stdin.buffer);
   view.setUint32(0, frames, true); // LE
-  view.setUint32(4, tapeLen, true); // LE
-  stdin.set(tapeBytes, 8); // remaining padding bytes stay 0
+  view.setUint32(4, options.seedId >>> 0, true); // LE
+  stdin.set(claimantBytes, 8);
+  view.setUint32(8 + claimantLen, tapeLen, true); // LE
+  stdin.set(tapeBytes, tapeOffset); // remaining padding bytes stay 0
 
   // 2. Wrap in GuestEnv V1 msgpack envelope
   return encodeGuestEnvV1(stdin);

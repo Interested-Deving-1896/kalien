@@ -18,6 +18,7 @@
  */
 
 // playwright-core ships with agent-browser (global package)
+// @ts-ignore — no type declarations for the globally-installed mjs bundle
 import { chromium } from "/usr/local/lib/node_modules/agent-browser/node_modules/playwright-core/index.mjs";
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -307,7 +308,8 @@ async function main() {
 
     try {
       const submitRes = await submitResponsePromise;
-      capturedClaimantAddress = submitRes.request().headers()["x-claimant-address"] ?? null;
+      const requestUrl = new URL(submitRes.request().url());
+      capturedClaimantAddress = requestUrl.searchParams.get("claimant");
       if (submitRes.ok()) {
         const submitData = (await submitRes.json()) as { job?: { jobId: string } };
         capturedJobId = submitData.job?.jobId ?? null;

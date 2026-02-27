@@ -1,28 +1,63 @@
 /**
- * Trigger a leaderboard sync against the real Stellar testnet RPC.
+ * Trigger a leaderboard sync via the dev endpoint.
  *
- * Usage: bun scripts/trigger-sync.ts
+ * Usage:
+ *   bun scripts/trigger-sync.ts
+ *   bun scripts/trigger-sync.ts --from-ledger 5000000
+ *   bun scripts/trigger-sync.ts --reset-cursor
+ *
+ * Reads DEV_API_KEY from .dev.vars automatically.
  */
 
-const BASE_URL = "http://localhost:5173";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
-async function main() {
-  // First check current leaderboard state
-  const lbResponse = await fetch(`${BASE_URL}/api/leaderboard?window=all&limit=5`);
-  const lb = (await lbResponse.json()) as Record<string, unknown>;
-  const ingestion = lb.ingestion as Record<string, unknown>;
-  console.log("Current ingestion state:", JSON.stringify(ingestion, null, 2));
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-  // Trigger sync via the dev/seed endpoint — but we need a proper sync endpoint
-  // Since there's no admin sync endpoint exposed, let's call the cron handler
-  // via the __scheduled endpoint with proper routing
-
-  // Try calling the worker's scheduled handler through Vite's proxy
-  // The Cloudflare Vite plugin should forward __scheduled to the worker
-  const scheduledResponse = await fetch(`${BASE_URL}/cdn-cgi/mf/scheduled`, {
-    method: "POST",
-  });
-  console.log("Scheduled response:", scheduledResponse.status, await scheduledResponse.text());
+function loadDevVars(): Record<string, string> {
+  const path = join(__dirname, "../.dev.vars");
+  const vars: Record<string, string> = {};
+  try {
+    const lines = readFileSync(path, "utf8").split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) continue;
+      vars[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+    }
+  } catch {
+    // ignore missing file
+  }
+  return vars;
 }
 
-main().catch(console.error);
+const BASE_URL = process.env.BASE_URL ?? "http://localhost:5173";
+const vars = loadDevVars();
+const DEV_API_KEY = process.env.DEV_API_KEY ?? vars.DEV_API_KEY ?? "";
+
+if (!DEV_API_KEY) {
+  console.error("Error: DEV_API_KEY not set in .dev.vars or environment");
+  process.exit(1);
+}
+
+const args = process.argv.slice(2);
+const resetCursor = args.includes("--reset-cursor");
+const fromLedgerIdx = args.indexOf("--from-ledger");
+const fromLedger = fromLedgerIdx !== -1 ? args[fromLedgerIdx + 1] : null;
+
+const params = new URLSearchParams();
+if (resetCursor) params.set("reset_cursor", "1");
+if (fromLedger) params.set("from_ledger", fromLedger);
+
+const url = `${BASE_URL}/api/leaderboard/dev/sync${params.size > 0 ? `?${params}` : ""}`;
+console.log(`POST ${url}`);
+
+const res = await fetch(url, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${DEV_API_KEY}` },
+});
+
+const body = await res.json();
+console.log(JSON.stringify(body, null, 2));

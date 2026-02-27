@@ -13,11 +13,41 @@ import {
   handleQueueBatch,
   handleVastQueueBatch,
 } from "./queue/consumer";
-import { submitSeedRefresh } from "./claim/direct";
+import { ensureCurrentEpochSeed } from "./claim/direct";
 import type { ClaimQueueMessage, ProofQueueMessage } from "./types";
 import { safeErrorMessage } from "./utils";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
+const LEADERBOARD_SYNC_CRON = "*/1 * * * *";
+const SEED_REFRESH_CRON = "*/10 * * * *";
+const STELLAR_TOML_PATH = "/.well-known/stellar.toml";
+
+function applyStellarTomlHeaders(headers: Headers): void {
+  headers.set("content-type", "text/plain; charset=utf-8");
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-methods", "GET, OPTIONS");
+  headers.set("access-control-allow-headers", "content-type");
+  headers.set("cache-control", "public, max-age=300");
+  headers.set("x-content-type-options", "nosniff");
+}
+
+app.options(STELLAR_TOML_PATH, () => {
+  const headers = new Headers();
+  applyStellarTomlHeaders(headers);
+  return new Response(null, { status: 204, headers });
+});
+
+app.get(STELLAR_TOML_PATH, async (c) => {
+  const assetResponse = await c.env.ASSETS.fetch(c.req.raw);
+  const headers = new Headers(assetResponse.headers);
+  applyStellarTomlHeaders(headers);
+
+  return new Response(assetResponse.body, {
+    status: assetResponse.status,
+    statusText: assetResponse.statusText,
+    headers,
+  });
+});
 
 app.use("/api/*", async (c, next) => {
   await next();
@@ -95,9 +125,21 @@ export default {
     env: WorkerEnv,
     _executionCtx: ExecutionContext,
   ): Promise<void> {
-    // Materialize the on-chain seed for the new window so players don't pay gas
-    // for seed creation. Runs unconditionally every 10 minutes.
-    await submitSeedRefresh(env);
+    if (!controller.cron || controller.cron === SEED_REFRESH_CRON) {
+      // Materialize/index the on-chain seed for the current 10-min window so
+      // players don't need to trigger seed creation themselves.
+      const seedResult = await ensureCurrentEpochSeed(env).catch((error) => ({
+        success: false,
+        message: safeErrorMessage(error),
+      }));
+      if (!seedResult.success) {
+        console.warn(`[seed-refresh] scheduled refresh failed: ${seedResult.message ?? "unknown"}`);
+      }
+    }
+
+    if (controller.cron && controller.cron !== LEADERBOARD_SYNC_CRON) {
+      return;
+    }
 
     try {
       const result = await runScheduledLeaderboardSync(env, controller.scheduledTime);

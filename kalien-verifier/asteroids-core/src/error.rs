@@ -68,6 +68,9 @@ pub enum VerifyError {
     FrameCountMismatch { claimed: u32, computed: u32 },
     ScoreMismatch { claimed: u32, computed: u32 },
     RngMismatch { claimed: u32, computed: u32 },
+    InvalidClaimant { reason: &'static str },
+    JournalLengthMismatch { expected: usize, actual: usize },
+    JournalReservedNonZero,
 }
 
 impl fmt::Display for VerifyError {
@@ -117,6 +120,12 @@ impl fmt::Display for VerifyError {
                     "rng mismatch: claimed=0x{claimed:08x}, computed=0x{computed:08x}"
                 )
             }
+            Self::InvalidClaimant { reason } => write!(f, "invalid claimant address: {reason}"),
+            Self::JournalLengthMismatch { expected, actual } => write!(
+                f,
+                "journal length mismatch: expected {expected} bytes, got {actual}"
+            ),
+            Self::JournalReservedNonZero => write!(f, "journal reserved bytes are non-zero"),
         }
     }
 }
@@ -261,6 +270,21 @@ mod tests {
         }
         .to_string()
         .contains("claimed=0xabcdef01"));
+        assert!(VerifyError::InvalidClaimant {
+            reason: "bad checksum"
+        }
+        .to_string()
+        .contains("bad checksum"));
+        assert!(VerifyError::JournalLengthMismatch {
+            expected: 64,
+            actual: 63
+        }
+        .to_string()
+        .contains("expected 64 bytes"));
+        assert_eq!(
+            VerifyError::JournalReservedNonZero.to_string(),
+            "journal reserved bytes are non-zero"
+        );
     }
 
     #[cfg(feature = "std")]

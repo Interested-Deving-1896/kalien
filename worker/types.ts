@@ -50,6 +50,7 @@ export interface ClaimQueueMessage {
 
 export interface TapeMetadata {
   seed: number;
+  seedId: number;
   frameCount: number;
   finalScore: number;
   finalRngState: number;
@@ -64,11 +65,13 @@ export interface ProofTapeInfo {
 
 export interface ProofJournal {
   seed: number;
+  seed_id: number;
   frame_count: number;
   final_score: number;
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
+  claimant: string;
 }
 
 export interface ProofStats {
@@ -154,9 +157,6 @@ export interface LeaderboardRunRecord {
   mintedDelta: number;
   seed: number;
   frameCount: number | null;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   completedAt: string;
   claimStatus: ClaimStatus;
   claimTxHash: string | null;
@@ -189,13 +189,9 @@ export interface LeaderboardEventRecord {
   seed: number;
   frameCount: number | null;
   finalScore: number;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   previousBest: number;
   newBest: number;
   mintedDelta: number;
-  journalDigest: string | null;
   txHash: string | null;
   eventIndex: number | null;
   ledger: number | null;

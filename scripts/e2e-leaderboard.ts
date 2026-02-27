@@ -106,11 +106,15 @@ interface JobStatus {
 }
 
 async function submitTape(tape: TapeInfo): Promise<string> {
-  const response = await fetch(`${BASE_URL}/api/proofs/jobs`, {
+  const seedId = Math.floor(Date.now() / 1000 / 600);
+  const params = new URLSearchParams({
+    claimant: CLAIMANT,
+    seed_id: String(seedId >>> 0),
+  });
+  const response = await fetch(`${BASE_URL}/api/proofs/jobs?${params.toString()}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
-      "x-claimant-address": CLAIMANT,
     },
     body: new Uint8Array(tape.bytes),
   });

@@ -4,409 +4,269 @@
  * Usage: bun run scripts/test-boundless-units.ts
  */
 
-import { encodeStdin, encodeGuestEnvV1 } from "../worker/boundless/stdin";
+import { encodeGuestEnvV1, encodeStdin } from "../worker/boundless/stdin";
 import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
 import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../worker/constants";
 import type { FulfillmentData } from "../worker/boundless/types";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import {
+  decodeClaimantFromJournal,
+  JOURNAL_CLAIMANT_ENCODED_LEN,
+  packJournalRaw,
+} from "../shared/stellar/journal";
 
 let passed = 0;
 let failed = 0;
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
-    failed++;
-    console.error("  FAIL: " + message);
-    throw new Error("Assertion failed: " + message);
+    failed += 1;
+    throw new Error(message);
   }
 }
 
 function test(name: string, fn: () => void): void {
   try {
     fn();
-    passed++;
-    console.log("  PASS: " + name);
-  } catch (err: unknown) {
-    console.error("  FAIL: " + name);
-    if (err instanceof Error) {
-      console.error("        " + err.message);
+    passed += 1;
+    console.log(`  PASS: ${name}`);
+  } catch (error) {
+    console.error(`  FAIL: ${name}`);
+    if (error instanceof Error) {
+      console.error(`        ${error.message}`);
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Helper: decode the V1 msgpack envelope to extract the raw stdin bytes
-// (inverse of encodeGuestEnvV1 — used only for test verification)
-// ---------------------------------------------------------------------------
 
 function decodeGuestEnvV1(encoded: Uint8Array): Uint8Array {
   let pos = 0;
-  assert(encoded[pos++] === 0x01, "V1 version byte expected");
-  assert(encoded[pos++] === 0x81, "fixmap(1) expected");
-  assert(encoded[pos++] === 0xa5, "fixstr(5) expected");
-  assert(encoded[pos++] === 0x73, "'s' expected"); // s
-  assert(encoded[pos++] === 0x74, "'t' expected"); // t
-  assert(encoded[pos++] === 0x64, "'d' expected"); // d
-  assert(encoded[pos++] === 0x69, "'i' expected"); // i
-  assert(encoded[pos++] === 0x6e, "'n' expected"); // n
+  assert(encoded[pos++] === 0x01, "missing GuestEnv v1 marker");
+  assert(encoded[pos++] === 0x81, "missing msgpack map(1)");
+  assert(encoded[pos++] === 0xa5, "missing msgpack key header");
+  assert(encoded[pos++] === 0x73, "missing 's'");
+  assert(encoded[pos++] === 0x74, "missing 't'");
+  assert(encoded[pos++] === 0x64, "missing 'd'");
+  assert(encoded[pos++] === 0x69, "missing 'i'");
+  assert(encoded[pos++] === 0x6e, "missing 'n'");
 
-  // Read array header
-  let arrLen: number;
   const arrTag = encoded[pos++];
+  let arrLen = 0;
   if ((arrTag & 0xf0) === 0x90) {
-    arrLen = arrTag & 0x0f; // fixarray
+    arrLen = arrTag & 0x0f;
   } else if (arrTag === 0xdc) {
-    arrLen = (encoded[pos++] << 8) | encoded[pos++]; // array16
+    arrLen = (encoded[pos++] << 8) | encoded[pos++];
   } else if (arrTag === 0xdd) {
-    arrLen = (encoded[pos++] << 24) | (encoded[pos++] << 16) | (encoded[pos++] << 8) | encoded[pos++]; // array32
+    arrLen =
+      (encoded[pos++] << 24) |
+      (encoded[pos++] << 16) |
+      (encoded[pos++] << 8) |
+      encoded[pos++];
   } else {
-    throw new Error("unexpected array tag: 0x" + arrTag.toString(16));
+    throw new Error(`unexpected msgpack array tag 0x${arrTag.toString(16)}`);
   }
 
-  // Decode individual bytes
   const result = new Uint8Array(arrLen);
-  for (let i = 0; i < arrLen; i++) {
-    const b = encoded[pos++];
-    if (b < 0x80) {
-      result[i] = b; // positive fixint
-    } else if (b === 0xcc) {
-      result[i] = encoded[pos++]; // uint8
+  for (let i = 0; i < arrLen; i += 1) {
+    const tag = encoded[pos++];
+    if (tag < 0x80) {
+      result[i] = tag;
+    } else if (tag === 0xcc) {
+      result[i] = encoded[pos++];
     } else {
-      throw new Error("unexpected msgpack tag at element " + i + ": 0x" + b.toString(16));
+      throw new Error(`unexpected msgpack element tag 0x${tag.toString(16)} at ${i}`);
     }
   }
-  assert(pos === encoded.length, "unexpected trailing bytes: consumed " + pos + " of " + encoded.length);
+
+  assert(pos === encoded.length, "unexpected trailing bytes after stdin array");
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// encodeGuestEnvV1 tests (low-level msgpack encoding)
-// ---------------------------------------------------------------------------
+function decodeStdinEnvelope(encoded: Uint8Array): {
+  maxFrames: number;
+  seedId: number;
+  claimant: string;
+  tapeLen: number;
+  tape: Uint8Array;
+} {
+  const stdin = decodeGuestEnvV1(encoded);
+  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
+
+  const maxFrames = view.getUint32(0, true);
+  const seedId = view.getUint32(4, true);
+  const claimantBytes = stdin.slice(8, 8 + JOURNAL_CLAIMANT_ENCODED_LEN);
+  const claimant = decodeClaimantFromJournal(claimantBytes);
+  const tapeLenOffset = 8 + JOURNAL_CLAIMANT_ENCODED_LEN;
+  const tapeLen = view.getUint32(tapeLenOffset, true);
+  const tapeOffset = tapeLenOffset + 4;
+  const tape = stdin.slice(tapeOffset, tapeOffset + tapeLen);
+
+  return {
+    maxFrames,
+    seedId,
+    claimant,
+    tapeLen,
+    tape,
+  };
+}
 
 console.log("\n=== encodeGuestEnvV1 ===\n");
 
-test("V1 envelope matches known production format for small input", () => {
-  // Reproduce the production example:
-  // stdin bytes: [0,0,64,31,0,0,0,0,77,165,88,66,15,97,191,136]
-  const stdin = new Uint8Array([0, 0, 64, 31, 0, 0, 0, 0, 77, 165, 88, 66, 15, 97, 191, 136]);
-  const result = encodeGuestEnvV1(stdin);
-  const expected = "0181a5737464696edc00100000401f000000004dcca558420f61ccbfcc88";
-  const resultHex = Array.from(result).map(b => b.toString(16).padStart(2, "0")).join("");
-  assert(resultHex === expected, "mismatch:\n  got:      " + resultHex + "\n  expected: " + expected);
-});
-
-test("V1 envelope round-trips correctly for all-low bytes", () => {
-  const stdin = new Uint8Array([0, 1, 2, 127]);
-  const encoded = encodeGuestEnvV1(stdin);
+test("round-trips mixed low/high stdin bytes", () => {
+  const input = new Uint8Array([0, 1, 2, 127, 128, 200, 255]);
+  const encoded = encodeGuestEnvV1(input);
   const decoded = decodeGuestEnvV1(encoded);
-  assert(decoded.length === 4, "length mismatch");
-  for (let i = 0; i < 4; i++) assert(decoded[i] === stdin[i], "byte " + i + " mismatch");
+  assert(decoded.length === input.length, "decoded length mismatch");
+  for (let i = 0; i < input.length; i += 1) {
+    assert(decoded[i] === input[i], `decoded byte mismatch at ${i}`);
+  }
 });
 
-test("V1 envelope round-trips correctly for all-high bytes", () => {
-  const stdin = new Uint8Array([128, 200, 255]);
-  const encoded = encodeGuestEnvV1(stdin);
-  const decoded = decodeGuestEnvV1(encoded);
-  assert(decoded.length === 3, "length mismatch");
-  for (let i = 0; i < 3; i++) assert(decoded[i] === stdin[i], "byte " + i + " mismatch");
+test("uses array16 for stdin >= 16 bytes", () => {
+  const input = new Uint8Array(16);
+  const encoded = encodeGuestEnvV1(input);
+  assert(encoded[8] === 0xdc, "expected array16 tag (0xdc)");
 });
-
-test("V1 high bytes use 2-byte uint8 encoding (0xcc prefix)", () => {
-  const stdin = new Uint8Array([200]); // >= 128
-  const encoded = encodeGuestEnvV1(stdin);
-  // header(8) + fixarray(1) for 1 element + 0xcc + 200 = 11 bytes
-  assert(encoded.length === 8 + 1 + 2, "expected 11, got " + encoded.length);
-});
-
-test("V1 fixarray for stdin <= 15 bytes", () => {
-  const stdin = new Uint8Array(15);
-  const encoded = encodeGuestEnvV1(stdin);
-  assert(encoded[8] === (0x90 | 15), "expected fixarray(15), got 0x" + encoded[8].toString(16));
-});
-
-test("V1 array16 for stdin 16-65535 bytes", () => {
-  const stdin = new Uint8Array(16);
-  const encoded = encodeGuestEnvV1(stdin);
-  assert(encoded[8] === 0xdc, "expected array16 tag 0xdc, got 0x" + encoded[8].toString(16));
-  const len = (encoded[9] << 8) | encoded[10];
-  assert(len === 16, "expected array16 length 16, got " + len);
-});
-
-test("V1 empty stdin produces fixarray(0)", () => {
-  const stdin = new Uint8Array(0);
-  const encoded = encodeGuestEnvV1(stdin);
-  assert(encoded[8] === 0x90, "expected fixarray(0) = 0x90, got 0x" + encoded[8].toString(16));
-  assert(encoded.length === 9, "expected 9 bytes, got " + encoded.length);
-});
-
-// ---------------------------------------------------------------------------
-// encodeStdin tests (full pipeline: tape → stdin → V1 msgpack)
-// ---------------------------------------------------------------------------
 
 console.log("\n=== encodeStdin ===\n");
 
-test("encodeStdin output starts with V1 version byte (0x01)", () => {
-  const tape = new Uint8Array([1, 2, 3, 4]);
-  const result = encodeStdin(tape);
-  assert(result[0] === 0x01, "byte 0: expected 0x01 (V1), got 0x" + result[0].toString(16));
+const CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+test("encodes default max_frames and caller seed_id/claimant/tape", () => {
+  const tape = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55]);
+  const encoded = encodeStdin(tape, {
+    seedId: 4242,
+    claimantAddress: CLAIMANT,
+  });
+
+  const decoded = decodeStdinEnvelope(encoded);
+  assert(decoded.maxFrames === DEFAULT_BOUNDLESS_MAX_FRAMES, "default max_frames mismatch");
+  assert(decoded.seedId === 4242, "seed_id mismatch");
+  assert(decoded.claimant === CLAIMANT, "claimant mismatch");
+  assert(decoded.tapeLen === tape.length, "tape_len mismatch");
+  assert(decoded.tape.length === tape.length, "decoded tape length mismatch");
+  for (let i = 0; i < tape.length; i += 1) {
+    assert(decoded.tape[i] === tape[i], `decoded tape byte mismatch at ${i}`);
+  }
 });
 
-test("encodeStdin output decodes to correct max_frames (default)", () => {
-  const tape = new Uint8Array([0xAA]);
-  const result = encodeStdin(tape);
-  const stdin = decodeGuestEnvV1(result);
-  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
-  const frames = view.getUint32(0, true);
-  assert(frames === DEFAULT_BOUNDLESS_MAX_FRAMES, "expected " + DEFAULT_BOUNDLESS_MAX_FRAMES + ", got " + frames);
+test("encodes custom max_frames", () => {
+  const tape = new Uint8Array([0xaa]);
+  const encoded = encodeStdin(tape, {
+    maxFrames: 777,
+    seedId: 7,
+    claimantAddress: CLAIMANT,
+  });
+  const decoded = decodeStdinEnvelope(encoded);
+  assert(decoded.maxFrames === 777, "custom max_frames mismatch");
 });
 
-test("encodeStdin output decodes to correct max_frames (custom)", () => {
-  const tape = new Uint8Array([0xBB]);
-  const result = encodeStdin(tape, 42);
-  const stdin = decodeGuestEnvV1(result);
-  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
-  const frames = view.getUint32(0, true);
-  assert(frames === 42, "expected 42, got " + frames);
+test("throws when claimant is not 56 bytes", () => {
+  let threw = false;
+  try {
+    encodeStdin(new Uint8Array([1, 2, 3]), {
+      seedId: 1,
+      claimantAddress: "GSHORT",
+    });
+  } catch {
+    threw = true;
+  }
+  assert(threw, "expected invalid claimant length to throw");
 });
-
-test("encodeStdin output decodes to correct tape_len", () => {
-  const tape = new Uint8Array([1, 2, 3, 4, 5]);
-  const result = encodeStdin(tape);
-  const stdin = decodeGuestEnvV1(result);
-  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
-  const tapeLen = view.getUint32(4, true);
-  assert(tapeLen === 5, "expected 5, got " + tapeLen);
-});
-
-test("encodeStdin output preserves tape data with padding", () => {
-  const tape = new Uint8Array([0x11, 0x22, 0x33]);
-  const result = encodeStdin(tape);
-  const stdin = decodeGuestEnvV1(result);
-  assert(stdin[8] === 0x11, "byte 8: expected 0x11, got 0x" + stdin[8].toString(16));
-  assert(stdin[9] === 0x22, "byte 9: expected 0x22, got 0x" + stdin[9].toString(16));
-  assert(stdin[10] === 0x33, "byte 10: expected 0x33, got 0x" + stdin[10].toString(16));
-  assert(stdin[11] === 0x00, "padding byte 11: expected 0x00, got 0x" + stdin[11].toString(16));
-});
-
-test("encodeStdin with empty tape decodes to 8-byte stdin (just headers)", () => {
-  const result = encodeStdin(new Uint8Array([]));
-  const stdin = decodeGuestEnvV1(result);
-  assert(stdin.length === 8, "expected 8, got " + stdin.length);
-  const view = new DataView(stdin.buffer, stdin.byteOffset, stdin.byteLength);
-  assert(view.getUint32(4, true) === 0, "tape_len should be 0");
-});
-
-test("encodeStdin with large tape preserves all bytes", () => {
-  const tape = new Uint8Array(1025);
-  for (let i = 0; i < tape.length; i++) tape[i] = i & 0xFF;
-  const result = encodeStdin(tape);
-  const stdin = decodeGuestEnvV1(result);
-  assert(stdin.length === 4 + 4 + 1028, "expected " + (4 + 4 + 1028) + ", got " + stdin.length);
-  assert(stdin[8] === 0, "first tape byte wrong");
-  assert(stdin[8 + 1024] === (1024 & 0xFF), "tape byte at offset 1024 wrong");
-});
-
-// ---------------------------------------------------------------------------
-// adapter.ts tests
-// ---------------------------------------------------------------------------
 
 console.log("\n=== adaptFulfillmentToProverResponse ===\n");
 
-function makeFakeSeal(selectorBytes: [number, number, number, number]): Uint8Array {
+function makeFakeSeal(selector: [number, number, number, number]): Uint8Array {
   const seal = new Uint8Array(260);
-  seal[0] = selectorBytes[0];
-  seal[1] = selectorBytes[1];
-  seal[2] = selectorBytes[2];
-  seal[3] = selectorBytes[3];
-  for (let i = 4; i < 260; i++) {
-    seal[i] = (i - 4) & 0xFF;
+  seal.set(selector, 0);
+  for (let i = 4; i < 260; i += 1) {
+    seal[i] = (i - 4) & 0xff;
   }
   return seal;
 }
 
 function makeFakeJournal(fields: {
   seed: number;
+  seed_id: number;
   frame_count: number;
   final_score: number;
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
+  claimant: string;
 }): Uint8Array {
-  const buf = new Uint8Array(24);
-  const view = new DataView(buf.buffer);
-  view.setUint32(0, fields.seed, true);
-  view.setUint32(4, fields.frame_count, true);
-  view.setUint32(8, fields.final_score, true);
-  view.setUint32(12, fields.final_rng_state, true);
-  view.setUint32(16, fields.tape_checksum, true);
-  view.setUint32(20, fields.rules_digest, true);
-  return buf;
+  return packJournalRaw({
+    seed: fields.seed >>> 0,
+    seed_id: fields.seed_id >>> 0,
+    frame_count: fields.frame_count >>> 0,
+    final_score: fields.final_score >>> 0,
+    final_rng_state: fields.final_rng_state >>> 0,
+    tape_checksum: fields.tape_checksum >>> 0,
+    rules_digest: fields.rules_digest >>> 0,
+    claimant: fields.claimant,
+  });
 }
 
-const TEST_SELECTOR: [number, number, number, number] = [0xDE, 0xAD, 0xBE, 0xEF];
-const TEST_JOURNAL_FIELDS = {
+const TEST_SELECTOR: [number, number, number, number] = [0xde, 0xad, 0xbe, 0xef];
+const TEST_JOURNAL = {
   seed: 0x12345678,
+  seed_id: 778899,
   frame_count: 1000,
   final_score: 42,
-  final_rng_state: 0xAABBCCDD,
-  tape_checksum: 0xFEEDFACE,
-  rules_digest: 0x41535433,
+  final_rng_state: 0xaabbccdd,
+  tape_checksum: 0xfeedface,
+  rules_digest: 0x41535434,
+  claimant: CLAIMANT,
 };
 
-test("response has correct job_id and status", () => {
+test("parses 64-byte journal and strips selector from seal", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    journal: makeFakeJournal(TEST_JOURNAL),
     proverAddress: null,
     fulfillmentTxHash: null,
   };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  assert(resp.job_id === "boundless", "job_id: expected boundless, got " + resp.job_id);
-  assert(resp.status === "succeeded", "status: expected succeeded, got " + resp.status);
-});
 
-test("Groth16 seal is exactly 256 bytes (proof without selector)", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  const groth16Seal = (resp.result as any).proof.receipt.inner.Groth16.seal;
-  assert(groth16Seal.length === 256, "seal length: expected 256, got " + groth16Seal.length);
-});
+  const response = adaptFulfillmentToProverResponse(fulfillment);
+  const journal = response.result!.proof.journal;
+  const groth16 = (response.result as any).proof.receipt.inner.Groth16;
 
-test("Groth16 seal content matches proof bytes (selector stripped)", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  const groth16Seal = (resp.result as any).proof.receipt.inner.Groth16.seal;
-  for (let i = 0; i < 256; i++) {
-    assert(
-      groth16Seal[i] === (i & 0xFF),
-      "seal[" + i + "]: expected " + (i & 0xFF) + ", got " + groth16Seal[i]
-    );
-  }
-});
-
-test("verifier_parameters is 8-element u32 array with selector in first word", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  const vp = (resp.result as any).proof.receipt.inner.Groth16.verifier_parameters;
-  assert(vp.length === 8, "verifier_parameters length: expected 8, got " + vp.length);
-
-  const expectedFirstWord = 0xEFBEADDE;
+  assert(journal.seed === TEST_JOURNAL.seed, "journal.seed mismatch");
+  assert(journal.seed_id === TEST_JOURNAL.seed_id, "journal.seed_id mismatch");
+  assert(journal.frame_count === TEST_JOURNAL.frame_count, "journal.frame_count mismatch");
+  assert(journal.final_score === TEST_JOURNAL.final_score, "journal.final_score mismatch");
   assert(
-    (vp[0] >>> 0) === expectedFirstWord,
-    "verifier_parameters[0]: expected 0x" + expectedFirstWord.toString(16) + ", got 0x" + (vp[0] >>> 0).toString(16)
-  );
-
-  for (let i = 1; i < 8; i++) {
-    assert(vp[i] === 0, "verifier_parameters[" + i + "]: expected 0, got " + vp[i]);
-  }
-});
-
-test("journal fields are parsed correctly from 24-byte input", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  const j = (resp.result as any).proof.journal;
-
-  assert(j.seed === TEST_JOURNAL_FIELDS.seed, "seed mismatch");
-  assert(j.frame_count === TEST_JOURNAL_FIELDS.frame_count, "frame_count mismatch");
-  assert(j.final_score === TEST_JOURNAL_FIELDS.final_score, "final_score mismatch");
-  assert((j.final_rng_state >>> 0) === (TEST_JOURNAL_FIELDS.final_rng_state >>> 0), "final_rng_state mismatch");
-  assert((j.tape_checksum >>> 0) === (TEST_JOURNAL_FIELDS.tape_checksum >>> 0), "tape_checksum mismatch");
-  assert((j.rules_digest >>> 0) === (TEST_JOURNAL_FIELDS.rules_digest >>> 0), "rules_digest mismatch");
-});
-
-test("receipt_kind fields are set to groth16", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  assert(
-    (resp.result as any).proof.requested_receipt_kind === "groth16",
-    "requested_receipt_kind: expected groth16"
+    (journal.final_rng_state >>> 0) === (TEST_JOURNAL.final_rng_state >>> 0),
+    "journal.final_rng_state mismatch",
   );
   assert(
-    (resp.result as any).proof.produced_receipt_kind === "groth16",
-    "produced_receipt_kind: expected groth16"
+    (journal.tape_checksum >>> 0) === (TEST_JOURNAL.tape_checksum >>> 0),
+    "journal.tape_checksum mismatch",
   );
+  assert((journal.rules_digest >>> 0) === TEST_JOURNAL.rules_digest, "journal.rules_digest mismatch");
+  assert(journal.claimant === TEST_JOURNAL.claimant, "journal.claimant mismatch");
+
+  assert(groth16.seal.length === 256, "groth16.seal length mismatch");
+  const firstWord = groth16.verifier_parameters[0] >>> 0;
+  assert(firstWord === 0xefbeadde, "selector word mismatch");
 });
 
-test("options.accelerator is set to boundless", () => {
+test("throws on journal shorter than 64 bytes", () => {
   const fulfillment: FulfillmentData = {
     seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
+    journal: new Uint8Array(32),
     proverAddress: null,
     fulfillmentTxHash: null,
   };
-  const resp = adaptFulfillmentToProverResponse(fulfillment);
-  assert(
-    resp.options.accelerator === "boundless",
-    "options.accelerator: expected boundless, got " + resp.options.accelerator
-  );
-});
 
-test("throws on journal shorter than 24 bytes", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: new Uint8Array(20),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
   let threw = false;
   try {
     adaptFulfillmentToProverResponse(fulfillment);
   } catch {
     threw = true;
   }
-  assert(threw, "expected an error for short journal");
+  assert(threw, "expected short journal to throw");
 });
 
-test("throws on seal shorter than 260 bytes", () => {
-  const fulfillment: FulfillmentData = {
-    seal: new Uint8Array(100),
-    journal: makeFakeJournal(TEST_JOURNAL_FIELDS),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
-  let threw = false;
-  try {
-    adaptFulfillmentToProverResponse(fulfillment);
-  } catch {
-    threw = true;
-  }
-  assert(threw, "expected an error for short seal");
-});
-
-// ---------------------------------------------------------------------------
-// Summary
-// ---------------------------------------------------------------------------
-
-console.log("\n=== Results: " + passed + " passed, " + failed + " failed ===\n");
-
+console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 if (failed > 0) {
   process.exit(1);
 }

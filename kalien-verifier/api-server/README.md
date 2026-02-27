@@ -54,11 +54,16 @@ Submit a job:
 
 ```bash
 JOB_ID=$(curl -sS \
-  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy' \
+  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy&seed_id=0&claimant=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' \
   --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
 ```
+
+Required query params for `POST /api/jobs/prove-tape/raw`:
+
+- `seed_id` (u32)
+- `claimant` (Stellar `G...` or `C...` address)
 
 Poll:
 

@@ -67,23 +67,23 @@ sha256_of_hex() {
   echo -n "$1" | xxd -r -p | shasum -a 256 | cut -d' ' -f1
 }
 
-# Validate that a journal hex payload encodes AST3 rules_digest at bytes 20..24.
-# Expects little-endian u32 "AST3" = 0x41535433 => hex 33545341 at byte offset 20.
-assert_ast3_rules_digest_in_journal_hex() {
+# Validate that a journal hex payload encodes AST4 rules_digest at bytes 24..28.
+# Expects little-endian u32 "AST4" = 0x41535434 => hex 34545341 at byte offset 24.
+assert_ast4_rules_digest_in_journal_hex() {
   local journal_hex="${1:-}"
   local context="${2:-journal}"
-  local expected_le_hex="33545341"
+  local expected_le_hex="34545341"
 
-  if [[ ${#journal_hex} -lt 48 ]]; then
-    err "$context: journal too short (${#journal_hex} hex chars, need at least 48)"
+  if [[ ${#journal_hex} -lt 56 ]]; then
+    err "$context: journal too short (${#journal_hex} hex chars, need at least 56)"
     return 1
   fi
 
-  local rules_digest_le_hex="${journal_hex:40:8}"
+  local rules_digest_le_hex="${journal_hex:48:8}"
   rules_digest_le_hex=$(printf '%s' "$rules_digest_le_hex" | tr '[:upper:]' '[:lower:]')
   if [[ "$rules_digest_le_hex" != "$expected_le_hex" ]]; then
-    err "$context: rules_digest is not AST3 (found LE hex ${rules_digest_le_hex}, expected ${expected_le_hex})"
-    err "$context: regenerate proof fixtures against the AST3 prover before running this script"
+    err "$context: rules_digest is not AST4 (found LE hex ${rules_digest_le_hex}, expected ${expected_le_hex})"
+    err "$context: regenerate proof fixtures against the AST4 prover before running this script"
     return 1
   fi
 }

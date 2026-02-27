@@ -48,12 +48,13 @@
     [],
     [],
     [],
+    [],
     []
   ],
   "ledger": {
     "protocol_version": 25,
     "sequence_number": 0,
-    "timestamp": 600,
+    "timestamp": 46200,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -154,71 +155,19 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Best"
+                    "symbol": "BestByClaimantSeedId"
                   },
                   {
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 1577546140
+                    "u32": 77
                   }
                 ]
               },
               "durability": "temporary",
               "val": {
-                "u32": 50
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 34560
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "Claimed"
-                  },
-                  {
-                    "bytes": "69b43be9a7a5595ef638f55616e026881758ded60e71210a4e455eb2f111c034"
-                  }
-                ]
-              },
-              "durability": "temporary",
-              "val": "void"
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 34560
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "SeedWindow"
-                  },
-                  {
-                    "u32": 1577546140
-                  }
-                ]
-              },
-              "durability": "temporary",
-              "val": {
-                "u32": 1
+                "u32": 42
               }
             }
           },
@@ -236,10 +185,35 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "ValidSeed"
+                    "symbol": "ClaimedJournal"
                   },
                   {
-                    "u32": 1
+                    "bytes": "753a0c20060c21019c1f2edc8ab05f2cae901898267bbe513d4d5b4cd28601fc"
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "SeedById"
+                  },
+                  {
+                    "u32": 77
                   }
                 ]
               },
@@ -350,7 +324,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "500000000"
+                      "i128": "420000000"
                     }
                   },
                   {

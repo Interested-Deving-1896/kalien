@@ -43,28 +43,15 @@ function fakeTxHash(): string {
   return hash;
 }
 
-function fakeJournalDigest(): string {
-  const hex = "0123456789abcdef";
-  let digest = "";
-  for (let i = 0; i < 64; i++) {
-    digest += hex[Math.floor(Math.random() * 16)];
-  }
-  return digest;
-}
-
 interface SeedEvent {
   eventId: string;
   claimantAddress: string;
   seed: number;
   frameCount: number;
   finalScore: number;
-  finalRngState: number;
-  tapeChecksum: number;
-  rulesDigest: number;
   previousBest: number;
   newBest: number;
   mintedDelta: number;
-  journalDigest: string;
   txHash: string;
   eventIndex: number;
   ledger: number;
@@ -79,7 +66,6 @@ interface SeedProfile {
   linkUrl: string | null;
 }
 
-const RULES_DIGEST = 0x4153_5433; // AST3
 
 const PLAYER_NAMES = [
   "AsteroidAce",
@@ -165,13 +151,9 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
       seed,
       frameCount,
       finalScore: score,
-      finalRngState: Math.floor(Math.random() * 0xffffffff),
-      tapeChecksum: Math.floor(Math.random() * 0xffffffff),
-      rulesDigest: RULES_DIGEST,
       previousBest: 0,
       newBest: score,
       mintedDelta: score,
-      journalDigest: fakeJournalDigest(),
       txHash: fakeTxHash(),
       eventIndex: eventIndex++,
       ledger: ledger++,
@@ -200,13 +182,9 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
       seed,
       frameCount,
       finalScore: score,
-      finalRngState: Math.floor(Math.random() * 0xffffffff),
-      tapeChecksum: Math.floor(Math.random() * 0xffffffff),
-      rulesDigest: RULES_DIGEST,
       previousBest,
       newBest: score,
       mintedDelta,
-      journalDigest: fakeJournalDigest(),
       txHash: fakeTxHash(),
       eventIndex: eventIndex++,
       ledger: ledger++,
@@ -235,13 +213,9 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
       seed,
       frameCount,
       finalScore: score,
-      finalRngState: Math.floor(Math.random() * 0xffffffff),
-      tapeChecksum: Math.floor(Math.random() * 0xffffffff),
-      rulesDigest: RULES_DIGEST,
       previousBest,
       newBest: score,
       mintedDelta,
-      journalDigest: fakeJournalDigest(),
       txHash: fakeTxHash(),
       eventIndex: eventIndex++,
       ledger: ledger++,
@@ -271,13 +245,9 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
       seed: multiRunSeed,
       frameCount,
       finalScore: newScore,
-      finalRngState: Math.floor(Math.random() * 0xffffffff),
-      tapeChecksum: Math.floor(Math.random() * 0xffffffff),
-      rulesDigest: RULES_DIGEST,
       previousBest: runningBest,
       newBest: newScore,
       mintedDelta: improvement,
-      journalDigest: fakeJournalDigest(),
       txHash: fakeTxHash(),
       eventIndex: eventIndex++,
       ledger: ledger++,
@@ -299,13 +269,9 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
     seed: SEEDS[3],
     frameCount: 12_000,
     finalScore: championScore,
-    finalRngState: Math.floor(Math.random() * 0xffffffff),
-    tapeChecksum: Math.floor(Math.random() * 0xffffffff),
-    rulesDigest: RULES_DIGEST,
     previousBest: 0,
     newBest: championScore,
     mintedDelta: championScore,
-    journalDigest: fakeJournalDigest(),
     txHash: fakeTxHash(),
     eventIndex: eventIndex++,
     ledger: ledger++,

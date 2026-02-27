@@ -68,11 +68,13 @@ function makeJob(overrides: Partial<ProofJobRecord> = {}): ProofJobRecord {
         producedReceiptKind: "groth16",
         journal: {
           seed: 42,
+          seed_id: 123,
           frame_count: 100,
           final_score: 1337,
           final_rng_state: 999,
           tape_checksum: 0xdead,
-          rules_digest: 0x41535433,
+          rules_digest: 0x41535434,
+          claimant: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
         },
         stats: {
           segments: 4,
@@ -138,29 +140,6 @@ describe("coordinator helpers", () => {
       expect(publicJob.proverAttempts[0].outcome).toBe("failed");
       expect(publicJob.proverAttempts[1].backend).toBe("vast");
       expect(publicJob.proverAttempts[1].outcome).toBe("success");
-    });
-
-    it("synthesizes a proverAttempts entry from prover data for legacy records", () => {
-      // Simulate a legacy record that lacks the proverAttempts field but has prover tracking
-      const job = makeJob();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (job as any).proverAttempts;
-      const publicJob = asPublicJob(job);
-      // Should synthesize one attempt from the prover tracking data
-      expect(publicJob.proverAttempts).toHaveLength(1);
-      expect(publicJob.proverAttempts[0].index).toBe(0);
-      expect(publicJob.proverAttempts[0].proverJobId).toBe("prover-job-1");
-      expect(publicJob.proverAttempts[0].outcome).toBe("success"); // job.status === "succeeded"
-      expect(publicJob.proverAttempts[0].backend).toBe("vast"); // statusUrl doesn't start with "boundless:"
-    });
-
-    it("returns empty array for legacy records with no prover job assigned", () => {
-      // If neither proverAttempts nor prover.jobId exist, return []
-      const job = makeJob({ proverAttempts: [] });
-      job.prover.jobId = null;
-      job.prover.statusUrl = null;
-      const publicJob = asPublicJob(job);
-      expect(publicJob.proverAttempts).toEqual([]);
     });
 
     it("preserves in_progress attempt (currently running)", () => {

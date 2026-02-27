@@ -1,14 +1,16 @@
 import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../constants";
 import type { ProofJournal, ProverGetJobResponse } from "../types";
 import type { FulfillmentData } from "./types";
+import { JOURNAL_LEN, unpackJournalRaw } from "../../shared/stellar/journal";
 
 /**
  * Convert Boundless fulfillment data into the ProverGetJobResponse format
  * expected by the existing claim flow.
  *
  * The Boundless seal is 260 bytes: 4-byte selector + 256-byte Groth16 proof.
- * The journal is 24 bytes: 6 u32 LE values (seed, frame_count, final_score,
- * final_rng_state, tape_checksum, rules_digest).
+ * The journal is 64 bytes:
+ *   - 7 x u32 LE (seed, seed_id, frame_count, final_score, final_rng_state, tape_checksum, rules_digest)
+ *   - claimant bytes (1-byte kind + 32-byte id) + 3 reserved bytes
  */
 export function adaptFulfillmentToProverResponse(
   fulfillment: FulfillmentData,
@@ -57,23 +59,13 @@ export function adaptFulfillmentToProverResponse(
 }
 
 /**
- * Parse the 24-byte journal into ProofJournal fields.
- * Layout: 6 x u32 LE = seed, frame_count, final_score, final_rng_state, tape_checksum, rules_digest
+ * Parse the fixed-length journal into ProofJournal fields.
  */
 function parseJournal(journalBytes: Uint8Array): ProofJournal {
-  if (journalBytes.length < 24) {
-    throw new Error(`journal too short: ${journalBytes.length} bytes (expected >= 24)`);
+  if (journalBytes.length !== JOURNAL_LEN) {
+    throw new Error(`journal must be exactly ${JOURNAL_LEN} bytes (got ${journalBytes.length})`);
   }
-
-  const view = new DataView(journalBytes.buffer, journalBytes.byteOffset, journalBytes.byteLength);
-  return {
-    seed: view.getUint32(0, true),
-    frame_count: view.getUint32(4, true),
-    final_score: view.getUint32(8, true),
-    final_rng_state: view.getUint32(12, true),
-    tape_checksum: view.getUint32(16, true),
-    rules_digest: view.getUint32(20, true),
-  };
+  return unpackJournalRaw(journalBytes);
 }
 
 /**

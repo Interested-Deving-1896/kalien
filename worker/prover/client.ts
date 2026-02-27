@@ -22,6 +22,7 @@ import type {
   ProofResultSummary,
 } from "../types";
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
+import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
 export interface ValidatedProverHealth {
   imageId: string;
@@ -71,6 +72,8 @@ function buildProverUrl(env: WorkerEnv, pathname: string): URL {
 
 interface ProverCreateOptions {
   segmentLimitPo2?: number;
+  seedId: number;
+  claimantAddress: string;
 }
 
 function buildProverCreateUrlWithOptions(env: WorkerEnv, options: ProverCreateOptions): URL {
@@ -86,6 +89,8 @@ function buildProverCreateUrlWithOptions(env: WorkerEnv, options: ProverCreateOp
   url.searchParams.set("receipt_kind", "groth16");
   // Skip prover-side receipt verification; on-chain verification is the source of truth.
   url.searchParams.set("verify_mode", "policy");
+  url.searchParams.set("seed_id", String(options.seedId >>> 0));
+  url.searchParams.set("claimant", options.claimantAddress);
 
   return url;
 }
@@ -98,7 +103,10 @@ function buildProverHealthUrl(env: WorkerEnv): URL {
   return buildProverUrl(env, "/health");
 }
 
-function buildProverHeaders(env: WorkerEnv, includeContentType: boolean): Headers {
+function buildProverHeaders(
+  env: WorkerEnv,
+  includeContentType: boolean,
+): Headers {
   const headers = new Headers();
 
   if (includeContentType) {
@@ -566,6 +574,21 @@ export function summarizeProof(response: ProverGetJobResponse): ProofResultSumma
   }
   if (result.proof.journal.final_score >>> 0 === 0) {
     throw new Error("prover returned final_score=0; zero-score runs are not accepted");
+  }
+  if (
+    typeof result.proof.journal.seed_id !== "number" ||
+    !Number.isFinite(result.proof.journal.seed_id)
+  ) {
+    throw new Error("prover returned invalid seed_id in journal");
+  }
+  const claimant = result.proof.journal.claimant;
+  if (typeof claimant !== "string") {
+    throw new Error("prover returned invalid claimant in journal; expected Stellar G... or C...");
+  }
+  try {
+    parseClaimantStrKeyFromUserInput(claimant);
+  } catch {
+    throw new Error("prover returned invalid claimant in journal; expected Stellar G... or C...");
   }
   const digest = result.proof.journal.rules_digest >>> 0;
   if (digest !== EXPECTED_RULES_DIGEST >>> 0) {

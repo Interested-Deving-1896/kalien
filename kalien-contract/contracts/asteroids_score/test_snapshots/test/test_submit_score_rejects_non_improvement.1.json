@@ -46,12 +46,13 @@
       ]
     ],
     [],
+    [],
     []
   ],
   "ledger": {
     "protocol_version": 25,
     "sequence_number": 0,
-    "timestamp": 600000,
+    "timestamp": 30000,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -152,25 +153,25 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Best"
+                    "symbol": "BestByClaimantSeedId"
                   },
                   {
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                   },
                   {
-                    "u32": 1000
+                    "u32": 50
                   }
                 ]
               },
               "durability": "temporary",
               "val": {
-                "u32": 42
+                "u32": 100
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 34560
+        "live_until": 15
       },
       {
         "entry": {
@@ -182,10 +183,10 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Claimed"
+                    "symbol": "ClaimedJournal"
                   },
                   {
-                    "bytes": "9f7a064e844fe9a94ca2939b88374fffcee30ea6b00b3b69c78a0390632e71c2"
+                    "bytes": "094cd4d73fa226b47a21548f5d34c7d856ba86ffb1419d28d66deec29c009e3a"
                   }
                 ]
               },
@@ -195,7 +196,34 @@
           },
           "ext": "v0"
         },
-        "live_until": 34560
+        "live_until": 15
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "SeedById"
+                  },
+                  {
+                    "u32": 50
+                  }
+                ]
+              },
+              "durability": "temporary",
+              "val": {
+                "u32": 1577546140
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 15
       },
       {
         "entry": {
@@ -294,7 +322,7 @@
                       "symbol": "amount"
                     },
                     "val": {
-                      "i128": "420000000"
+                      "i128": "1000000000"
                     }
                   },
                   {

@@ -10,6 +10,8 @@ set -euo pipefail
 # Options (passed as query params):
 #   --seg <n>          segment_limit_po2 (default: 21)
 #   --receipt <kind>   composite|succinct|groth16 (default: groth16)
+#   --seed-id <u32>    seed_id bound into the proof journal (default: 0)
+#   --claimant <addr>  claimant Stellar address (G...|C...)
 #   --poll <seconds>   Poll interval (default: 5)
 #   --cleanup-mode <m> delete|keep (default: delete)
 #   -h, --help         Show this help
@@ -27,6 +29,8 @@ Usage: scripts/prove-tape.sh [prover-url] <tape-file> [options]
 Options:
   --seg <n>          segment_limit_po2 (default: 21)
   --receipt <kind>   composite|succinct|groth16 (default: groth16)
+  --seed-id <u32>    seed_id bound into the proof journal (default: 0)
+  --claimant <addr>  claimant Stellar address (default: GAAAAAAAA...WHF)
   --poll <seconds>   Poll interval (default: 5)
   --cleanup-mode <m> delete|keep (default: delete)
   -h, --help         Show this help
@@ -65,6 +69,8 @@ shift
 
 SEG=21
 RECEIPT="groth16"
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 POLL_INTERVAL=5
 CLEANUP_MODE="delete"
 
@@ -72,6 +78,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --seg) SEG="$2"; shift 2 ;;
     --receipt) RECEIPT="$2"; shift 2 ;;
+    --seed-id) SEED_ID="$2"; shift 2 ;;
+    --claimant) CLAIMANT="${2:-}"; shift 2 ;;
     --poll) POLL_INTERVAL="$2"; shift 2 ;;
     --cleanup-mode) CLEANUP_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -97,6 +105,11 @@ if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$POLL_INTERVAL" -lt 1 ]]; then
   exit 1
 fi
 
+if ! [[ "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --seed-id must be an unsigned integer" >&2
+  exit 1
+fi
+
 case "$RECEIPT" in
   composite|succinct|groth16) ;;
   *)
@@ -107,6 +120,11 @@ esac
 
 if [[ "$CLEANUP_MODE" != "delete" && "$CLEANUP_MODE" != "keep" ]]; then
   echo "ERROR: --cleanup-mode must be delete or keep" >&2
+  exit 1
+fi
+
+if [[ -z "${CLAIMANT// }" ]]; then
+  echo "ERROR: --claimant cannot be empty" >&2
   exit 1
 fi
 
@@ -148,7 +166,7 @@ PYEOF
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 echo "Tape:    $(basename "$TAPE_FILE") (${tape_size} bytes)"
 echo "Prover:  $PROVER_URL"
-echo "Params:  seg=$SEG  receipt=$RECEIPT  verify_mode=policy  cleanup_mode=$CLEANUP_MODE"
+echo "Params:  seg=$SEG  receipt=$RECEIPT  seed_id=$SEED_ID  claimant=$CLAIMANT  verify_mode=policy  cleanup_mode=$CLEANUP_MODE"
 echo ""
 
 # Check prover health.
@@ -163,7 +181,7 @@ if [[ "$running" != "0" ]]; then
 fi
 
 # Submit.
-query="segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_mode=policy"
+query="segment_limit_po2=${SEG}&receipt_kind=${RECEIPT}&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
 resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
   --data-binary "@${TAPE_FILE}" -H "content-type: application/octet-stream") || {
   echo "ERROR: failed to connect to prover at $PROVER_URL" >&2

@@ -1,6 +1,5 @@
 export interface RelayClaimRequest {
   jobId: string;
-  claimantAddress: string;
   journalRawHex: string;
   journalDigestHex: string;
   proverResponse: unknown;

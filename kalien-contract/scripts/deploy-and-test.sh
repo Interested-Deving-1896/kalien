@@ -122,7 +122,7 @@ assert_fail() {
 }
 
 # ---------------------------------------------------------------------------
-# Seed helpers (for indexed live-window seeds)
+# Seed helpers (for live seed_id + seed materialization)
 # ---------------------------------------------------------------------------
 
 u32_to_le_hex() {
@@ -135,48 +135,44 @@ u32_to_le_hex() {
 set_journal_seed_hex() {
   local journal_hex="$1"
   local seed="$2"
+  local seed_id="${3:-$CURRENT_SEED_ID}"
   local seed_le
+  local seed_id_le
   seed_le=$(u32_to_le_hex "$seed")
-  echo "${seed_le}${journal_hex:8}"
+  seed_id_le=$(u32_to_le_hex "$seed_id")
+  # AST4 journal layout starts with:
+  # [0..3] seed (u32 LE), [4..7] seed_id (u32 LE)
+  echo "${seed_le}${seed_id_le}${journal_hex:16}"
 }
 
-materialize_and_index_seed() {
+materialize_current_seed() {
   local contract_id="$1"
-  local seed now_window w indexed
+  local current_seed_json seed seed_id
 
-  seed=$(stellar contract invoke -q \
+  current_seed_json=$(stellar contract invoke -q \
     --id "$contract_id" \
     --source "$DEPLOYER_NAME" \
     --network "$NETWORK" \
     -- \
     current_seed 2>&1) || return 1
-  seed=$(echo "$seed" | tr -d '"')
 
-  now_window=$(( $(date +%s) / 600 ))
-  indexed=0
-  for w in $((now_window - 2)) $((now_window - 1)) "$now_window" $((now_window + 1)) $((now_window + 2)); do
-    if [[ "$w" -lt 0 ]]; then
-      continue
-    fi
-    local result
-    result=$(stellar contract invoke -q \
-      --id "$contract_id" \
-      --source "$DEPLOYER_NAME" \
-      --network "$NETWORK" \
-      -- \
-      index_seed \
-      --window "$w" \
-      --seed "$seed" 2>&1) || true
-    result=$(echo "$result" | tr -d '"')
-    if [[ "$result" == "true" ]]; then
-      CURRENT_SEED="$seed"
-      CURRENT_WINDOW="$w"
-      indexed=1
-      break
-    fi
-  done
+  seed=$(echo "$current_seed_json" | jq -r '.seed // empty' 2>/dev/null || true)
+  seed_id=$(echo "$current_seed_json" | jq -r '.seed_id // .seedId // empty' 2>/dev/null || true)
 
-  [[ "$indexed" -eq 1 ]]
+  # Fallback parser for non-JSON output formats.
+  if [[ -z "$seed" || -z "$seed_id" ]]; then
+    seed=$(echo "$current_seed_json" | sed -n 's/.*"seed":[[:space:]]*\([0-9]\+\).*/\1/p' | head -1)
+    seed_id=$(echo "$current_seed_json" | sed -n 's/.*"seed_id":[[:space:]]*\([0-9]\+\).*/\1/p' | head -1)
+  fi
+
+  if [[ -z "$seed" || -z "$seed_id" ]]; then
+    err "failed to parse current_seed response: $current_seed_json"
+    return 1
+  fi
+
+  CURRENT_SEED="$seed"
+  CURRENT_SEED_ID="$seed_id"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -318,7 +314,7 @@ test_read_functions() {
     --network "$NETWORK" \
     -- \
     rules_digest 2>&1) || true
-  assert_eq "rules_digest matches AST3" "$((0x41535433))" "$rules_digest_result"
+  assert_eq "rules_digest matches AST4" "$((0x41535434))" "$rules_digest_result"
 }
 
 # ---------------------------------------------------------------------------
@@ -338,18 +334,18 @@ test_submit_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
 
-  if ! materialize_and_index_seed "$SCORE_CONTRACT_ID"; then
-    err "failed to materialize/index live seed for $label"
+  if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize live seed for $label"
     TOTAL=$((TOTAL + 1))
     FAILED=$((FAILED + 1))
     return
   fi
-  info "Indexed live seed $CURRENT_SEED at window $CURRENT_WINDOW"
+  info "Materialized live seed $CURRENT_SEED at seed_id $CURRENT_SEED_ID"
   journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
@@ -375,7 +371,6 @@ test_submit_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) || {
     err "submit_score failed for $label: $result"
     TOTAL=$((TOTAL + 1))
@@ -408,7 +403,6 @@ test_submit_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && dup_exit=0 || dup_exit=$?
   assert_fail "duplicate $label rejected" "$dup_exit"
 }
@@ -430,18 +424,18 @@ test_reject_fixture() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
 
-  if ! materialize_and_index_seed "$SCORE_CONTRACT_ID"; then
-    err "failed to materialize/index live seed for rejected fixture $label"
+  if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize live seed for rejected fixture $label"
     TOTAL=$((TOTAL + 1))
     FAILED=$((FAILED + 1))
     return
   fi
-  info "Indexed live seed $CURRENT_SEED at window $CURRENT_WINDOW"
+  info "Materialized live seed $CURRENT_SEED at seed_id $CURRENT_SEED_ID"
   journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
@@ -463,7 +457,6 @@ test_reject_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "$label rejected" "$exit_code"
@@ -486,19 +479,21 @@ test_reject_fixture() {
 test_reject_zero_score() {
   info "--- Test: reject synthetic zero-score journal ---"
 
-  # Build a 24-byte journal with score=0: seed(u32 LE) + frames + score + rng + checksum + rules_digest
-  # seed=0xdeadbeef frames=100 score=0 rng=0 checksum=0 rules_digest=AST3(0x41535433)
-  local journal_hex="efbeadde6400000000000000000000000000000033545341"
-  if ! materialize_and_index_seed "$SCORE_CONTRACT_ID"; then
-    err "failed to materialize/index live seed for zero-score rejection test"
+  # Build a 64-byte AST4 journal with score=0:
+  # seed(u32 LE) + seed_id(u32 LE) + frames + score + rng + checksum + rules_digest
+  # + claimant(kind=0 + 32-byte payload) + 3 reserved zero bytes.
+  # seed=0xdeadbeef seed_id=0 frames=100 score=0 rng=0 checksum=0 rules_digest=AST4(0x41535434)
+  local claimant_hex
+  claimant_hex=$(printf '00%064x' 0)
+  local journal_hex="efbeadde000000006400000000000000000000000000000034545341${claimant_hex}000000"
+  if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize live seed for zero-score rejection test"
     TOTAL=$((TOTAL + 1))
     FAILED=$((FAILED + 1))
     return
   fi
-  info "Indexed live seed $CURRENT_SEED at window $CURRENT_WINDOW"
+  info "Materialized live seed $CURRENT_SEED at seed_id $CURRENT_SEED_ID"
   journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
-
-  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -516,7 +511,6 @@ test_reject_zero_score() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "zero-score journal rejected" "$exit_code"
@@ -649,8 +643,8 @@ test_submit_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: Groth16 $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
 
@@ -698,8 +692,8 @@ test_reject_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_ast4_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+    warn "SKIP: Groth16 $label fixture is not AST4-compatible in forward-only mode"
     return
   fi
 
@@ -717,7 +711,6 @@ test_reject_groth16_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "Groth16 $label rejected" "$exit_code"
@@ -811,7 +804,7 @@ if [[ "$PROOF_MODE" == "all" ]]; then
   echo ""
 
   # Groth16 fixture checks are verify-only because fixture seeds are static and
-  # not guaranteed to match the live indexed seed window.
+  # not guaranteed to match the live indexed seed_id.
   info "--- Test: Groth16 verify-only keeps token balance unchanged ---"
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
   grf1_balance=$(stellar contract invoke -q \

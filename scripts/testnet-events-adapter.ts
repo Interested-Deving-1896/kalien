@@ -24,13 +24,9 @@ interface NormalizedEvent {
   seed: number;
   frame_count: number;
   final_score: number;
-  final_rng_state: number;
-  tape_checksum: number;
-  rules_digest: number;
   previous_best: number;
   new_best: number;
   minted_delta: number;
-  journal_digest: string;
   tx_hash: string | null;
   event_index: number;
   ledger: number | null;
@@ -79,42 +75,6 @@ function toInt(value: unknown): number | null {
   return null;
 }
 
-function toHexString(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  if (value instanceof Uint8Array) {
-    return Array.from(value)
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
-  }
-
-  if (value instanceof ArrayBuffer) {
-    return toHexString(new Uint8Array(value));
-  }
-
-  if (Buffer.isBuffer(value)) {
-    return value.toString("hex");
-  }
-
-  return null;
-}
-
-function normalizeDigestHex(value: unknown): string | null {
-  const hexRaw = toHexString(value);
-  if (!hexRaw) {
-    return null;
-  }
-
-  const normalized = hexRaw.startsWith("0x") || hexRaw.startsWith("0X") ? hexRaw.slice(2) : hexRaw;
-  if (normalized.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(normalized)) {
-    return null;
-  }
-  return normalized.toLowerCase();
-}
-
 function readMapValue(mapLike: unknown, keys: string[]): unknown {
   if (mapLike instanceof Map) {
     for (const key of keys) {
@@ -160,13 +120,9 @@ function normalizeEvent(raw: RawEvent): NormalizedEvent | null {
   const seed = toInt(readMapValue(nativeData, ["seed"]));
   const frameCount = toInt(readMapValue(nativeData, ["frame_count"]));
   const finalScore = toInt(readMapValue(nativeData, ["final_score"]));
-  const finalRngState = toInt(readMapValue(nativeData, ["final_rng_state"]));
-  const tapeChecksum = toInt(readMapValue(nativeData, ["tape_checksum"]));
-  const rulesDigest = toInt(readMapValue(nativeData, ["rules_digest"]));
   const previousBest = toInt(readMapValue(nativeData, ["previous_best"]));
   const newBest = toInt(readMapValue(nativeData, ["new_best"]));
   const mintedDelta = toInt(readMapValue(nativeData, ["minted_delta"]));
-  const journalDigest = normalizeDigestHex(readMapValue(nativeData, ["journal_digest"]));
 
   if (
     typeof claimant !== "string" ||
@@ -177,12 +133,6 @@ function normalizeEvent(raw: RawEvent): NormalizedEvent | null {
     frameCount < 0 ||
     finalScore === null ||
     finalScore <= 0 ||
-    finalRngState === null ||
-    finalRngState < 0 ||
-    tapeChecksum === null ||
-    tapeChecksum < 0 ||
-    rulesDigest === null ||
-    rulesDigest < 0 ||
     previousBest === null ||
     previousBest < 0 ||
     newBest === null ||
@@ -191,8 +141,7 @@ function normalizeEvent(raw: RawEvent): NormalizedEvent | null {
     mintedDelta < 0 ||
     finalScore !== newBest ||
     previousBest > newBest ||
-    mintedDelta !== newBest - previousBest ||
-    journalDigest === null
+    mintedDelta !== newBest - previousBest
   ) {
     return null;
   }
@@ -203,13 +152,9 @@ function normalizeEvent(raw: RawEvent): NormalizedEvent | null {
     seed,
     frame_count: frameCount,
     final_score: finalScore,
-    final_rng_state: finalRngState,
-    tape_checksum: tapeChecksum,
-    rules_digest: rulesDigest,
     previous_best: previousBest,
     new_best: newBest,
     minted_delta: mintedDelta,
-    journal_digest: journalDigest,
     tx_hash: typeof raw.txHash === "string" ? raw.txHash : null,
     event_index: raw.operationIndex != null && Number.isFinite(raw.operationIndex) ? raw.operationIndex : 0,
     ledger: raw.ledger != null && Number.isFinite(raw.ledger) ? raw.ledger : null,

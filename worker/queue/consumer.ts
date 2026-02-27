@@ -13,6 +13,7 @@ import { writeProofTapeMapping } from "../leaderboard-store";
 import { submitToProver } from "../prover/client";
 import type { ClaimQueueMessage, ProofJobRecord, ProofQueueMessage, ProofJournal } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
+import { packJournalRaw } from "../../shared/stellar/journal";
 
 /**
  * Returns true when a fatal claim error actually indicates the score was
@@ -30,15 +31,7 @@ function isAlreadyClaimedOnChain(message: string, errorDetail?: string): boolean
 }
 
 function journalRawHex(journal: ProofJournal): string {
-  const buf = new Uint8Array(24);
-  const view = new DataView(buf.buffer);
-  view.setUint32(0, journal.seed >>> 0, true);
-  view.setUint32(4, journal.frame_count >>> 0, true);
-  view.setUint32(8, journal.final_score >>> 0, true);
-  view.setUint32(12, journal.final_rng_state >>> 0, true);
-  view.setUint32(16, journal.tape_checksum >>> 0, true);
-  view.setUint32(20, journal.rules_digest >>> 0, true);
-  return Array.from(buf)
+  return Array.from(packJournalRaw(journal))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -202,7 +195,10 @@ async function processBoundlessMessage(
 
   let submitResult: Awaited<ReturnType<BoundlessClient["submitRequest"]>>;
   try {
-    submitResult = await new BoundlessClient(boundlessConfig).submitRequest(tapeBytes);
+    submitResult = await new BoundlessClient(boundlessConfig).submitRequest(tapeBytes, {
+      seedId: prepared.job.tape.metadata.seedId >>> 0,
+      claimantAddress: prepared.job.claim.claimantAddress,
+    });
   } catch (error) {
     const reason = `boundless submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_QUEUE_RETRIES) {
@@ -265,7 +261,10 @@ async function processVastMessage(
 
   let submitResult: Awaited<ReturnType<typeof submitToProver>>;
   try {
-    submitResult = await submitToProver(env, tapeBytes, {});
+    submitResult = await submitToProver(env, tapeBytes, {
+      seedId: prepared.job.tape.metadata.seedId >>> 0,
+      claimantAddress: prepared.job.claim.claimantAddress,
+    });
   } catch (error) {
     const reason = `vast submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
@@ -330,16 +329,17 @@ async function processClaimQueueMessage(
   // Skip claim if a higher-scoring proof already claimed successfully for this
   // claimant. This prevents the contract rejection in common serial-race cases.
   const thisScore = job.tape.metadata.finalScore >>> 0;
-  const thisSeed = job.tape.metadata.seed;
+  const thisSeedId = job.tape.metadata.seedId >>> 0;
+  const canonicalClaimant = job.result.summary.journal.claimant;
   const { jobs: claimantJobs } = await coordinator.listJobsForClaimant(
-    job.claim.claimantAddress,
+    canonicalClaimant,
     100,
     0,
   );
   const superseded = claimantJobs.some(
     (j) =>
       j.jobId !== job.jobId &&
-      j.tape.metadata.seed === thisSeed && // same seed window only
+      (j.tape.metadata.seedId >>> 0) === thisSeedId && // same seed_id only
       j.claim.status === "succeeded" &&
       (j.tape.metadata.finalScore >>> 0) >= thisScore,
   );
@@ -372,14 +372,23 @@ async function processClaimQueueMessage(
     return;
   }
 
-  const journalHex = journalRawHex(job.result.summary.journal);
+  let journalHex: string;
+  try {
+    journalHex = journalRawHex(job.result.summary.journal);
+  } catch (error) {
+    await coordinator.markClaimFailed(
+      payload.jobId,
+      `failed serializing journal for claim submission: ${safeErrorMessage(error)}`,
+    );
+    message.ack();
+    return;
+  }
   const digestHex = await sha256HexFromHex(journalHex);
 
   let relayResult: Awaited<ReturnType<typeof submitClaim>>;
   try {
     relayResult = await submitClaim(env, {
       jobId: payload.jobId,
-      claimantAddress: job.claim.claimantAddress,
       journalRawHex: journalHex,
       journalDigestHex: digestHex,
       proverResponse: artifactJson.prover_response ?? null,

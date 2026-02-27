@@ -1,7 +1,7 @@
 use std::{env, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
-use asteroids_verifier_core::VerificationJournal;
+use asteroids_verifier_core::{decode_journal_raw, encode_claimant_for_journal, VerificationJournal};
 use methods::{VERIFY_TAPE_ELF, VERIFY_TAPE_ID};
 use risc0_zkvm::{default_prover, ExecutorEnv, Prover, ProverOpts, Receipt};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,9 @@ pub fn image_id_hex() -> String {
         .collect()
 }
 
+/// Report which proving backend this build targets.
+///
+/// Returns `"cuda"` when compiled with the `cuda` feature, otherwise `"cpu"`.
 pub fn accelerator() -> &'static str {
     if cfg!(feature = "cuda") {
         "cuda"
@@ -36,6 +39,7 @@ pub enum ReceiptKind {
 }
 
 impl ReceiptKind {
+    /// Return the CLI/API string form for this receipt kind.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Composite => "composite",
@@ -44,6 +48,7 @@ impl ReceiptKind {
         }
     }
 
+    /// Map the receipt kind to the corresponding RISC Zero prover options.
     fn prover_opts(self) -> ProverOpts {
         match self {
             Self::Composite => ProverOpts::composite(),
@@ -83,6 +88,7 @@ pub enum ProofMode {
 }
 
 impl ProofMode {
+    /// Return the CLI/API string form for this proof mode.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Secure => "secure",
@@ -118,6 +124,7 @@ pub enum VerifyMode {
 }
 
 impl VerifyMode {
+    /// Return the CLI/API string form for this verification mode.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Verify => "verify",
@@ -168,12 +175,17 @@ pub struct TapeProof {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProveOptions {
     pub max_frames: u32,
+    pub seed_id: u32,
+    pub claimant: String,
     pub segment_limit_po2: u32,
     pub receipt_kind: ReceiptKind,
     pub proof_mode: ProofMode,
     pub verify_mode: VerifyMode,
 }
 
+/// Check whether `RISC0_DEV_MODE` is enabled in the host environment.
+///
+/// Accepted truthy values: `1`, `true`, `yes`, `on` (case-insensitive).
 pub fn risc0_dev_mode_enabled() -> bool {
     env::var("RISC0_DEV_MODE")
         .map(|value| {
@@ -185,6 +197,7 @@ pub fn risc0_dev_mode_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Detect which receipt kind was actually produced by the prover.
 pub fn detect_receipt_kind(receipt: &Receipt) -> Result<ReceiptKind> {
     if receipt.inner.groth16().is_ok() {
         return Ok(ReceiptKind::Groth16);
@@ -198,12 +211,36 @@ pub fn detect_receipt_kind(receipt: &Receipt) -> Result<ReceiptKind> {
     Err(anyhow!("failed to determine receipt kind"))
 }
 
+/// Verify a receipt against `VERIFY_TAPE_ID`.
+///
+/// This is skipped by policy callers only when they explicitly select `VerifyMode::Policy`.
 pub fn verify_tape_receipt(receipt: &Receipt) -> Result<()> {
     receipt
         .verify(VERIFY_TAPE_ID)
         .context("receipt verification failed for VERIFY_TAPE_ID")
 }
 
+/// Pad a byte vector to a 4-byte boundary for guest `read_slice` alignment.
+#[inline]
+fn pad_to_word_boundary(mut data: Vec<u8>) -> Vec<u8> {
+    let pad_len = (4 - (data.len() & 3)) & 3;
+    if pad_len != 0 {
+        data.resize(data.len() + pad_len, 0);
+    }
+    data
+}
+
+/// Generate a proof for a tape and return receipt + decoded journal + cycle stats.
+///
+/// Arguments:
+/// - `tape`: serialized tape bytes.
+/// - `options`: proving and policy options (seed_id, claimant, receipt mode, etc).
+///
+/// Behavior:
+/// - normalizes claimant before encoding to guest stdin,
+/// - enforces dev-mode safety checks,
+/// - optionally verifies the produced receipt,
+/// - decodes the guest-emitted raw journal into structured fields.
 pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
     let dev_mode_enabled = risc0_dev_mode_enabled();
     if dev_mode_enabled && options.proof_mode != ProofMode::Dev {
@@ -213,13 +250,15 @@ pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
     }
 
     let tape_len = tape.len() as u32;
-    let mut padded_tape = tape;
-    while padded_tape.len() % 4 != 0 {
-        padded_tape.push(0);
-    }
+    let padded_tape = pad_to_word_boundary(tape);
+
+    let claimant =
+        encode_claimant_for_journal(&options.claimant).map_err(|err| anyhow!("invalid claimant address: {err}"))?;
 
     let mut env_builder = ExecutorEnv::builder();
     env_builder.write_slice(&options.max_frames.to_le_bytes());
+    env_builder.write_slice(&options.seed_id.to_le_bytes());
+    env_builder.write_slice(&claimant);
     env_builder.write_slice(&tape_len.to_le_bytes());
     env_builder.write_slice(&padded_tape);
     env_builder.segment_limit_po2(options.segment_limit_po2);
@@ -259,10 +298,8 @@ pub fn prove_tape(tape: Vec<u8>, options: ProveOptions) -> Result<TapeProof> {
         verify_tape_receipt(&receipt)?;
     }
 
-    let journal: VerificationJournal = receipt
-        .journal
-        .decode()
-        .context("failed decoding guest journal")?;
+    let journal: VerificationJournal =
+        decode_journal_raw(&receipt.journal.bytes).context("failed decoding guest journal")?;
 
     Ok(TapeProof {
         journal,

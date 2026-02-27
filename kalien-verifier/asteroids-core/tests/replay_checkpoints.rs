@@ -59,7 +59,7 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Golden fingerprint for generated AST3 tape.
+    // Golden fingerprint for generated AST4 tape.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
         13_845_899_089_436_327_554
@@ -90,7 +90,7 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Golden fingerprint for generated AST3 tape.
+    // Golden fingerprint for generated AST4 tape.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
         10_200_522_372_937_520_498

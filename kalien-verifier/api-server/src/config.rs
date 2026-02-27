@@ -1,7 +1,9 @@
 use std::{env, sync::Arc};
 
 use asteroids_verifier_core::constants::MAX_FRAMES_DEFAULT;
-use host::{risc0_dev_mode_enabled, ProofMode, ProveOptions, VerifyMode, SEGMENT_LIMIT_PO2_DEFAULT};
+use host::{
+    risc0_dev_mode_enabled, ProofMode, ProveOptions, VerifyMode, SEGMENT_LIMIT_PO2_DEFAULT,
+};
 use tokio::sync::Semaphore;
 
 use crate::{JobStore, ProveTapeQuery};
@@ -93,6 +95,8 @@ impl ServerPolicy {
 
         Ok(ProveOptions {
             max_frames,
+            seed_id: 0,
+            claimant: String::new(),
             segment_limit_po2,
             receipt_kind: query.receipt_kind.unwrap_or_default(),
             proof_mode,

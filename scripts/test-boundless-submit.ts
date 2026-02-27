@@ -22,15 +22,17 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
+import { Address, xdr } from "@stellar/stellar-sdk";
 
 import { encodeStdin } from "../worker/boundless/stdin";
 import { boundlessMarketAbi, eip712Types } from "../worker/boundless/abi";
 import type { ProofRequest } from "../worker/boundless/types";
 import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
 import { parseAndValidateTape } from "../worker/tape";
-import { DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../worker/constants";
+import { DEFAULT_BINDINGS_RPC_URL, DEFAULT_MAX_TAPE_BYTES, EXPECTED_RULES_DIGEST } from "../worker/constants";
 import { fetchEthPriceUsd, usdToWei } from "../worker/boundless/pricing";
-import { Client as ScoreContractClient } from "../shared/stellar/bindings/asteroids-score/dist/index.js";
+import { packJournalRaw, unpackJournalRaw, JOURNAL_LEN } from "../shared/stellar/journal";
+import { Client as ScoreContractClient } from "asteroids-score";
 import {
   ChannelsClient,
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
@@ -80,10 +82,14 @@ const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 65 * 60_000; // 65 minutes
 const MAX_FRAMES = 36_000;
 
-// Stellar testnet config
-const SCORE_CONTRACT_ID = "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
-const STELLAR_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
-const STELLAR_RPC_URL = "https://soroban-testnet.stellar.org";
+// Stellar testnet defaults (override with SCORE_CONTRACT_ID / STELLAR_NETWORK_PASSPHRASE env vars)
+const SCORE_CONTRACT_ID = env.SCORE_CONTRACT_ID
+  ?? env.VITE_SCORE_CONTRACT_ID
+  ?? "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
+const STELLAR_NETWORK_PASSPHRASE = env.STELLAR_NETWORK_PASSPHRASE
+  ?? env.VITE_NETWORK_PASSPHRASE
+  ?? "Test SDF Network ; September 2015";
+const STELLAR_RPC_URL = DEFAULT_BINDINGS_RPC_URL;
 const RELAYER_URL = "https://channels.openzeppelin.com/testnet";
 const CLAIMANT_ADDRESS = "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
 
@@ -250,7 +256,11 @@ if (claimOnly) {
   // Step 0: Generate fresh tape + encode stdin + upload to IPFS
   console.log("Step 0: Generating tape & uploading to IPFS...");
   const tapeBytes = generateFreshTape();
-  const stdinBytes = encodeStdin(tapeBytes);
+  const seedIdForRequest = Math.floor(Date.now() / 1000 / 600) >>> 0;
+  const stdinBytes = encodeStdin(tapeBytes, {
+    seedId: seedIdForRequest,
+    claimantAddress: CLAIMANT_ADDRESS,
+  });
   console.log(`  Stdin: ${stdinBytes.length} bytes`);
 
   const hashBuffer = await crypto.subtle.digest("SHA-256", new Uint8Array(stdinBytes));
@@ -293,17 +303,20 @@ if (claimOnly) {
   const rampUpStart = nowSec + BigInt(FLAT_PERIOD_SEC);
 
   // Compute DigestMatch predicate: bind to this exact tape by precomputing
-  // the expected journal (all 6 fields are known from the tape) and using sha256(journal).
+  // the expected fixed-length AST4 journal and using sha256(journal).
   const tapeMeta = parseAndValidateTape(tapeBytes, DEFAULT_MAX_TAPE_BYTES);
-  const expectedJournal = new Uint8Array(24);
-  const jv = new DataView(expectedJournal.buffer);
-  jv.setUint32(0, tapeMeta.seed, true);
-  jv.setUint32(4, tapeMeta.frameCount, true);
-  jv.setUint32(8, tapeMeta.finalScore, true);
-  jv.setUint32(12, tapeMeta.finalRngState, true);
-  jv.setUint32(16, tapeMeta.checksum, true);
-  jv.setUint32(20, EXPECTED_RULES_DIGEST, true);
-  const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", expectedJournal));
+  const expectedJournal = packJournalRaw({
+    seed: tapeMeta.seed >>> 0,
+    seed_id: seedIdForRequest >>> 0,
+    frame_count: tapeMeta.frameCount >>> 0,
+    final_score: tapeMeta.finalScore >>> 0,
+    final_rng_state: tapeMeta.finalRngState >>> 0,
+    tape_checksum: tapeMeta.checksum >>> 0,
+    rules_digest: EXPECTED_RULES_DIGEST >>> 0,
+    claimant: CLAIMANT_ADDRESS,
+  });
+  const digestInput = expectedJournal as unknown as BufferSource;
+  const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput));
   // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
   const imageIdBytes = hexToBytes(IMAGE_ID);
   const predicateData = new Uint8Array(64);
@@ -542,28 +555,22 @@ if (selectorHex !== GROTH16_SELECTOR) {
   process.exit(1);
 }
 
-// Journal: 24 bytes = 6 x u32 LE
-if (journal.length !== 24) {
-  console.error(`  FAIL: journal is ${journal.length} bytes (expected 24)`);
+// Journal: fixed 64-byte format.
+if (journal.length !== JOURNAL_LEN) {
+  console.error(`  FAIL: journal is ${journal.length} bytes (expected ${JOURNAL_LEN})`);
   process.exit(1);
 }
-const jView = new DataView(journal.buffer, journal.byteOffset, journal.byteLength);
-const journalFields = {
-  seed: jView.getUint32(0, true),
-  frame_count: jView.getUint32(4, true),
-  final_score: jView.getUint32(8, true),
-  final_rng_state: jView.getUint32(12, true),
-  tape_checksum: jView.getUint32(16, true),
-  rules_digest: jView.getUint32(20, true),
-};
-console.log(`  Journal: seed=0x${journalFields.seed.toString(16)}, frames=${journalFields.frame_count}, score=${journalFields.final_score}, rules=0x${journalFields.rules_digest.toString(16)}`);
+const journalFields = unpackJournalRaw(journal);
+console.log(
+  `  Journal: seed=0x${journalFields.seed.toString(16)}, seed_id=${journalFields.seed_id}, claimant=${journalFields.claimant}, frames=${journalFields.frame_count}, score=${journalFields.final_score}, rules=0x${journalFields.rules_digest.toString(16)}`,
+);
 
 if (journalFields.final_score === 0) {
   console.error("  FAIL: score is zero");
   process.exit(1);
 }
-if (journalFields.rules_digest !== 0x41535433) {
-  console.error(`  FAIL: rules_digest 0x${journalFields.rules_digest.toString(16)} !== 0x41535433 (AST3)`);
+if (journalFields.rules_digest !== 0x41535434) {
+  console.error(`  FAIL: rules_digest 0x${journalFields.rules_digest.toString(16)} !== 0x41535434 (AST4)`);
   process.exit(1);
 }
 console.log("  PASS: seal and journal valid");
@@ -595,7 +602,12 @@ console.log("  PASS: adapter round-trip seal matches original");
 
 // Verify journal fields match
 const aj = adapted.result!.proof.journal;
-if (aj.final_score !== journalFields.final_score || aj.rules_digest !== journalFields.rules_digest) {
+if (
+  aj.seed_id !== journalFields.seed_id ||
+  aj.final_score !== journalFields.final_score ||
+  aj.rules_digest !== journalFields.rules_digest ||
+  aj.claimant !== journalFields.claimant
+) {
   console.error("  FAIL: adapter journal mismatch");
   process.exit(1);
 }
@@ -605,14 +617,7 @@ console.log("  PASS: adapter journal fields match");
 console.log("\nStep 7: Building Soroban submit_score payload...");
 
 // Encode journal as hex (matching worker/queue/consumer.ts journalRawHex)
-const journalBuf = new Uint8Array(24);
-const journalView = new DataView(journalBuf.buffer);
-journalView.setUint32(0, journalFields.seed >>> 0, true);
-journalView.setUint32(4, journalFields.frame_count >>> 0, true);
-journalView.setUint32(8, journalFields.final_score >>> 0, true);
-journalView.setUint32(12, journalFields.final_rng_state >>> 0, true);
-journalView.setUint32(16, journalFields.tape_checksum >>> 0, true);
-journalView.setUint32(20, journalFields.rules_digest >>> 0, true);
+const journalBuf = packJournalRaw(journalFields);
 const journalRawHex = Array.from(journalBuf).map(b => b.toString(16).padStart(2, "0")).join("");
 
 // SHA-256 digest of the journal (for logging)
@@ -647,28 +652,18 @@ try {
   console.log(`  Could not read contract imageId: ${e.message?.slice(0, 80)}`);
 }
 
-type SubmitScoreArgs = Parameters<ScoreContractClient["submit_score"]>[0];
-const args: SubmitScoreArgs = {
-  seal: stellarSeal as unknown as SubmitScoreArgs["seal"],
-  journal_raw: journalBuf as unknown as SubmitScoreArgs["journal_raw"],
-  claimant: CLAIMANT_ADDRESS,
-};
-
-const assembled = await scoreClient.submit_score(args, { simulate: false });
-const built = assembled.raw?.build();
-const operation = built?.operations?.[0] as
-  | { func?: { toXDR(format: string): string }; auth?: Array<{ toXDR(format: string): string }> }
-  | undefined;
-
-if (!operation?.func) {
-  console.error("  FAIL: bindings did not produce invokeHostFunction operation");
-  process.exit(1);
-}
-
-const authEntries = Array.isArray(operation.auth) ? operation.auth : [];
+const invokeArgs = new xdr.InvokeContractArgs({
+  contractAddress: Address.fromString(SCORE_CONTRACT_ID).toScAddress(),
+  functionName: "submit_score",
+  args: [
+    xdr.ScVal.scvBytes(Buffer.from(stellarSeal)),
+    xdr.ScVal.scvBytes(Buffer.from(journalBuf)),
+  ],
+});
+const hostFn = xdr.HostFunction.hostFunctionTypeInvokeContract(invokeArgs);
 const payload = {
-  func: operation.func.toXDR("base64"),
-  auth: authEntries.map((entry) => entry.toXDR("base64")),
+  func: hostFn.toXDR("base64"),
+  auth: [] as string[],
 };
 console.log(`  Payload built: func=${payload.func.length} chars, ${payload.auth.length} auth entries`);
 console.log("  PASS: Soroban payload built successfully");

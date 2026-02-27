@@ -119,18 +119,6 @@ export function extractLeaderboardRuns(events: LeaderboardEventRecord[]): Leader
         typeof event.frameCount === "number" && Number.isFinite(event.frameCount)
           ? event.frameCount >>> 0
           : null,
-      finalRngState:
-        typeof event.finalRngState === "number" && Number.isFinite(event.finalRngState)
-          ? event.finalRngState >>> 0
-          : null,
-      tapeChecksum:
-        typeof event.tapeChecksum === "number" && Number.isFinite(event.tapeChecksum)
-          ? event.tapeChecksum >>> 0
-          : null,
-      rulesDigest:
-        typeof event.rulesDigest === "number" && Number.isFinite(event.rulesDigest)
-          ? event.rulesDigest >>> 0
-          : null,
       completedAt: event.closedAt,
       claimStatus: "succeeded",
       claimTxHash: event.txHash,

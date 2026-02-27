@@ -231,7 +231,7 @@ If `API_KEY` is not set, auth is disabled and all routes are open.
 
 ```bash
 JOB_ID=$(curl -sS \
-  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy' \
+  -X POST 'http://127.0.0.1:8080/api/jobs/prove-tape/raw?receipt_kind=composite&segment_limit_po2=21&verify_mode=policy&seed_id=0&claimant=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' \
   --data-binary @../test-fixtures/test-medium.tape \
   -H 'Content-Type: application/octet-stream' \
   -H 'x-api-key: YOUR_API_KEY' | jq -r '.job_id')
@@ -247,6 +247,8 @@ echo "Job ID: ${JOB_ID}"
 | `segment_limit_po2` | `21` | Segment size (2^n), range [16..21] |
 | `max_frames` | `18000` | Max game frames to replay |
 | `verify_mode` | `policy` | `policy` (skip prover-side verification) or `verify` |
+| `seed_id` | _(required)_ | Unsigned 32-bit seed window identifier |
+| `claimant` | _(required)_ | Stellar claimant address (`G...` or `C...`) |
 
 Zero-score tapes (`final_score == 0`) are rejected with `400` and
 `error_code: "zero_score_not_allowed"`.
@@ -276,11 +278,13 @@ The server is single-flight: only one proving job runs at a time. New submission
     "proof": {
       "journal": {
         "seed": 12345,
+        "seed_id": 42,
         "frame_count": 500,
         "final_score": 100,
         "final_rng_state": 67890,
         "tape_checksum": 11111,
-        "rules_digest": 1095980082
+        "rules_digest": 1095980082,
+        "claimant": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
       },
       "receipt": { "..." },
       "requested_receipt_kind": "composite",
@@ -352,7 +356,7 @@ echo 'your-strong-random-secret' | npx wrangler secret put PROVER_API_KEY
 echo 'https://xyz.trycloudflare.com' | npx wrangler secret put PROVER_BASE_URL
 ```
 
-The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header and query params `receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21`, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
+The worker submits tapes as `POST /api/jobs/prove-tape/raw` with `x-api-key` header and query params `receipt_kind=groth16&verify_mode=policy&segment_limit_po2=21&seed_id=<u32>&claimant=<G...|C...>`, then polls `GET /api/jobs/{id}` until the status is `succeeded` or `failed`.
 
 ## CLI Prover
 

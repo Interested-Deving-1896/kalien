@@ -41,9 +41,9 @@ export const MAX_VAST_QUEUE_RETRIES = 30;
 
 // When the VastAI slot is occupied, retry the queue message after this delay.
 export const VAST_SLOT_BUSY_RETRY_DELAY_SECONDS = 30;
-export const EXPECTED_RULES_TAG = 3; // "AST3"
-export const EXPECTED_RULES_DIGEST = 0x41535433; // "AST3"
-export const EXPECTED_RULESET = "AST3";
+export const EXPECTED_RULES_TAG = 4; // "AST4"
+export const EXPECTED_RULES_DIGEST = 0x41535434; // "AST4"
+export const EXPECTED_RULESET = "AST4";
 
 export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "server_restarted",
@@ -53,7 +53,6 @@ export const RETRYABLE_JOB_ERROR_CODES = new Set([
 
 export const ACTIVE_JOBS_KEY = "active_job_ids";
 export const JOB_KEY_PREFIX = "job:";
-export const ORPHAN_SCAN_DONE_KEY = "orphan_scan_done";
 
 // Boundless proving defaults
 export const DEFAULT_BOUNDLESS_POLL_INTERVAL_MS = 5_000;

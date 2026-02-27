@@ -15,7 +15,7 @@
  * Output fixture format:
  *   {
  *     "seal":        "hex string (260 bytes = 4-byte selector + 256-byte proof)",
- *     "journal_raw": "hex string (24-byte base)",
+ *     "journal_raw": "hex string (64-byte AST4 journal)",
  *     "image_id":    "hex string (32 bytes LE)",
  *     "journal":     { seed, frame_count, final_score, ... },
  *     "receipt_kind": "groth16",
@@ -26,8 +26,10 @@
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { createHash } from "crypto";
+import { packJournalRaw } from "../../shared/stellar/journal";
+import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
-const EXPECTED_RULES_DIGEST = 0x41535433; // "AST3"
+const EXPECTED_RULES_DIGEST = 0x41535434; // "AST4"
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -42,6 +44,8 @@ function parseArgs() {
   let segmentLimitPo2 = "21";
   let maxFrames = "18000";
   let imageId = "";
+  let claimant = "";
+  let seedId = "";
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -66,6 +70,12 @@ function parseArgs() {
       case "--image-id":
         imageId = args[++i];
         break;
+      case "--claimant":
+        claimant = args[++i];
+        break;
+      case "--seed-id":
+        seedId = args[++i];
+        break;
       default:
         console.error(`Unknown arg: ${args[i]}`);
         process.exit(1);
@@ -76,6 +86,22 @@ function parseArgs() {
     console.error(
       "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--out <file.json>]"
     );
+    process.exit(1);
+  }
+  if (!claimant || claimant.trim().length === 0) {
+    console.error("Usage requires --claimant <Stellar G...|C... address>");
+    process.exit(1);
+  }
+  let normalizedClaimant = "";
+  try {
+    normalizedClaimant = parseClaimantStrKeyFromUserInput(claimant).normalized;
+  } catch {
+    console.error("Usage requires --claimant <valid Stellar G...|C... address>");
+    process.exit(1);
+  }
+  const parsedSeedId = Number.parseInt(seedId, 10);
+  if (!Number.isFinite(parsedSeedId) || parsedSeedId < 0 || parsedSeedId > 0xffffffff) {
+    console.error("Usage requires --seed-id <u32>");
     process.exit(1);
   }
 
@@ -94,6 +120,8 @@ function parseArgs() {
     segmentLimitPo2,
     maxFrames,
     imageId,
+    claimant: normalizedClaimant,
+    seedId: parsedSeedId >>> 0,
   };
 }
 
@@ -117,11 +145,13 @@ interface ProverJobResponse {
     proof: {
       journal: {
         seed: number;
+        seed_id: number;
         frame_count: number;
         final_score: number;
         final_rng_state: number;
         tape_checksum: number;
         rules_digest: number;
+        claimant: string;
       };
       receipt: any;
       requested_receipt_kind: string;
@@ -143,13 +173,17 @@ async function submitTape(
   tapeBytes: Uint8Array,
   receiptKind: string,
   segmentLimitPo2: string,
-  maxFrames: string
+  maxFrames: string,
+  claimant: string,
+  seedId: number,
 ): Promise<string> {
   const params = new URLSearchParams({
     receipt_kind: receiptKind,
     segment_limit_po2: segmentLimitPo2,
     max_frames: maxFrames,
     verify_mode: "policy",
+    seed_id: String(seedId >>> 0),
+    claimant,
   });
   const url = `${proverUrl}/api/jobs/prove-tape/raw?${params.toString()}`;
 
@@ -157,7 +191,9 @@ async function submitTape(
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/octet-stream" },
+    headers: {
+      "Content-Type": "application/octet-stream",
+    },
     body: tapeBytes,
   });
 
@@ -258,18 +294,16 @@ function extractSeal(receipt: any): Uint8Array {
 }
 
 function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journal"]): Uint8Array {
-  // Journal format: 24-byte base (6 x u32 LE)
-  const buf = new Uint8Array(24);
-  const view = new DataView(buf.buffer);
-
-  view.setUint32(0, journal.seed, true);
-  view.setUint32(4, journal.frame_count, true);
-  view.setUint32(8, journal.final_score, true);
-  view.setUint32(12, journal.final_rng_state, true);
-  view.setUint32(16, journal.tape_checksum, true);
-  view.setUint32(20, journal.rules_digest, true);
-
-  return buf;
+  return packJournalRaw({
+    seed: journal.seed >>> 0,
+    seed_id: journal.seed_id >>> 0,
+    frame_count: journal.frame_count >>> 0,
+    final_score: journal.final_score >>> 0,
+    final_rng_state: journal.final_rng_state >>> 0,
+    tape_checksum: journal.tape_checksum >>> 0,
+    rules_digest: journal.rules_digest >>> 0,
+    claimant: journal.claimant,
+  });
 }
 
 async function fetchImageIdFromProver(proverUrl: string): Promise<Uint8Array> {
@@ -323,7 +357,9 @@ async function main() {
     tapeBytes,
     config.receiptKind,
     config.segmentLimitPo2,
-    config.maxFrames
+    config.maxFrames,
+    config.claimant,
+    config.seedId,
   );
 
   // Poll for result
@@ -338,7 +374,7 @@ async function main() {
   const rulesDigest = proof.journal.rules_digest >>> 0;
   if (rulesDigest !== EXPECTED_RULES_DIGEST) {
     throw new Error(
-      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST3). Update/redeploy prover before generating fixtures.`
+      `Prover returned rules_digest=0x${rulesDigest.toString(16)}; expected 0x${EXPECTED_RULES_DIGEST.toString(16)} (AST4). Update/redeploy prover before generating fixtures.`
     );
   }
   if ((proof.journal.final_score >>> 0) === 0) {

@@ -30,6 +30,12 @@ import {
   SUBMISSION_LIMIT,
   SUBMISSION_WINDOW_MS,
 } from "./rate-limit";
+import {
+  ensureCurrentEpochSeed,
+  readCurrentEpochSeedState,
+  submitRelayProxy,
+  type RelayProxyPayload,
+} from "../claim/direct";
 
 class PayloadTooLargeError extends Error {
   readonly sizeBytes: number;
@@ -121,6 +127,68 @@ function clientIp(c: { req: { raw: Request } }): string {
 }
 
 const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
+const RELAY_SUBMISSION_LIMIT = 20;
+const RELAY_SUBMISSION_WINDOW_MS = 60_000;
+
+function parseRelayPayload(body: unknown): { payload: RelayProxyPayload } | { error: string } {
+  if (!body || typeof body !== "object") {
+    return { error: "request body must be a JSON object" };
+  }
+
+  const source = body as Record<string, unknown>;
+  const xdrValue = typeof source.xdr === "string" ? source.xdr.trim() : "";
+  const funcValue = typeof source.func === "string" ? source.func.trim() : "";
+  const hasXdr = xdrValue.length > 0;
+  const hasFunc = funcValue.length > 0;
+
+  if (hasXdr && hasFunc) {
+    return { error: "provide either xdr or func/auth payload, not both" };
+  }
+
+  if (hasXdr) {
+    return {
+      payload: {
+        kind: "xdr",
+        xdr: xdrValue,
+      },
+    };
+  }
+
+  if (hasFunc) {
+    const authValue = source.auth;
+    if (authValue == null) {
+      return {
+        payload: {
+          kind: "soroban",
+          func: funcValue,
+          auth: [],
+        },
+      };
+    }
+    if (!Array.isArray(authValue)) {
+      return { error: "auth must be an array of base64 strings when func is provided" };
+    }
+
+    const auth: string[] = [];
+    for (let i = 0; i < authValue.length; i += 1) {
+      const value = authValue[i];
+      if (typeof value !== "string" || value.trim().length === 0) {
+        return { error: `auth[${i}] must be a non-empty base64 string` };
+      }
+      auth.push(value.trim());
+    }
+
+    return {
+      payload: {
+        kind: "soroban",
+        func: funcValue,
+        auth,
+      },
+    };
+  }
+
+  return { error: "missing payload: provide xdr or func/auth" };
+}
 
 function latestSuccessfulAttempt(job: ProofJobRecord): ProverAttempt | null {
   for (let i = job.proverAttempts.length - 1; i >= 0; i -= 1) {
@@ -251,6 +319,133 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
     });
   });
 
+  api.get("/seed/current", async (c) => {
+    let state: Awaited<ReturnType<typeof readCurrentEpochSeedState>>;
+    try {
+      state = await readCurrentEpochSeedState(c.env);
+    } catch (error) {
+      return jsonError(c, 503, safeErrorMessage(error));
+    }
+
+    return c.json({
+      success: true,
+      seed_id: state.seedId,
+      seconds_left: state.secondsLeft,
+      seed: state.activeSeed,
+      materialized_seed: state.materializedSeed,
+      indexed: state.activeSeed !== null,
+    });
+  });
+
+  api.post("/seed/refresh", async (c) => {
+    let currentState: Awaited<ReturnType<typeof readCurrentEpochSeedState>>;
+    try {
+      currentState = await readCurrentEpochSeedState(c.env);
+    } catch (error) {
+      return jsonError(c, 503, safeErrorMessage(error));
+    }
+
+    if (currentState.activeSeed !== null) {
+      return c.json(
+        {
+          success: false,
+          error: "current epoch seed is already indexed",
+          seed_id: currentState.seedId,
+          seconds_left: currentState.secondsLeft,
+          seed: currentState.activeSeed,
+          materialized_seed: currentState.materializedSeed,
+          indexed: true,
+        },
+        409,
+      );
+    }
+
+    let result;
+    try {
+      result = await ensureCurrentEpochSeed(c.env);
+    } catch (error) {
+      return jsonError(c, 503, safeErrorMessage(error));
+    }
+
+    if (!result.success) {
+      if (result.retryAfterSeconds && result.retryAfterSeconds > 0) {
+        c.header("Retry-After", String(result.retryAfterSeconds));
+      }
+      return c.json(
+        {
+          success: false,
+          error: result.message ?? "unable to refresh current epoch seed",
+          seed_id: result.state.seedId,
+          seconds_left: result.state.secondsLeft,
+          seed: result.state.activeSeed,
+          materialized_seed: result.state.materializedSeed,
+          indexed: result.state.activeSeed !== null,
+          refresh_attempted: result.refreshAttempted,
+          refreshed: result.refreshed,
+          tx_hash_current_seed: result.txHashCurrentSeed,
+          retry_after_seconds: result.retryAfterSeconds ?? null,
+        },
+        result.retryAfterSeconds ? 429 : 503,
+      );
+    }
+
+    return c.json({
+      success: true,
+      seed_id: result.state.seedId,
+      seconds_left: result.state.secondsLeft,
+      seed: result.state.activeSeed,
+      materialized_seed: result.state.materializedSeed,
+      indexed: result.state.activeSeed !== null,
+      refresh_attempted: result.refreshAttempted,
+      refreshed: result.refreshed,
+      message: result.message,
+      tx_hash_current_seed: result.txHashCurrentSeed,
+    });
+  });
+
+  api.post("/relay", async (c) => {
+    const ipKey = `relay:${clientIp(c)}`;
+    if (!hasCapacity(ipKey, RELAY_SUBMISSION_LIMIT, RELAY_SUBMISSION_WINDOW_MS)) {
+      const retryAfter = retryAfterSeconds(ipKey, RELAY_SUBMISSION_LIMIT, RELAY_SUBMISSION_WINDOW_MS);
+      c.header("Retry-After", String(Math.max(1, retryAfter)));
+      return jsonError(c, 429, "too many relay submissions; try again later");
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (error) {
+      return jsonError(c, 400, `invalid JSON body: ${safeErrorMessage(error)}`);
+    }
+
+    const parsed = parseRelayPayload(body);
+    if ("error" in parsed) {
+      return jsonError(c, 400, parsed.error);
+    }
+
+    recordSubmission(ipKey, RELAY_SUBMISSION_WINDOW_MS);
+
+    const relay = await submitRelayProxy(c.env, parsed.payload);
+    if (relay.type === "success") {
+      return c.json({
+        success: true,
+        data: {
+          hash: relay.txHash,
+          status: "submitted",
+        },
+      });
+    }
+
+    return c.json(
+      {
+        success: false,
+        error: relay.message,
+        data: relay.errorDetail ? { detail: relay.errorDetail } : undefined,
+      },
+      relay.type === "retry" ? 503 : 400,
+    );
+  });
+
   api.post("/proofs/jobs", async (c) => {
     const maxTapeBytes = parseInteger(c.env.MAX_TAPE_BYTES, DEFAULT_MAX_TAPE_BYTES, 1);
     const declaredLength = parseContentLength(c.req.header("content-length"));
@@ -279,13 +474,23 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       return jsonError(c, 400, safeErrorMessage(error));
     }
 
-    const rawClaimant = c.req.header("x-claimant-address") ?? "";
+    const rawClaimant = c.req.query("claimant") ?? "";
     let claimantAddress: string;
     try {
       claimantAddress = validateClaimantStrKeyFromUserInput(rawClaimant);
     } catch (error) {
-      return jsonError(c, 400, `invalid x-claimant-address: ${safeErrorMessage(error)}`);
+      return jsonError(c, 400, `invalid claimant query param: ${safeErrorMessage(error)}`);
     }
+
+    const rawSeedId = c.req.query("seed_id") ?? "";
+    const parsedSeedId = Number.parseInt(rawSeedId.trim(), 10);
+    if (!Number.isFinite(parsedSeedId) || parsedSeedId < 0 || parsedSeedId > 0xffff_ffff) {
+      return jsonError(c, 400, "invalid seed_id query param: expected unsigned 32-bit integer");
+    }
+    metadata = {
+      ...metadata,
+      seedId: parsedSeedId >>> 0,
+    };
 
     // Sliding-window rate limit: 10 submissions per 10 minutes, per IP and per address.
     const ipKey = `ip:${clientIp(c)}`;
@@ -516,6 +721,27 @@ export function createApiRouter(): Hono<{ Bindings: WorkerEnv }> {
       success: true,
       job: asPublicJob(job),
     });
+  });
+
+  api.delete("/proofs/jobs/:jobId", async (c) => {
+    const jobId = c.req.param("jobId");
+    if (!jobId) {
+      return jsonError(c, 400, "invalid job id in path");
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    try {
+      const failed = await coordinator.markFailed(jobId, "cancelled by api request");
+      if (!failed) {
+        return jsonError(c, 404, `job not found: ${jobId}`);
+      }
+      return c.json({
+        success: true,
+        job: asPublicJob(failed),
+      });
+    } catch (error) {
+      return jsonError(c, 409, safeErrorMessage(error));
+    }
   });
 
   api.post("/proofs/jobs/:jobId/retry-claim", async (c) => {

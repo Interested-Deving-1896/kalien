@@ -362,20 +362,6 @@ function toHexString(value: unknown): string | null {
   return null;
 }
 
-function normalizeJournalDigest(value: unknown): string | null {
-  const hexRaw = toHexString(value);
-  if (!hexRaw) {
-    return null;
-  }
-
-  const normalized = hexRaw.startsWith("0x") || hexRaw.startsWith("0X") ? hexRaw.slice(2) : hexRaw;
-  if (normalized.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(normalized)) {
-    return null;
-  }
-
-  return normalized.toLowerCase();
-}
-
 function hasCanonicalScoreInvariants(values: {
   finalScore: number;
   previousBest: number;
@@ -396,13 +382,9 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
   seed: number;
   frameCount: number | null;
   finalScore: number;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   previousBest: number;
   newBest: number;
   mintedDelta: number;
-  journalDigest: string | null;
 } | null {
   const mapLike = asNativeMap(nativeData);
   if (!mapLike) {
@@ -425,12 +407,8 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
   const frameCount = toInteger(readNativeMapValue(mapLike, ["frame_count"]));
   const finalScore = toInteger(readNativeMapValue(mapLike, ["final_score"]));
   const newBest = toInteger(readNativeMapValue(mapLike, ["new_best"]));
-  const finalRngState = toInteger(readNativeMapValue(mapLike, ["final_rng_state"]));
-  const tapeChecksum = toInteger(readNativeMapValue(mapLike, ["tape_checksum"]));
-  const rulesDigest = toInteger(readNativeMapValue(mapLike, ["rules_digest"]));
   const previousBest = toInteger(readNativeMapValue(mapLike, ["previous_best"]));
   const mintedDelta = toInteger(readNativeMapValue(mapLike, ["minted_delta"]));
-  const journalDigest = normalizeJournalDigest(readNativeMapValue(mapLike, ["journal_digest"]));
 
   if (
     seed === null ||
@@ -441,17 +419,10 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
     finalScore <= 0 ||
     newBest === null ||
     newBest <= 0 ||
-    finalRngState === null ||
-    finalRngState < 0 ||
-    tapeChecksum === null ||
-    tapeChecksum < 0 ||
-    rulesDigest === null ||
-    rulesDigest < 0 ||
     previousBest === null ||
     previousBest < 0 ||
     mintedDelta === null ||
     mintedDelta < 0 ||
-    journalDigest === null ||
     !hasCanonicalScoreInvariants({
       finalScore,
       previousBest,
@@ -467,13 +438,9 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
     seed: seed >>> 0,
     frameCount: frameCount >>> 0,
     finalScore: finalScore >>> 0,
-    finalRngState: finalRngState >>> 0,
-    tapeChecksum: tapeChecksum >>> 0,
-    rulesDigest: rulesDigest >>> 0,
     previousBest: previousBest >>> 0,
     newBest: newBest >>> 0,
     mintedDelta: mintedDelta >>> 0,
-    journalDigest,
   };
 }
 
@@ -636,13 +603,9 @@ function extractScoreEventsFromLedgerBatch(
           seed: scoreEvent.seed,
           frameCount: scoreEvent.frameCount,
           finalScore: scoreEvent.finalScore,
-          finalRngState: scoreEvent.finalRngState,
-          tapeChecksum: scoreEvent.tapeChecksum,
-          rulesDigest: scoreEvent.rulesDigest,
           previousBest: scoreEvent.previousBest,
           newBest: scoreEvent.newBest,
           mintedDelta: scoreEvent.mintedDelta,
-          journalDigest: scoreEvent.journalDigest,
           txHash,
           eventIndex,
           ledger: ledgerSeq,
@@ -1132,13 +1095,9 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
       seed: scoreEvent.seed,
       frameCount: scoreEvent.frameCount,
       finalScore: scoreEvent.finalScore,
-      finalRngState: scoreEvent.finalRngState,
-      tapeChecksum: scoreEvent.tapeChecksum,
-      rulesDigest: scoreEvent.rulesDigest,
       previousBest: scoreEvent.previousBest,
       newBest: scoreEvent.newBest,
       mintedDelta: scoreEvent.mintedDelta,
-      journalDigest: scoreEvent.journalDigest,
       txHash,
       eventIndex,
       ledger,
@@ -1527,12 +1486,8 @@ export function normalizeGalexieScoreEvents(
     const frameCount = toInteger(pickValue(nested, ["frame_count"]));
     const finalScore = toInteger(pickValue(nested, ["final_score"]));
     const newBest = toInteger(pickValue(nested, ["new_best"]));
-    const finalRngState = toInteger(pickValue(nested, ["final_rng_state"]));
-    const tapeChecksum = toInteger(pickValue(nested, ["tape_checksum"]));
-    const rulesDigest = toInteger(pickValue(nested, ["rules_digest"]));
     const previousBest = toInteger(pickValue(nested, ["previous_best"]));
     const mintedDelta = toInteger(pickValue(nested, ["minted_delta"]));
-    const journalDigestRaw = pickValue(nested, ["journal_digest"]);
     const closedAt = toIsoTimestamp(pickValue(nested, ["closed_at"]));
 
     if (
@@ -1544,12 +1499,6 @@ export function normalizeGalexieScoreEvents(
       finalScore <= 0 ||
       newBest === null ||
       newBest <= 0 ||
-      finalRngState === null ||
-      finalRngState < 0 ||
-      tapeChecksum === null ||
-      tapeChecksum < 0 ||
-      rulesDigest === null ||
-      rulesDigest < 0 ||
       previousBest === null ||
       previousBest < 0 ||
       mintedDelta === null ||
@@ -1558,9 +1507,7 @@ export function normalizeGalexieScoreEvents(
     ) {
       continue;
     }
-    const journalDigest = normalizeJournalDigest(journalDigestRaw);
     if (
-      journalDigest === null ||
       !hasCanonicalScoreInvariants({
         finalScore,
         previousBest,
@@ -1602,13 +1549,9 @@ export function normalizeGalexieScoreEvents(
       seed: seed >>> 0,
       frameCount: frameCount >>> 0,
       finalScore: finalScore >>> 0,
-      finalRngState: finalRngState >>> 0,
-      tapeChecksum: tapeChecksum >>> 0,
-      rulesDigest: rulesDigest >>> 0,
       previousBest: previousBest >>> 0,
       newBest: newBest >>> 0,
       mintedDelta: mintedDelta >>> 0,
-      journalDigest,
       txHash,
       eventIndex,
       ledger,

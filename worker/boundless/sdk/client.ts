@@ -46,6 +46,7 @@ import {
   requestIdToHex,
   uint8ArrayToHex,
 } from "./utils";
+import { packJournalRaw } from "../../../shared/stellar/journal";
 
 function parsePositiveNumber(value: string | number | null | undefined): number | null {
   if (value == null) return null;
@@ -78,10 +79,12 @@ export class BoundlessClient {
    * needed, builds + signs + submits the on-chain ProofRequest, and also
    * posts to the order stream for faster prover discovery.
    *
-   * Returns a ProverSubmitResult for compatibility with the existing
-   * coordinator flow.
+   * Returns a ProverSubmitResult consumed by the coordinator flow.
    */
-  async submitRequest(tapeBytes: Uint8Array): Promise<ProverSubmitResult> {
+  async submitRequest(
+    tapeBytes: Uint8Array,
+    metadata: { seedId: number; claimantAddress: string },
+  ): Promise<ProverSubmitResult> {
     const config = this.config;
     const account = privateKeyToAccount(config.privateKey);
 
@@ -108,7 +111,10 @@ export class BoundlessClient {
     }
 
     // 2. Encode stdin into GuestEnv V1 msgpack format
-    const stdinBytes = encodeStdin(tapeBytes);
+    const stdinBytes = encodeStdin(tapeBytes, {
+      seedId: metadata.seedId >>> 0,
+      claimantAddress: metadata.claimantAddress,
+    });
 
     // 2. Determine input type: upload to IPFS if too large for inline
     let inputType: number;
@@ -154,18 +160,29 @@ export class BoundlessClient {
     const rampUpStart = nowSec + BigInt(config.flatPeriodSec);
 
     // Compute DigestMatch predicate: bind proof request to this exact tape by
-    // precomputing the expected journal (all 6 fields are known from the tape)
+    // precomputing the expected journal.
     // and using sha256(journal) as the predicate data.
     const tapeMeta = parseAndValidateTape(tapeBytes, DEFAULT_MAX_TAPE_BYTES);
-    const expectedJournal = new Uint8Array(24);
-    const jv = new DataView(expectedJournal.buffer);
-    jv.setUint32(0, tapeMeta.seed, true);
-    jv.setUint32(4, tapeMeta.frameCount, true);
-    jv.setUint32(8, tapeMeta.finalScore, true);
-    jv.setUint32(12, tapeMeta.finalRngState, true);
-    jv.setUint32(16, tapeMeta.checksum, true);
-    jv.setUint32(20, EXPECTED_RULES_DIGEST, true);
-    const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", expectedJournal));
+    let expectedJournal: Uint8Array;
+    try {
+      expectedJournal = packJournalRaw({
+        seed: tapeMeta.seed,
+        seed_id: metadata.seedId >>> 0,
+        frame_count: tapeMeta.frameCount,
+        final_score: tapeMeta.finalScore,
+        final_rng_state: tapeMeta.finalRngState,
+        tape_checksum: tapeMeta.checksum,
+        rules_digest: EXPECTED_RULES_DIGEST,
+        claimant: metadata.claimantAddress,
+      });
+    } catch (error) {
+      return {
+        type: "fatal",
+        message: `failed building expected journal: ${safeErrorMessage(error)}`,
+      };
+    }
+    const digestInput = expectedJournal as unknown as BufferSource;
+    const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput));
     // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
     const imageIdBytes = hexToUint8Array(config.imageId as Hex);
     const predicateData = new Uint8Array(64);
@@ -748,13 +765,8 @@ export async function fetchBoundlessCycles(
         }
 
         const payload = (await resp.json()) as unknown;
-        const entry = Array.isArray(payload)
-          ? ((payload[0] ?? null) as {
-              program_cycles?: string | number | null;
-              total_program_cycles?: string | number | null;
-              total_cycles?: string | number | null;
-            } | null)
-          : payload && typeof payload === "object"
+        const entry =
+          payload && typeof payload === "object" && !Array.isArray(payload)
             ? (payload as {
                 program_cycles?: string | number | null;
                 total_program_cycles?: string | number | null;
