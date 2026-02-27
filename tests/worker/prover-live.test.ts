@@ -14,7 +14,6 @@ import {
   getValidatedProverHealth,
   submitToProver,
   pollProverOnce,
-  summarizeProof,
 } from "../../worker/prover/client";
 import type { WorkerEnv } from "../../worker/env";
 
@@ -115,37 +114,27 @@ describe("live prover integration", () => {
     expect(pollResult.type).toBe("success");
     if (pollResult.type !== "success") return;
 
-    // Verify response structure
-    const response = pollResult.response;
-    expect(response.status).toBe("succeeded");
-    expect(response.tape_size_bytes).toBe(tapeBytes.byteLength);
-    expect(response.options.receipt_kind).toBe("groth16");
-    expect(response.options.proof_mode).toBe("secure");
-    expect(response.options.accelerator).toBe("cuda");
-
-    // Verify journal matches tape
-    const journal = response.result!.proof.journal;
+    const summary = pollResult.summary;
+    const journal = summary.journal;
     expect(journal.seed).toBe(0xdeadbeef >>> 0);
     expect(journal.seed_id).toBe(seedId);
     expect(journal.claimant).toBe(TEST_CLAIMANT);
     expect(journal.frame_count).toBe(5000);
     expect(journal.final_score).toBe(11190);
 
-    // Verify Groth16 receipt
-    expect(response.result!.proof.requested_receipt_kind).toBe("groth16");
-    expect(response.result!.proof.produced_receipt_kind).toBe("groth16");
+    expect(summary.requestedReceiptKind).toBe("groth16");
+    expect(summary.producedReceiptKind).toBe("groth16");
 
-    // Verify stats
-    const stats = response.result!.proof.stats;
+    const stats = summary.stats;
     expect(stats.segments).toBeGreaterThan(0);
     expect(stats.total_cycles).toBeGreaterThan(0);
 
-    // Verify summarizeProof works
-    const summary = summarizeProof(response);
-    expect(summary.journal.final_score).toBe(11190);
-    expect(summary.requestedReceiptKind).toBe("groth16");
-    expect(summary.producedReceiptKind).toBe("groth16");
-    expect(summary.stats.segments).toBeGreaterThan(0);
+    const artifact = pollResult.artifact;
+    expect(artifact.version).toBe("v4");
+    expect(artifact.backend).toBe("vast");
+    expect(artifact.seal_hex).toMatch(/^[0-9a-f]{520}$/);
+    expect(artifact.journal_raw_hex).toMatch(/^[0-9a-f]{98}$/);
+    expect(artifact.journal_digest_hex).toMatch(/^[0-9a-f]{64}$/);
   }, 300_000);
 
   // ───── Submit + poll (real game tape, groth16) ─────
@@ -176,17 +165,15 @@ describe("live prover integration", () => {
     expect(pollResult.type).toBe("success");
     if (pollResult.type !== "success") return;
 
-    const journal = pollResult.response.result!.proof.journal;
+    const journal = pollResult.summary.journal;
     expect(journal.seed).toBe(0x43c9c6cd >>> 0);
     expect(journal.seed_id).toBe(seedId);
     expect(journal.claimant).toBe(TEST_CLAIMANT);
     expect(journal.frame_count).toBe(6643);
     expect(journal.final_score).toBe(14870);
 
-    expect(pollResult.response.result!.proof.produced_receipt_kind).toBe("groth16");
-
-    const summary = summarizeProof(pollResult.response);
-    expect(summary.journal.final_score).toBe(14870);
+    expect(pollResult.summary.producedReceiptKind).toBe("groth16");
+    expect(pollResult.summary.journal.final_score).toBe(14870);
   }, 300_000);
 
   // ───── Short tape acceptance ─────

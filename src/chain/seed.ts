@@ -1,6 +1,7 @@
-import { Client as ScoreClient, networks as scoreNetworks } from "asteroids-score";
+import { Client as ScoreClient } from "asteroids-score";
 
 export const SEED_INTERVAL_SECONDS = 600; // 10 minutes
+const TESTNET_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
 /**
  * Read the current seed by simulating `current_seed()` via the SDK client.
@@ -15,7 +16,7 @@ export async function fetchSeedFromContract(
     const client = new ScoreClient({
       contractId,
       rpcUrl,
-      networkPassphrase: scoreNetworks.testnet.networkPassphrase,
+      networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
     });
     const tx = await client.current_seed();
     return tx.result.seed;

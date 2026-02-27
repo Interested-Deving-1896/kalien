@@ -2,7 +2,7 @@ export interface RelayClaimRequest {
   jobId: string;
   journalRawHex: string;
   journalDigestHex: string;
-  proverResponse: unknown;
+  sealHex: string;
 }
 
 export type RelaySubmitResult =

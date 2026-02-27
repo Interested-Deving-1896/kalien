@@ -62,6 +62,7 @@ import { LiveInputSource, TapeInputSource } from "./input-source";
 import {
   clamp,
   getGameRng,
+  getGameRngState,
   randomInt,
   setGameSeed,
   wrapXQ12_4,
@@ -1599,9 +1600,8 @@ export class AsteroidsGame {
   loadReplay(tapeData: Uint8Array): void {
     const tape = deserializeTape(tapeData);
     this.audio.enable();
-    // Tape v3 does not carry seed_id; use the pending chain seed if available,
-    // otherwise fall back to 0 (replays are visual-only and not submitted for proving).
-    this.startNewGame(tape.header.seed, this.pendingSeedId ?? 0);
+    // Tape v4 does not encode seed_id; replays are visual-only and never claimed.
+    this.startNewGame(tape.header.seed, 0);
     this.mode = "replay";
     this.replaySpeed = 1;
     this.replayPaused = false;

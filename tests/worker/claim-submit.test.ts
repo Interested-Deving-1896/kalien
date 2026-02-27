@@ -1,13 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { JOURNAL_LEN } from "../../shared/stellar/journal";
+import { STELLAR_GROTH16_SEAL_LEN } from "../../worker/proof-artifact";
 import { submitClaim } from "../../worker/claim/submit";
 import type { WorkerEnv } from "../../worker/env";
 
 const BASE_REQUEST = {
   jobId: "job-1",
-  claimantAddress: "GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB",
-  journalRawHex: "00",
-  journalDigestHex: "11",
-  proverResponse: {},
+  journalRawHex: "00".repeat(JOURNAL_LEN),
+  journalDigestHex: "11".repeat(32),
+  sealHex: "22".repeat(STELLAR_GROTH16_SEAL_LEN),
 };
 
 describe("submitClaim relayer-only config handling", () => {

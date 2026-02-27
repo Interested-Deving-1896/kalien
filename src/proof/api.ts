@@ -106,7 +106,7 @@ export interface ProofStats {
 export interface ProofResultSummary {
   elapsedMs: number;
   requestedReceiptKind: string;
-  producedReceiptKind: string | null;
+  producedReceiptKind: string;
   journal: ProofJournal;
   stats: ProofStats;
 }
@@ -143,9 +143,15 @@ export interface GetProofJobResponse {
   job: ProofJobPublic;
 }
 
-export interface StoredProofArtifactResponse {
-  stored_at?: string;
-  prover_response?: unknown;
+export interface ProofArtifactV4Response {
+  version: "v4";
+  stored_at: string;
+  backend: ProverBackend;
+  seal_hex: string;
+  journal_raw_hex: string;
+  journal_digest_hex: string;
+  requested_receipt_kind: "groth16";
+  produced_receipt_kind: "groth16";
 }
 
 interface ApiErrorResponse {
@@ -252,7 +258,7 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
   return parseJson<GetProofJobResponse>(response);
 }
 
-export async function getProofArtifact(jobId: string): Promise<StoredProofArtifactResponse> {
+export async function getProofArtifact(jobId: string): Promise<ProofArtifactV4Response> {
   const response = await fetchWithTimeout(
     `/api/proofs/jobs/${jobId}/result`,
     {
@@ -265,7 +271,7 @@ export async function getProofArtifact(jobId: string): Promise<StoredProofArtifa
     throw await parseError(response);
   }
 
-  return parseJson<StoredProofArtifactResponse>(response);
+  return parseJson<ProofArtifactV4Response>(response);
 }
 
 export interface ListProofJobsResponse {

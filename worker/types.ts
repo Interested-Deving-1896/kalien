@@ -81,9 +81,20 @@ export interface ProofStats {
 export interface ProofResultSummary {
   elapsedMs: number;
   requestedReceiptKind: string;
-  producedReceiptKind: string | null;
+  producedReceiptKind: string;
   journal: ProofJournal;
   stats: ProofStats;
+}
+
+export interface ProofArtifactV4 {
+  version: "v4";
+  stored_at: string;
+  backend: ProverBackend;
+  seal_hex: string;
+  journal_raw_hex: string;
+  journal_digest_hex: string;
+  requested_receipt_kind: "groth16";
+  produced_receipt_kind: "groth16";
 }
 
 export interface ProofResultInfo {
@@ -260,7 +271,7 @@ export interface ProverJobResultEnvelope {
   proof: {
     journal: ProofJournal;
     requested_receipt_kind: string;
-    produced_receipt_kind?: string | null;
+    produced_receipt_kind: string;
     stats: ProofStats;
     receipt: unknown;
   };
@@ -315,6 +326,6 @@ export interface ProverSuccessMetadata {
 
 export type ProverPollResult =
   | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean; lockPriceWei?: bigint }
-  | { type: "success"; response: ProverGetJobResponse; metadata?: ProverSuccessMetadata }
+  | { type: "success"; summary: ProofResultSummary; artifact: ProofArtifactV4; metadata?: ProverSuccessMetadata }
   | { type: "retry"; message: string; clearProverJob?: boolean; errorCode?: string; errorDetail?: string }
   | { type: "fatal"; message: string; errorCode?: string; errorDetail?: string };

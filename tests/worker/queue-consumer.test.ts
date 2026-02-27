@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
+import { packJournalRaw, type JournalFields } from "../../shared/stellar/journal";
+import { bytesToHex, sha256Hex, STELLAR_GROTH16_SEAL_LEN } from "../../worker/proof-artifact";
 import type { WorkerEnv } from "../../worker/env";
 
 // Mock coordinator and prover before importing the consumer
@@ -441,6 +443,27 @@ describe("handleDlqBatch", () => {
 // ---------------------------------------------------------------------------
 
 const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const TEST_JOURNAL: JournalFields = {
+  seed_id: 1,
+  seed: 1,
+  frame_count: 10,
+  final_score: 100,
+  claimant: TEST_CLAIMANT,
+};
+
+async function makeTestProofArtifact(journal: JournalFields) {
+  const journalRaw = packJournalRaw(journal);
+  return {
+    version: "v4",
+    stored_at: "2026-01-01T00:00:00.000Z",
+    backend: "boundless",
+    seal_hex: "22".repeat(STELLAR_GROTH16_SEAL_LEN),
+    journal_raw_hex: bytesToHex(journalRaw),
+    journal_digest_hex: await sha256Hex(journalRaw),
+    requested_receipt_kind: "groth16",
+    produced_receipt_kind: "groth16",
+  };
+}
 
 describe("handleClaimQueueBatch", () => {
   it("acks when job not succeeded", async () => {
@@ -467,6 +490,7 @@ describe("handleClaimQueueBatch", () => {
   });
 
   it("marks claim succeeded on successful claim", async () => {
+    const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
     const coordinator = makeCoordinator({
       beginClaimAttempt: async () => ({
         jobId: "job-1",
@@ -494,7 +518,7 @@ describe("handleClaimQueueBatch", () => {
       __claimResult: { type: "success", txHash: "tx-123" },
       PROOF_ARTIFACTS: {
         get: async () => ({
-          json: async () => ({ prover_response: {} }),
+          json: async () => proofArtifact,
         }),
       },
     });
@@ -507,6 +531,7 @@ describe("handleClaimQueueBatch", () => {
   });
 
   it("retries claim on retry result", async () => {
+    const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
     const coordinator = makeCoordinator({
       beginClaimAttempt: async () => ({
         jobId: "job-1",
@@ -534,7 +559,7 @@ describe("handleClaimQueueBatch", () => {
       __claimResult: { type: "retry", message: "temporarily unavailable" },
       PROOF_ARTIFACTS: {
         get: async () => ({
-          json: async () => ({ prover_response: {} }),
+          json: async () => proofArtifact,
         }),
       },
     });
@@ -547,6 +572,7 @@ describe("handleClaimQueueBatch", () => {
   });
 
   it("marks claim failed on fatal result", async () => {
+    const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
     const coordinator = makeCoordinator({
       beginClaimAttempt: async () => ({
         jobId: "job-1",
@@ -574,7 +600,7 @@ describe("handleClaimQueueBatch", () => {
       __claimResult: { type: "fatal", message: "contract error" },
       PROOF_ARTIFACTS: {
         get: async () => ({
-          json: async () => ({ prover_response: {} }),
+          json: async () => proofArtifact,
         }),
       },
     });

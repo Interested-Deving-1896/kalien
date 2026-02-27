@@ -188,25 +188,31 @@ Storage keys:
 - `active_job_id` — current active job ID (or absent)
 - `job:{jobId}` — full `ProofJobRecord`
 
-### Queue consumers (proof + claim)
+### Queue consumers (proof + vast + claim)
 
-The worker has two queue consumers:
+The worker currently has three primary queue consumers:
 
-1. **Proof queue (`kalien-proof-jobs`)**
-   - Submits the stored tape to prover API.
+1. **Boundless proof queue (`kalien-proof-jobs`)**
+   - Submits the stored tape to Boundless.
    - Retries transient errors with bounded exponential backoff.
    - Marks terminal failures in DO state.
+   - Configured for parallelism (`max_concurrency=5`).
 
-2. **Claim queue (`kalien-claim-jobs`)**
+2. **Vast proof queue (`kalien-vast-jobs`)**
+   - Submits the stored tape to the Vast prover API.
+   - Uses serialized processing (`max_concurrency=1`) to match single-flight GPU flow.
+
+3. **Claim queue (`kalien-claim-jobs`)**
    - Runs only after proof success.
-   - Builds `journal_raw_hex` from the proved 24-byte journal.
-   - Computes `journal_digest_hex = sha256(journal_raw_hex)`.
-   - Submits `{ claimant_address, journal_raw_hex, journal_digest_hex, prover_response }`
-     to `RELAYER_URL`.
+   - Loads canonical `ProofArtifactV4` from R2 (`seal_hex`, `journal_raw_hex`, `journal_digest_hex`).
+   - Validates `journal_raw_hex` against the coordinator summary and digest.
+   - Submits `{ seal_hex, journal_raw_hex, journal_digest_hex }` to `RELAYER_URL`.
    - Tracks claim retry/failure/success state in DO.
 
-Both queues use `max_batch_size=1`, `max_concurrency=1`, `max_retries=10`,
-and dedicated DLQs (`kalien-proof-jobs-dlq`, `kalien-claim-jobs-dlq`).
+All queues use `max_batch_size=1` and dedicated DLQs:
+- `kalien-proof-jobs-dlq`
+- `kalien-vast-jobs-dlq`
+- `kalien-claim-jobs-dlq`
 
 ### DO alarm polling loop
 
@@ -214,10 +220,10 @@ After `markProverAccepted()` schedules the first alarm, the DO's `alarm()`
 method drives all subsequent prover polling:
 
 1. Load active job. If terminal or missing, stop.
-2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`, default 11 minutes). Fail if exceeded.
+2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`). With current `wrangler.jsonc` this is set to 2,100,000 ms (~35 minutes).
 3. Call `pollProver()` (budget-limited polling loop within a single alarm invocation).
 4. **Running**: save updated prover status, schedule next alarm at `PROVER_POLL_INTERVAL_MS`.
-5. **Success**: call `summarizeProof()`, store full prover response in R2 as `result.json`,
+5. **Success**: persist canonical `ProofArtifactV4` to R2 as `result.json`,
    call `markSucceeded()` which also enqueues a claim job.
 6. **Retry with `clearProverJob`** (prover lost the job, e.g. restart):
    re-read tape from R2, re-submit to prover. If re-submit succeeds,
@@ -256,13 +262,12 @@ backs off and tries again rather than failing the job.
 interface ProofResultSummary {
   elapsedMs: number;
   requestedReceiptKind: string;
-  producedReceiptKind: string | null;
+  producedReceiptKind: string;
   journal: {
     seed: number;
     seed_id: number;
     frame_count: number;
     final_score: number;
-    rules_digest: number;
     claimant: string;
   };
   stats: {
@@ -279,26 +284,16 @@ interface ProofResultSummary {
 
 ```json
 {
+  "version": "v4",
   "stored_at": "ISO8601",
-  "prover_response": {
-    "success": true,
-    "status": "succeeded",
-    "result": {
-      "proof": {
-        "journal": { ... },
-        "requested_receipt_kind": "groth16",
-        "produced_receipt_kind": "groth16",
-        "stats": { ... },
-        "receipt": { ... }
-      },
-      "elapsed_ms": 123456
-    }
-  }
+  "backend": "boundless|vast",
+  "seal_hex": "<260-byte hex>",
+  "journal_raw_hex": "<49-byte hex>",
+  "journal_digest_hex": "<sha256 hex>",
+  "requested_receipt_kind": "groth16",
+  "produced_receipt_kind": "groth16"
 }
 ```
-
-The `receipt` field contains the full RISC Zero receipt including the `seal`
-bytes needed for on-chain verification.
 
 ### Worker configuration (`wrangler.jsonc`)
 

@@ -5,36 +5,40 @@
  */
 
 import { encodeGuestEnvV1, encodeStdin } from "../worker/boundless/stdin";
-import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
 import { DEFAULT_BOUNDLESS_MAX_FRAMES } from "../worker/constants";
-import type { FulfillmentData } from "../worker/boundless/types";
+import { buildProofArtifactV4, parseProofArtifactV4, sha256Hex } from "../worker/proof-artifact";
 import {
   decodeClaimantFromJournal,
   JOURNAL_CLAIMANT_ENCODED_LEN,
+  JOURNAL_LEN,
   packJournalRaw,
 } from "../shared/stellar/journal";
 
 let passed = 0;
 let failed = 0;
+const pendingTests: Promise<void>[] = [];
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
-    failed += 1;
     throw new Error(message);
   }
 }
 
-function test(name: string, fn: () => void): void {
-  try {
-    fn();
-    passed += 1;
-    console.log(`  PASS: ${name}`);
-  } catch (error) {
-    console.error(`  FAIL: ${name}`);
-    if (error instanceof Error) {
-      console.error(`        ${error.message}`);
+function test(name: string, fn: () => void | Promise<void>): void {
+  const run = (async () => {
+    try {
+      await fn();
+      passed += 1;
+      console.log(`  PASS: ${name}`);
+    } catch (error) {
+      failed += 1;
+      console.error(`  FAIL: ${name}`);
+      if (error instanceof Error) {
+        console.error(`        ${error.message}`);
+      }
     }
-  }
+  })();
+  pendingTests.push(run);
 }
 
 function decodeGuestEnvV1(encoded: Uint8Array): Uint8Array {
@@ -172,7 +176,7 @@ test("throws when claimant is not a valid Stellar address", () => {
   assert(threw, "expected invalid claimant length to throw");
 });
 
-console.log("\n=== adaptFulfillmentToProverResponse ===\n");
+console.log("\n=== proof artifact v4 ===\n");
 
 function makeFakeSeal(selector: [number, number, number, number]): Uint8Array {
   const seal = new Uint8Array(260);
@@ -208,45 +212,99 @@ const TEST_JOURNAL = {
   claimant: CLAIMANT,
 };
 
-test("parses 49-byte journal and strips selector from seal", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: makeFakeJournal(TEST_JOURNAL),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
+test("builds + parses v4 artifact from known compact journal byte layout", async () => {
+  const literalJournal = new Uint8Array(JOURNAL_LEN);
+  const view = new DataView(literalJournal.buffer);
+  view.setUint32(0, 0x01020304, true); // seed_id
+  view.setUint32(4, 0x05060708, true); // seed
+  view.setUint32(8, 0x11121314, true); // frame_count
+  view.setUint32(12, 0x21222324, true); // final_score
+  literalJournal[16] = 0; // claimant kind = account
+  // claimant payload bytes remain zero => GAAAA...WHF
 
-  const response = adaptFulfillmentToProverResponse(fulfillment);
-  const journal = response.result!.proof.journal;
-  const groth16 = (response.result as any).proof.receipt.inner.Groth16;
+  const artifact = await buildProofArtifactV4(
+    "boundless",
+    "2026-01-01T00:00:00.000Z",
+    makeFakeSeal(TEST_SELECTOR),
+    literalJournal,
+  );
+  const parsed = parseProofArtifactV4(artifact);
+  const journal = decodeClaimantFromJournal(literalJournal.slice(16, 49));
+  const digest = await sha256Hex(literalJournal);
 
-  assert(journal.seed_id === TEST_JOURNAL.seed_id, "journal.seed_id mismatch");
-  assert(journal.seed === TEST_JOURNAL.seed, "journal.seed mismatch");
-  assert(journal.frame_count === TEST_JOURNAL.frame_count, "journal.frame_count mismatch");
-  assert(journal.final_score === TEST_JOURNAL.final_score, "journal.final_score mismatch");
-  assert(journal.claimant === TEST_JOURNAL.claimant, "journal.claimant mismatch");
-
-  assert(groth16.seal.length === 256, "groth16.seal length mismatch");
-  const firstWord = groth16.verifier_parameters[0] >>> 0;
-  assert(firstWord === 0xefbeadde, "selector word mismatch");
+  assert(parsed.version === "v4", "version mismatch");
+  assert(parsed.backend === "boundless", "backend mismatch");
+  assert(parsed.journal_digest_hex === digest, "journal digest mismatch");
+  assert(journal === CLAIMANT, "literal journal claimant mismatch");
 });
 
-test("throws on journal shorter than 49 bytes", () => {
-  const fulfillment: FulfillmentData = {
-    seal: makeFakeSeal(TEST_SELECTOR),
-    journal: new Uint8Array(32),
-    proverAddress: null,
-    fulfillmentTxHash: null,
-  };
+test("builds v4 artifact with canonical fields", async () => {
+  const journalBytes = makeFakeJournal(TEST_JOURNAL);
+  const sealBytes = makeFakeSeal(TEST_SELECTOR);
+  const artifact = await buildProofArtifactV4(
+    "boundless",
+    "2026-01-01T00:00:00.000Z",
+    sealBytes,
+    journalBytes,
+  );
+  const parsed = parseProofArtifactV4(artifact);
 
+  assert(parsed.requested_receipt_kind === "groth16", "requested receipt kind mismatch");
+  assert(parsed.produced_receipt_kind === "groth16", "produced receipt kind mismatch");
+  assert(parsed.seal_hex.length === 520, "seal_hex length mismatch");
+  assert(parsed.journal_raw_hex.length === 98, "journal_raw_hex length mismatch");
+});
+
+test("throws when parsing artifact with non-v4 version", () => {
   let threw = false;
   try {
-    adaptFulfillmentToProverResponse(fulfillment);
+    parseProofArtifactV4({
+      version: "v3",
+      stored_at: "2026-01-01T00:00:00.000Z",
+      backend: "boundless",
+      seal_hex: "00".repeat(260),
+      journal_raw_hex: "11".repeat(49),
+      journal_digest_hex: "22".repeat(32),
+      requested_receipt_kind: "groth16",
+      produced_receipt_kind: "groth16",
+    });
+  } catch {
+    threw = true;
+  }
+  assert(threw, "expected non-v4 version to throw");
+});
+
+test("throws when journal length is not 49 bytes", async () => {
+  let threw = false;
+  try {
+    await buildProofArtifactV4(
+      "boundless",
+      "2026-01-01T00:00:00.000Z",
+      makeFakeSeal(TEST_SELECTOR),
+      new Uint8Array(32),
+    );
   } catch {
     threw = true;
   }
   assert(threw, "expected short journal to throw");
 });
+
+test("throws when seal length is not 260 bytes", async () => {
+  let threw = false;
+  try {
+    await buildProofArtifactV4(
+      "boundless",
+      "2026-01-01T00:00:00.000Z",
+      new Uint8Array(32),
+      makeFakeJournal(TEST_JOURNAL),
+    );
+  } catch {
+    threw = true;
+  }
+  assert(threw, "expected short seal to throw");
+});
+
+await Promise.all(pendingTests);
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 if (failed > 0) {

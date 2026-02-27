@@ -12,7 +12,7 @@ import {
 } from "../../worker/constants";
 
 /**
- * Build a valid v3 tape binary for testing.
+ * Build a valid v4 tape binary for testing.
  * Header (16 bytes): magic(4) + version(1) + rulesTag(1) + reserved(2) + seed(4) + frameCount(4)
  * Body (ceil(frameCount/2) bytes): nibble-packed — low nibble = frame[2i], high nibble = frame[2i+1]
  * Footer (8 bytes): finalScore(4) + crc32(4)

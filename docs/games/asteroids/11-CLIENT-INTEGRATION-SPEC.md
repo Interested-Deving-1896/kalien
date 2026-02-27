@@ -61,7 +61,7 @@ packages/asteroids-score-client/
 The generated `Client` has typed methods matching each contract function:
 
 ```typescript
-client.submit_score({ seal, journal_raw, claimant }) → AssembledTransaction<u32>
+client.submit_score({ seal, journal_raw })           → AssembledTransaction<Result<u32>>
 client.is_claimed({ journal_digest })              → AssembledTransaction<boolean>
 client.image_id()                                  → AssembledTransaction<Buffer>
 client.router_id()                                 → AssembledTransaction<string>
@@ -275,8 +275,8 @@ const balance = await tokenClient.balance({ id: walletContractId });
 ### History
 
 Query `ScoreSubmitted` contract events via Soroban RPC `getEvents` or
-Horizon transaction history. Each entry provides: score, claimant, journal digest,
-ledger timestamp, and tx hash.
+Horizon transaction history. Each entry provides: score, claimant, seed/seed_id,
+frame_count, previous/new best, minted delta, ledger timestamp, and tx hash.
 
 ---
 
@@ -417,11 +417,9 @@ src/
 
 ## Open Questions
 
-1. **Seal extraction** — The worker stores the full prover response in R2 at
-   `prover_response.result.proof.receipt` (typed as `unknown` in worker types).
-   Need to inspect a real groth16 proof result to determine the exact path to
-   the raw seal bytes and confirm the format (hex string, base64, or nested
-   object). This is the primary blocker before implementing the claim flow.
+1. **Seal extraction** — Worker now stores canonical `ProofArtifactV4` in R2.
+   Frontend/clients must read `seal_hex` directly (260-byte hex) rather than
+   decoding nested prover receipts.
 
 2. **Claim submission path** — Should claim transactions submit directly from
    frontend via `kit.signAndSubmit()`, or should frontend only sign and send

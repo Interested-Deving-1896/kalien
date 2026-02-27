@@ -1,4 +1,4 @@
-import { Address, xdr } from "@stellar/stellar-sdk/minimal";
+import { Address, xdr } from "@stellar/stellar-sdk";
 import {
   ChannelsClient,
   PluginExecutionError,
@@ -10,6 +10,8 @@ import {
   OPENZEPPELIN_CHANNELS_HOSTNAME,
 } from "../constants";
 import type { WorkerEnv } from "../env";
+import { JOURNAL_LEN } from "../../shared/stellar/journal";
+import { hexToBytes, sha256Hex, STELLAR_GROTH16_SEAL_LEN } from "../proof-artifact";
 import { parseInteger, safeErrorMessage } from "../utils";
 import type { RelayClaimRequest, RelaySubmitResult } from "./types";
 
@@ -104,79 +106,11 @@ function resolveBindingsRpcUrl(env: WorkerEnv): string {
   return nonEmpty(env.STELLAR_RPC_URL) ?? DEFAULT_BINDINGS_RPC_URL;
 }
 
-function hexToBytes(hex: string, fieldName: string): Uint8Array {
-  const normalized = hex.trim().toLowerCase();
-  if (normalized.length === 0 || normalized.length % 2 !== 0 || /[^0-9a-f]/.test(normalized)) {
-    throw new Error(`${fieldName} must be a valid even-length hex string`);
-  }
-
-  const bytes = new Uint8Array(normalized.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(normalized.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
-
 function asObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   return value as Record<string, unknown>;
-}
-
-function asByte(value: unknown, fieldName: string, index: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 255) {
-    throw new Error(`${fieldName}[${index}] must be a byte`);
-  }
-  return value & 0xff;
-}
-
-function asU32(value: unknown, fieldName: string, index: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 0xffff_ffff) {
-    throw new Error(`${fieldName}[${index}] must be a u32`);
-  }
-  return value >>> 0;
-}
-
-function extractGroth16SealFromProverResponse(proverResponse: unknown): Uint8Array {
-  const responseObj = asObject(proverResponse);
-  const resultObj = responseObj ? asObject(responseObj.result) : null;
-  const proofObj = resultObj ? asObject(resultObj.proof) : null;
-  const receiptObj = proofObj ? asObject(proofObj.receipt) : null;
-  const innerObj = receiptObj ? asObject(receiptObj.inner) : null;
-  const groth16 = innerObj ? asObject(innerObj.Groth16) : null;
-
-  if (!groth16) {
-    throw new Error("prover_response.result.proof.receipt.inner.Groth16 is required");
-  }
-
-  const seal = groth16.seal;
-  const verifierParameters = groth16.verifier_parameters;
-  if (!Array.isArray(seal) || seal.length !== 256) {
-    throw new Error("receipt.inner.Groth16.seal must be a 256-byte array");
-  }
-  if (!Array.isArray(verifierParameters) || verifierParameters.length !== 8) {
-    throw new Error("receipt.inner.Groth16.verifier_parameters must be an 8-word array");
-  }
-
-  const rawSeal = Uint8Array.from(
-    seal.map((value, index) => asByte(value, "receipt.inner.Groth16.seal", index)),
-  );
-  const params = verifierParameters.map((value, index) =>
-    asU32(value, "receipt.inner.Groth16.verifier_parameters", index),
-  );
-
-  const paramsBytes = new Uint8Array(32);
-  const paramsView = new DataView(paramsBytes.buffer);
-  for (let index = 0; index < params.length; index += 1) {
-    paramsView.setUint32(index * 4, params[index], true);
-  }
-
-  const selector = paramsBytes.slice(0, 4);
-  const stellarSeal = new Uint8Array(260);
-  stellarSeal.set(selector, 0);
-  stellarSeal.set(rawSeal, 4);
-  return stellarSeal;
 }
 
 interface SorobanInvokePayload {
@@ -237,7 +171,6 @@ function extractContractErrorCode(errorDetails: unknown): number | null {
  *
  * Error codes (from lib.rs #[contracterror]):
  *   1 InvalidJournalFormat  — journal is malformed                → fatal
- *   2 InvalidRulesDigest    — wrong rules digest / image id       → fatal
  *   3 JournalAlreadyClaimed — digest already on-chain             → treat as prior success
  *   4 ZeroScoreNotAllowed   — score is 0                          → fatal
  *   5 ScoreNotImproved      — not better than existing best       → treat as superseded
@@ -254,12 +187,6 @@ function classifySimulationContractError(
       return {
         type: "fatal",
         message: "claim rejected: journal data is malformed (InvalidJournalFormat)",
-        errorDetail,
-      };
-    case 2:
-      return {
-        type: "fatal",
-        message: "claim rejected: proof rules digest does not match contract (InvalidRulesDigest)",
         errorDetail,
       };
     case 3:
@@ -968,8 +895,26 @@ export async function submitClaimDirect(
   let phase = "init";
   try {
     phase = "parse_payload";
-    const seal = extractGroth16SealFromProverResponse(request.proverResponse);
+    const seal = hexToBytes(request.sealHex, "seal_hex");
     const journalRaw = hexToBytes(request.journalRawHex, "journal_raw_hex");
+    const requestedDigest = request.journalDigestHex.trim().toLowerCase();
+    if (seal.length !== STELLAR_GROTH16_SEAL_LEN) {
+      throw new Error(
+        `seal_hex must encode exactly ${STELLAR_GROTH16_SEAL_LEN} bytes (got ${seal.length})`,
+      );
+    }
+    if (journalRaw.length !== JOURNAL_LEN) {
+      throw new Error(
+        `journal_raw_hex must encode exactly ${JOURNAL_LEN} bytes (got ${journalRaw.length})`,
+      );
+    }
+    if (!/^[0-9a-f]{64}$/.test(requestedDigest)) {
+      throw new Error("journal_digest_hex must be a 32-byte lowercase hex string");
+    }
+    const computedDigest = await sha256Hex(journalRaw);
+    if (computedDigest !== requestedDigest) {
+      throw new Error("journal_digest_hex does not match journal_raw_hex");
+    }
 
     phase = "build_payload_bindings";
     const payload = await buildSubmitScorePayloadViaBindings(
