@@ -1,4 +1,4 @@
-import { Address } from "@stellar/stellar-sdk/minimal";
+import { Address } from "@stellar/stellar-sdk";
 import { parseClaimantStrKeyFromUserInput } from "./strkey";
 
 export const JOURNAL_CLAIMANT_KIND_ACCOUNT = 0;

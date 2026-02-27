@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { Address } from "@stellar/stellar-sdk/minimal";
+import { Address } from "@stellar/stellar-sdk";
 import {
   AssembledTransaction,
   Client as ContractClient,
@@ -7,7 +7,7 @@ import {
   MethodOptions,
   Result,
   Spec as ContractSpec,
-} from "@stellar/stellar-sdk/minimal/contract";
+} from "@stellar/stellar-sdk/contract";
 import type {
   u32,
   i32,
@@ -20,10 +20,10 @@ import type {
   Option,
   Timepoint,
   Duration,
-} from "@stellar/stellar-sdk/minimal/contract";
-export * from "@stellar/stellar-sdk/minimal";
-export * as contract from "@stellar/stellar-sdk/minimal/contract";
-export * as rpc from "@stellar/stellar-sdk/minimal/rpc";
+} from "@stellar/stellar-sdk/contract";
+export * from "@stellar/stellar-sdk";
+export * as contract from "@stellar/stellar-sdk/contract";
+export * as rpc from "@stellar/stellar-sdk/rpc";
 
 if (typeof window !== "undefined") {
   //@ts-ignore Buffer exists
@@ -31,16 +31,10 @@ if (typeof window !== "undefined") {
 }
 
 
-export const networks = {
-  testnet: {
-    networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
-  }
-} as const
+
 
 export const ScoreError = {
   1: {message:"InvalidJournalFormat"},
-  2: {message:"InvalidRulesDigest"},
   3: {message:"JournalAlreadyClaimed"},
   4: {message:"ZeroScoreNotAllowed"},
   5: {message:"ScoreNotImproved"},
@@ -121,7 +115,7 @@ export interface Client {
 
   /**
    * Construct and simulate a rules_digest transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Read the hard-coded rules digest expected in verified journals.
+   * Read the hard-coded rules digest for AST4 verifier policy.
    */
   rules_digest: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>
 
@@ -150,7 +144,7 @@ export interface Client {
    * 
    * Errors:
    * - `ContractPaused` if submissions are disabled.
-   * - `InvalidJournalFormat`/`InvalidRulesDigest` for malformed or mismatched journal data.
+   * - `InvalidJournalFormat` for malformed journal data.
    * - `SeedNotActive` if the `(seed_id, seed)` pair is not active.
    * - `JournalAlreadyClaimed` on replay.
    * - `ZeroScoreNotAllowed` or `ScoreNotImproved` for policy violations.
@@ -191,9 +185,9 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAAClNjb3JlRXJyb3IAAAAAAAcAAAAAAAAAFEludmFsaWRKb3VybmFsRm9ybWF0AAAAAQAAAAAAAAASSW52YWxpZFJ1bGVzRGlnZXN0AAAAAAACAAAAAAAAABVKb3VybmFsQWxyZWFkeUNsYWltZWQAAAAAAAADAAAAAAAAABNaZXJvU2NvcmVOb3RBbGxvd2VkAAAAAAQAAAAAAAAAEFNjb3JlTm90SW1wcm92ZWQAAAAFAAAAAAAAAA5Db250cmFjdFBhdXNlZAAAAAAABgAAAAAAAAANU2VlZE5vdEFjdGl2ZQAAAAAAAAc=",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAAClNjb3JlRXJyb3IAAAAAAAYAAAAAAAAAFEludmFsaWRKb3VybmFsRm9ybWF0AAAAAQAAAAAAAAAVSm91cm5hbEFscmVhZHlDbGFpbWVkAAAAAAAAAwAAAAAAAAATWmVyb1Njb3JlTm90QWxsb3dlZAAAAAAEAAAAAAAAABBTY29yZU5vdEltcHJvdmVkAAAABQAAAAAAAAAOQ29udHJhY3RQYXVzZWQAAAAAAAYAAAAAAAAADVNlZWROb3RBY3RpdmUAAAAAAAAH",
         "AAAAAQAAAAAAAAAAAAAAC0N1cnJlbnRTZWVkAAAAAAIAAAAAAAAABHNlZWQAAAAEAAAAAAAAAAdzZWVkX2lkAAAAAAQ=",
-        "AAAABQAAAAAAAAAAAAAADlNjb3JlU3VibWl0dGVkAAAAAAABAAAAD3Njb3JlX3N1Ym1pdHRlZAAAAAAIAAAAAAAAAAhjbGFpbWFudAAAABMAAAAAAAAAAAAAAARzZWVkAAAABAAAAAAAAAAAAAAAB3NlZWRfaWQAAAAABAAAAAAAAAAAAAAAC2ZyYW1lX2NvdW50AAAAAAQAAAAAAAAAAAAAAAtmaW5hbF9zY29yZQAAAAAEAAAAAAAAAAAAAAANcHJldmlvdXNfYmVzdAAAAAAAAAQAAAAAAAAAAAAAAAhuZXdfYmVzdAAAAAQAAAAAAAAAAAAAAAxtaW50ZWRfZGVsdGEAAAAEAAAAAAAAAAI=",
+        "AAAABQAAAAAAAAAAAAAADlNjb3JlU3VibWl0dGVkAAAAAAABAAAAD3Njb3JlX3N1Ym1pdHRlZAAAAAAIAAAAAAAAAAdzZWVkX2lkAAAAAAQAAAAAAAAAAAAAAARzZWVkAAAABAAAAAAAAAAAAAAAC2ZyYW1lX2NvdW50AAAAAAQAAAAAAAAAAAAAAAtmaW5hbF9zY29yZQAAAAAEAAAAAAAAAAAAAAAIY2xhaW1hbnQAAAATAAAAAAAAAAAAAAANcHJldmlvdXNfYmVzdAAAAAAAAAQAAAAAAAAAAAAAAAhuZXdfYmVzdAAAAAQAAAAAAAAAAAAAAAxtaW50ZWRfZGVsdGEAAAAEAAAAAAAAAAI=",
         "AAAAAAAAADBBZG1pbjogdXBncmFkZSB0aGlzIGNvbnRyYWN0IHRvIGEgbmV3IHdhc20gaGFzaC4AAAAHdXBncmFkZQAAAAABAAAAAAAAAA1uZXdfd2FzbV9oYXNoAAAAAAAD7gAAACAAAAAA",
         "AAAAAAAAAEVSZWFkIHRoZSBjdXJyZW50bHkgY29uZmlndXJlZCBpbWFnZSBJRCB1c2VkIGZvciByZWNlaXB0IHZlcmlmaWNhdGlvbi4AAAAAAAAIaW1hZ2VfaWQAAAAAAAAAAQAAA+4AAAAg",
         "AAAAAAAAADJSZWFkIHRoZSBjb25maWd1cmVkIHJld2FyZCB0b2tlbiBjb250cmFjdCBhZGRyZXNzLgAAAAAACHRva2VuX2lkAAAAAAAAAAEAAAAT",
@@ -203,10 +197,10 @@ export class Client extends ContractClient {
         "AAAAAAAAAKlDaGVjayB3aGV0aGVyIGEgam91cm5hbCBkaWdlc3QgaGFzIGFscmVhZHkgYmVlbiBjbGFpbWVkLgoKQXJndW1lbnRzOgotIGBlbnZgOiBTb3JvYmFuIGV4ZWN1dGlvbiBlbnZpcm9ubWVudC4KLSBgam91cm5hbF9kaWdlc3RgOiBTSEEtMjU2IGRpZ2VzdCBvZiB0aGUgcmF3IGpvdXJuYWwgYnl0ZXMuAAAAAAAACmlzX2NsYWltZWQAAAAAAAEAAAAAAAAADmpvdXJuYWxfZGlnZXN0AAAAAAPuAAAAIAAAAAEAAAAB",
         "AAAAAAAAACpBZG1pbjogcGF1c2Ugb3IgdW5wYXVzZSBzY29yZSBzdWJtaXNzaW9ucy4AAAAAAApzZXRfcGF1c2VkAAAAAAABAAAAAAAAAAZwYXVzZWQAAAAAAAEAAAAA",
         "AAAAAAAAAJlSZXR1cm4gdGhlIGN1cnJlbnQgd2luZG93J3Mgc2VlZCwgbWF0ZXJpYWxpemluZyBpdCBvbiBmaXJzdCBjYWxsIHBlciB3aW5kb3cuCgpUaGlzIG1ldGhvZCB3cml0ZXMgb25seSBvbmUgZGV0ZXJtaW5pc3RpYyBrZXk6CmBTZWVkQnlJZChzZWVkX2lkKSAtPiBzZWVkYC4AAAAAAAAMY3VycmVudF9zZWVkAAAAAAAAAAEAAAfQAAAAC0N1cnJlbnRTZWVkAA==",
-        "AAAAAAAAAD9SZWFkIHRoZSBoYXJkLWNvZGVkIHJ1bGVzIGRpZ2VzdCBleHBlY3RlZCBpbiB2ZXJpZmllZCBqb3VybmFscy4AAAAADHJ1bGVzX2RpZ2VzdAAAAAAAAAABAAAABA==",
+        "AAAAAAAAADpSZWFkIHRoZSBoYXJkLWNvZGVkIHJ1bGVzIGRpZ2VzdCBmb3IgQVNUNCB2ZXJpZmllciBwb2xpY3kuAAAAAAAMcnVsZXNfZGlnZXN0AAAAAAAAAAEAAAAE",
         "AAAAAAAAADJBZG1pbjogdXBkYXRlIHRoZSBpbWFnZSBJRCAoZm9yIHByb2dyYW0gdXBncmFkZXMpLgAAAAAADHNldF9pbWFnZV9pZAAAAAEAAAAAAAAADG5ld19pbWFnZV9pZAAAA+4AAAAgAAAAAA==",
         "AAAAAAAAACBBZG1pbjogdXBkYXRlIHRoZSB0b2tlbiBhZGRyZXNzLgAAAAxzZXRfdG9rZW5faWQAAAABAAAAAAAAAAxuZXdfdG9rZW5faWQAAAATAAAAAA==",
-        "AAAAAAAAAlBWZXJpZnkgYSBSSVNDIFplcm8gcHJvb2YgYW5kIG1pbnQgS0FMSUVOIHRva2Vucy4KCi0gYHNlYWxgOiB2YXJpYWJsZS1sZW5ndGggcHJvb2Ygc2VhbCBieXRlcwotIGBqb3VybmFsX3Jhd2A6IHJhdyA2NC1ieXRlIGpvdXJuYWwgYnl0ZXM6Ci0gNyB4IHUzMiBMRSBmaWVsZHMKLSBjbGFpbWFudCBwYXlsb2FkIChraW5kICsgMzItYnl0ZSBpZCkKLSAzIHJlc2VydmVkIHplcm8gYnl0ZXMKClJldHVybnMgdGhlIGNsYWltYW50J3MgbmV3IGJlc3Qgc2NvcmUgZm9yIHRoaXMgYHNlZWRfaWRgLgoKRXJyb3JzOgotIGBDb250cmFjdFBhdXNlZGAgaWYgc3VibWlzc2lvbnMgYXJlIGRpc2FibGVkLgotIGBJbnZhbGlkSm91cm5hbEZvcm1hdGAvYEludmFsaWRSdWxlc0RpZ2VzdGAgZm9yIG1hbGZvcm1lZCBvciBtaXNtYXRjaGVkIGpvdXJuYWwgZGF0YS4KLSBgU2VlZE5vdEFjdGl2ZWAgaWYgdGhlIGAoc2VlZF9pZCwgc2VlZClgIHBhaXIgaXMgbm90IGFjdGl2ZS4KLSBgSm91cm5hbEFscmVhZHlDbGFpbWVkYCBvbiByZXBsYXkuCi0gYFplcm9TY29yZU5vdEFsbG93ZWRgIG9yIGBTY29yZU5vdEltcHJvdmVkYCBmb3IgcG9saWN5IHZpb2xhdGlvbnMuAAAADHN1Ym1pdF9zY29yZQAAAAIAAAAAAAAABHNlYWwAAAAOAAAAAAAAAAtqb3VybmFsX3JhdwAAAAAOAAAAAQAAA+kAAAAEAAAH0AAAAApTY29yZUVycm9yAAA=",
+        "AAAAAAAAAkdWZXJpZnkgYSBSSVNDIFplcm8gcHJvb2YgYW5kIG1pbnQgS0FMSUVOIHRva2Vucy4KCi0gYHNlYWxgOiB2YXJpYWJsZS1sZW5ndGggcHJvb2Ygc2VhbCBieXRlcwotIGBqb3VybmFsX3Jhd2A6IHJhdyA0OS1ieXRlIGpvdXJuYWwgYnl0ZXM6Ci0gNCB4IHUzMiBMRSBmaWVsZHMgKGBzZWVkX2lkYCwgYHNlZWRgLCBgZnJhbWVfY291bnRgLCBgZmluYWxfc2NvcmVgKQotIGNsYWltYW50IHBheWxvYWQgKGtpbmQgKyAzMi1ieXRlIGlkKQoKUmV0dXJucyB0aGUgY2xhaW1hbnQncyBuZXcgYmVzdCBzY29yZSBmb3IgdGhpcyBgc2VlZF9pZGAuCgpFcnJvcnM6Ci0gYENvbnRyYWN0UGF1c2VkYCBpZiBzdWJtaXNzaW9ucyBhcmUgZGlzYWJsZWQuCi0gYEludmFsaWRKb3VybmFsRm9ybWF0YCBmb3IgbWFsZm9ybWVkIGpvdXJuYWwgZGF0YS4KLSBgU2VlZE5vdEFjdGl2ZWAgaWYgdGhlIGAoc2VlZF9pZCwgc2VlZClgIHBhaXIgaXMgbm90IGFjdGl2ZS4KLSBgSm91cm5hbEFscmVhZHlDbGFpbWVkYCBvbiByZXBsYXkuCi0gYFplcm9TY29yZU5vdEFsbG93ZWRgIG9yIGBTY29yZU5vdEltcHJvdmVkYCBmb3IgcG9saWN5IHZpb2xhdGlvbnMuAAAAAAxzdWJtaXRfc2NvcmUAAAACAAAAAAAAAARzZWFsAAAADgAAAAAAAAALam91cm5hbF9yYXcAAAAADgAAAAEAAAPpAAAABAAAB9AAAAAKU2NvcmVFcnJvcgAA",
         "AAAAAAAAAIVWZXJpZnkgYSBSSVNDIFplcm8gcHJvb2Ygd2l0aG91dCBtaW50aW5nIHJld2FyZHMgb3IgbXV0YXRpbmcgY2xhaW0gc3RhdGUuCgpSZXR1cm5zIHRoZSBgZmluYWxfc2NvcmVgIGNhcnJpZWQgYnkgdGhlIHZlcmlmaWVkIGpvdXJuYWwuAAAAAAAADHZlcmlmeV9zY29yZQAAAAIAAAAAAAAABHNlYWwAAAAOAAAAAAAAAAtqb3VybmFsX3JhdwAAAAAOAAAAAQAAA+kAAAAEAAAH0AAAAApTY29yZUVycm9yAAA=",
         "AAAAAAAAAX1Jbml0aWFsaXplIGltbXV0YWJsZSBhbmQgbXV0YWJsZSBjb25maWd1cmF0aW9uIGZvciB0aGUgY29udHJhY3QgaW5zdGFuY2UuCgpBcmd1bWVudHM6Ci0gYGVudmA6IFNvcm9iYW4gZXhlY3V0aW9uIGVudmlyb25tZW50LgotIGBhZG1pbmA6IEFkZHJlc3MgYXV0aG9yaXplZCBmb3IgYWRtaW4tb25seSBtZXRob2RzLgotIGByb3V0ZXJfaWRgOiBSSVNDIFplcm8gcm91dGVyIGNvbnRyYWN0IGFkZHJlc3MgdXNlZCBmb3IgcHJvb2YgdmVyaWZpY2F0aW9uLgotIGBpbWFnZV9pZGA6IEV4cGVjdGVkIFJJU0MgWmVybyBpbWFnZSBJRCBmb3IgdmFsaWQgcmVjZWlwdHMuCi0gYHRva2VuX2lkYDogU3RlbGxhciBhc3NldCBjb250cmFjdCB1c2VkIGZvciByZXdhcmQgbWludGluZy4AAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAQAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAJcm91dGVyX2lkAAAAAAAAEwAAAAAAAAAIaW1hZ2VfaWQAAAPuAAAAIAAAAAAAAAAIdG9rZW5faWQAAAATAAAAAA==",
         "AAAAAAAAACtBZG1pbjogdXBkYXRlIHRoZSBSSVNDIFplcm8gcm91dGVyIGFkZHJlc3MuAAAAAA1zZXRfcm91dGVyX2lkAAAAAAAAAQAAAAAAAAANbmV3X3JvdXRlcl9pZAAAAAAAABMAAAAA" ]),
