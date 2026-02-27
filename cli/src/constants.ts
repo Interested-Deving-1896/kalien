@@ -21,8 +21,8 @@ export type NetworkName = keyof typeof NETWORKS;
 // Default backend API URL
 export const DEFAULT_API_URL = "https://kalien.xyz";
 
-// Seed interval duration — must match the contract's SEED_INTERVAL (600 seconds)
-export const SEED_INTERVAL_SECONDS = 600;
+// Re-export the single source of truth for seed interval duration
+export { SEED_INTERVAL_SECONDS } from "@/chain/seed";
 
 // Maximum number of tape submissions allowed per seed_id interval (server-side rate limit)
 export const MAX_SUBMISSIONS_PER_EPOCH = 10;

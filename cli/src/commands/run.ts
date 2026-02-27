@@ -26,7 +26,6 @@ export interface RunOptions {
   interval: number; // minutes (minimum time between submissions within an epoch)
   apiUrl: string;
   rpcUrl: string;
-  networkPassphrase: string;
   contractId: string;
   relayerBaseUrl: string;
   relayerApiKey: string | null;
@@ -184,7 +183,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
           break;
       }
     };
-    worker.postMessage({ type: "start", workerId: i, role, rpcUrl: opts.rpcUrl, networkPassphrase: opts.networkPassphrase, contractId: opts.contractId, relayerBaseUrl: opts.relayerBaseUrl, relayerApiKey: opts.relayerApiKey });
+    worker.postMessage({ type: "start", workerId: i, role, rpcUrl: opts.rpcUrl, contractId: opts.contractId, relayerBaseUrl: opts.relayerBaseUrl, relayerApiKey: opts.relayerApiKey });
     workers.push(worker);
   }
 

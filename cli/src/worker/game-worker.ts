@@ -10,7 +10,6 @@ import { bumpSeedViaRelayer } from "../relayer";
 let workerId = 0;
 let role: WorkerRole = "explore";
 let rpcUrl = "";
-let networkPassphrase = "";
 let contractId = "";
 let relayerBaseUrl = "";
 let relayerApiKey: string | null = null;
@@ -51,7 +50,6 @@ async function ensureSeed(): Promise<void> {
     const bumped = await bumpSeedViaRelayer(
       contractId,
       rpcUrl,
-      networkPassphrase,
       relayerBaseUrl,
       relayerApiKey,
     );
@@ -151,7 +149,6 @@ self.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       workerId = msg.workerId;
       role = msg.role;
       rpcUrl = msg.rpcUrl;
-      networkPassphrase = msg.networkPassphrase;
       contractId = msg.contractId;
       relayerBaseUrl = msg.relayerBaseUrl;
       relayerApiKey = msg.relayerApiKey;

@@ -12,7 +12,7 @@ interface SorobanInvokePayload {
   auth: string[];
 }
 
-const SEED_INTERVAL_SECONDS = 600; // 10 minutes
+import { SEED_INTERVAL_SECONDS } from "./constants";
 
 function normalizeNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -79,7 +79,6 @@ async function fetchSeedById(
 export async function bumpSeedViaRelayer(
   contractId: string,
   rpcUrl: string,
-  _networkPassphrase: string,
   relayerBaseUrl: string,
   relayerApiKey: string,
 ): Promise<SeedBumpResult> {

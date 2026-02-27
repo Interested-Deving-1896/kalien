@@ -4,7 +4,7 @@ export type WorkerRole = "exploit" | "explore";
 
 /** Messages from main thread -> worker */
 export type MainToWorkerMessage =
-  | { type: "start"; workerId: number; role: WorkerRole; rpcUrl: string; networkPassphrase: string; contractId: string; relayerBaseUrl: string; relayerApiKey: string | null }
+  | { type: "start"; workerId: number; role: WorkerRole; rpcUrl: string; contractId: string; relayerBaseUrl: string; relayerApiKey: string | null }
   | { type: "stop" }
   | { type: "reset-best" }
   | { type: "set-config"; config: AutopilotConfig; globalScore: number; force?: boolean };

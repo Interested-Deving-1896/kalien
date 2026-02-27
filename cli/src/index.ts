@@ -84,7 +84,7 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
-      const { networkPassphrase, relayerUrl: relayerBaseUrl } = NETWORKS[network];
+      const { relayerUrl: relayerBaseUrl } = NETWORKS[network];
       const rpcUrl = args["rpc-url"] || NETWORKS[network].rpcUrl;
       const contractId = args["contract-id"] || NETWORKS[network].contractId;
       const relayerApiKey = args["relayer-api-key"] || null;
@@ -102,7 +102,6 @@ async function main(): Promise<void> {
         interval: args["interval"] ? parseFloat(args["interval"]) : 1,
         apiUrl: args["api-url"] || DEFAULT_API_URL,
         rpcUrl,
-        networkPassphrase,
         contractId,
         relayerBaseUrl,
         relayerApiKey,
