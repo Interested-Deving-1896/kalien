@@ -1,4 +1,4 @@
-import type { AutopilotConfig } from "../../../src/game/Autopilot";
+import type { AutopilotConfig } from "@/game/Autopilot";
 
 interface ParamBounds {
   min: number;
@@ -22,7 +22,14 @@ const BOUNDS: Record<string, ParamBounds> = {
 
 const NUMERIC_KEYS = Object.keys(BOUNDS);
 
-export function mutateConfig(base: AutopilotConfig): AutopilotConfig {
+/**
+ * Mutate a config by perturbing 1-3 parameters.
+ * scale controls mutation size:
+ *   0.5 = fine-tuning (exploit workers: ±5–15% of range)
+ *   1.0 = default
+ *   1.5 = broad search (explore workers: ±15–45% of range)
+ */
+export function mutateConfig(base: AutopilotConfig, scale = 1.0): AutopilotConfig {
   const result = { ...base };
 
   // Pick 1-3 parameters to tweak
@@ -35,8 +42,8 @@ export function mutateConfig(base: AutopilotConfig): AutopilotConfig {
     const range = bounds.max - bounds.min;
     const current = (result as any)[key] as number;
 
-    // Perturbation: ±10-30% of the parameter's valid range
-    const perturbScale = 0.1 + Math.random() * 0.2;
+    // Perturbation: ±10-30% of the parameter's valid range, scaled by role
+    const perturbScale = (0.1 + Math.random() * 0.2) * scale;
     const delta = (Math.random() * 2 - 1) * perturbScale * range;
     let newVal = current + delta;
 
@@ -56,4 +63,21 @@ export function mutateConfig(base: AutopilotConfig): AutopilotConfig {
   }
 
   return result;
+}
+
+/** Generate a fully random config within bounds (for explorer restarts). */
+export function randomConfig(): AutopilotConfig {
+  const config: any = {};
+  for (const key of NUMERIC_KEYS) {
+    const { min, max } = BOUNDS[key];
+    config[key] = min + Math.random() * (max - min);
+  }
+  config.preferSmallAsteroids = Math.random() < 0.5;
+
+  // Enforce constraint
+  if (config.cautionRadius <= config.dangerRadius + 30) {
+    config.cautionRadius = config.dangerRadius + 30;
+  }
+
+  return config as AutopilotConfig;
 }

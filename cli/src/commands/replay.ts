@@ -1,8 +1,8 @@
 import { readFileSync } from "fs";
-import { AsteroidsGame } from "../../../src/game/AsteroidsGame";
-import type { GameStateSnapshot } from "../../../src/game/Autopilot";
-import { TapeInputSource } from "../../../src/game/input-source";
-import { deserializeTape } from "../../../src/game/tape";
+import { AsteroidsGame } from "@/game/AsteroidsGame";
+import type { GameStateSnapshot } from "@/game/Autopilot";
+import { TapeInputSource } from "@/game/input-source";
+import { deserializeTape } from "@/game/tape";
 import { renderAsciiFrame, createReplayState, type ReplayHUD } from "../display/ascii-replay";
 import * as ansi from "../display/ansi";
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import * as ansi from "./display/ansi";
+import { NETWORKS, DEFAULT_API_URL, type NetworkName } from "./constants";
 
 const HELP = `
 ${ansi.brightCyan}KALIEN${ansi.reset} - Autonomous Asteroids Farming CLI
@@ -14,11 +15,15 @@ ${ansi.bold}COMMANDS${ansi.reset}
   replay    ASCII replay of a .tape file in the terminal
 
 ${ansi.bold}RUN OPTIONS${ansi.reset}
-  --address <addr>    Stellar wallet address for claims (required)
-  --threads <n>       Parallel worker count (default: CPU cores / 2)
-  --max               Use all CPU cores
-  --interval <min>    Min minutes between submissions within an epoch (default: 1)
-  --api-url <url>     API base URL (default: https://kalien.xyz)
+  --address <addr>      Stellar wallet address for claims (required)
+  --threads <n>         Parallel worker count (default: CPU cores / 2)
+  --max                 Use all CPU cores
+  --interval <min>      Min minutes between submissions within an epoch (default: 1)
+  --api-url <url>       API base URL (default: https://kalien.xyz)
+  --network <net>          Stellar network: testnet or mainnet (default: testnet)
+  --rpc-url <url>          Stellar RPC URL override (default: per network)
+  --contract-id <addr>     Score contract address (default: testnet address; required for mainnet)
+  --relayer-api-key <key>  OZ channels relayer API key — materializes/indexes epoch seed if cron hasn't fired yet
 
 ${ansi.bold}EXAMPLES${ansi.reset}
   kalien run --address GABC...XYZ
@@ -73,13 +78,34 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
+      const network = (args["network"] || "testnet") as NetworkName;
+      if (!(network in NETWORKS)) {
+        console.error(`Error: --network must be "testnet" or "mainnet"`);
+        process.exit(1);
+      }
+
+      const { networkPassphrase, relayerUrl: relayerBaseUrl } = NETWORKS[network];
+      const rpcUrl = args["rpc-url"] || NETWORKS[network].rpcUrl;
+      const contractId = args["contract-id"] || NETWORKS[network].contractId;
+      const relayerApiKey = args["relayer-api-key"] || null;
+
+      if (!contractId) {
+        console.error("Error: --contract-id is required for mainnet (no default set yet)");
+        process.exit(1);
+      }
+
       const { runCommand } = await import("./commands/run");
       await runCommand({
         address,
         threads: args["threads"] ? parseInt(args["threads"], 10) : 0,
         max: args["max"] === "true",
         interval: args["interval"] ? parseFloat(args["interval"]) : 1,
-        apiUrl: args["api-url"] || "https://kalien.xyz",
+        apiUrl: args["api-url"] || DEFAULT_API_URL,
+        rpcUrl,
+        networkPassphrase,
+        contractId,
+        relayerBaseUrl,
+        relayerApiKey,
       });
       break;
     }

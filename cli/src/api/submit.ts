@@ -9,16 +9,20 @@ export interface SubmitResult {
 export async function submitTape(
   tapeBytes: Uint8Array,
   address: string,
+  seedId: number,
   apiUrl: string,
 ): Promise<SubmitResult> {
-  const url = `${apiUrl}/api/proofs/jobs`;
+  const params = new URLSearchParams({
+    claimant: address,
+    seed_id: String(seedId >>> 0),
+  });
+  const url = `${apiUrl}/api/proofs/jobs?${params.toString()}`;
 
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/octet-stream",
-        "x-claimant-address": address,
       },
       body: tapeBytes,
     });

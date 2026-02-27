@@ -1,23 +1,22 @@
 import { cpus } from "os";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
-import { Autopilot, type AutopilotConfig } from "../../../src/game/Autopilot";
+import { Autopilot, type AutopilotConfig } from "@/game/Autopilot";
 import { renderDashboard, type DashboardStats } from "../display/dashboard";
 import * as ansi from "../display/ansi";
 import { submitTape, type SubmitResult } from "../api/submit";
 import { fetchPlayerScore } from "../api/score";
 import type { WorkerToMainMessage } from "../worker/messages";
+import { SEED_INTERVAL_SECONDS, MAX_SUBMISSIONS_PER_EPOCH, SETTLE_DELAY_MS } from "../constants";
+import { fetchSeedFromContract } from "@/chain/seed";
 
-const EPOCH_SECONDS = 600; // 10-minute seed windows
-const MAX_SUBMISSIONS_PER_EPOCH = 10; // Server-side rate limit
-const SETTLE_DELAY_MS = 30_000; // Wait 30s after new best before submitting
+const SEED_FETCH_TIMEOUT_MS = 6000;
+const SEED_REFRESH_INTERVAL_MS = 4000;
 
 function getCurrentEpoch(): number {
-  return Math.floor(Date.now() / 1000 / EPOCH_SECONDS);
+  return Math.floor(Date.now() / 1000 / SEED_INTERVAL_SECONDS);
 }
 
 function epochEndMs(epoch: number): number {
-  return (epoch + 1) * EPOCH_SECONDS * 1000;
+  return (epoch + 1) * SEED_INTERVAL_SECONDS * 1000;
 }
 
 export interface RunOptions {
@@ -26,6 +25,11 @@ export interface RunOptions {
   max: boolean;
   interval: number; // minutes (minimum time between submissions within an epoch)
   apiUrl: string;
+  rpcUrl: string;
+  networkPassphrase: string;
+  contractId: string;
+  relayerBaseUrl: string;
+  relayerApiKey: string | null;
 }
 
 export async function runCommand(opts: RunOptions): Promise<void> {
@@ -40,7 +44,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   // Fetch on-chain high score before starting workers
   process.stdout.write(ansi.color(ansi.cyan, "  Fetching on-chain score..."));
   const playerInfo = await fetchPlayerScore(opts.address, opts.apiUrl);
-  const onChainBestScore = playerInfo.bestScore;
+  let onChainBestScore = playerInfo.bestScore;
   if (onChainBestScore > 0) {
     process.stdout.write(ansi.color(ansi.green, ` ${onChainBestScore}\n`));
   } else {
@@ -50,6 +54,59 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   // Epoch tracking
   let currentEpoch = getCurrentEpoch();
   let epochGamesPlayed = 0;
+  let currentSeed: number | null = null;
+  let seedRefreshInFlight = false;
+  let lastSeedRefreshAt = 0;
+  let announceSeedResolution = false;
+
+  // Read the currently materialized seed from temporary storage.
+  // If the active seed_id has not been materialized yet this returns null.
+  async function fetchCurrentSeed(): Promise<number | null> {
+    try {
+      return await Promise.race<number | null>([
+        fetchSeedFromContract(opts.contractId, opts.rpcUrl),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), SEED_FETCH_TIMEOUT_MS)),
+      ]);
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshCurrentSeed(force = false): Promise<void> {
+    if (seedRefreshInFlight) return;
+
+    const now = Date.now();
+    if (!force && now - lastSeedRefreshAt < SEED_REFRESH_INTERVAL_MS) {
+      return;
+    }
+
+    const requestedEpoch = getCurrentEpoch();
+    seedRefreshInFlight = true;
+    lastSeedRefreshAt = now;
+    try {
+      const seed = await fetchCurrentSeed();
+
+      // Ignore stale responses that started in a previous epoch.
+      if (requestedEpoch !== getCurrentEpoch()) {
+        return;
+      }
+
+      if (seed !== null) {
+        currentSeed = seed;
+        if (announceSeedResolution) {
+          lastSubmitStatus = ansi.color(
+            ansi.cyan,
+            `new seed_id materialized (0x${seed.toString(16).padStart(8, "0").toUpperCase()})`,
+          );
+          announceSeedResolution = false;
+        }
+      }
+    } finally {
+      seedRefreshInFlight = false;
+    }
+  }
+
+  void refreshCurrentSeed(true);
 
   // Score tracking (per epoch)
   let bestScore = 0;
@@ -64,9 +121,6 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   // Submission budget tracking (per epoch)
   let epochSubmissions = 0;
 
-  // Variant tracking (per epoch)
-  let variantsTested = 0;
-
   // Session stats
   let totalGamesPlayed = 0;
   let totalSubmissions = 0;
@@ -75,21 +129,25 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   const startTime = Date.now();
   let submitting = false;
 
-  // Resolve worker path relative to this file
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const workerPath = resolve(__dirname, "../worker/game-worker.ts");
+  // Per-worker best scores for dashboard display
+  const workerBests: number[] = new Array(threadCount).fill(0);
 
-  // Spawn workers
+  // Spawn workers: worker 0 is the exploiter, the rest are explorers.
+  // Exploiter: small mutations, always tracks the global best.
+  // Explorers: large mutations, independent search, restart from random when stuck.
+  // String literal URL is required so Bun detects and embeds the worker at compile time.
+  const workerUrl = new URL("../worker/game-worker.ts", import.meta.url);
   const workers: Worker[] = [];
   for (let i = 0; i < threadCount; i++) {
-    const worker = new Worker(workerPath);
+    const role = i === 0 ? "exploit" : "explore";
+    const worker = new Worker(workerUrl);
     worker.onmessage = (event: MessageEvent<WorkerToMainMessage>) => {
       const msg = event.data;
       switch (msg.type) {
         case "game-complete":
           totalGamesPlayed++;
           epochGamesPlayed++;
-          variantsTested++;
+          workerBests[msg.workerId] = msg.workerBest;
           break;
         case "new-best":
           if (msg.score > bestScore) {
@@ -97,13 +155,36 @@ export async function runCommand(opts: RunOptions): Promise<void> {
             bestTape = msg.tape;
             bestConfig = msg.config;
             bestScoreFoundAt = Date.now();
+
+            // Immediately share the new global best with the exploiter (worker 0)
+            // so it can start refining this region right away.
+            if (msg.workerId !== 0) {
+              workers[0]?.postMessage({
+                type: "set-config",
+                config: msg.config,
+                globalScore: msg.score,
+              });
+            }
+
+            // Also offer to all other explorers — they'll decide whether to adopt
+            // based on their own threshold logic (>10% improvement required).
+            for (let j = 1; j < workers.length; j++) {
+              if (j !== msg.workerId) {
+                workers[j]?.postMessage({
+                  type: "set-config",
+                  config: msg.config,
+                  globalScore: msg.score,
+                });
+              }
+            }
           }
+          workerBests[msg.workerId] = msg.score;
           break;
         case "stopped":
           break;
       }
     };
-    worker.postMessage({ type: "start", workerId: i });
+    worker.postMessage({ type: "start", workerId: i, role, rpcUrl: opts.rpcUrl, networkPassphrase: opts.networkPassphrase, contractId: opts.contractId, relayerBaseUrl: opts.relayerBaseUrl, relayerApiKey: opts.relayerApiKey });
     workers.push(worker);
   }
 
@@ -115,29 +196,28 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     bestTape = null;
     lastSubmittedScore = 0;
     epochGamesPlayed = 0;
-    variantsTested = 0;
     epochSubmissions = 0;
     bestScoreFoundAt = 0;
+    workerBests.fill(0);
 
     // Carry best config forward only if it improved over defaults
     const seedConfig = prevBestScore > 0 ? prevBestConfig : Autopilot.defaults();
     bestConfig = seedConfig;
 
-    for (const w of workers) {
+    for (let i = 0; i < workers.length; i++) {
+      const w = workers[i];
       w.postMessage({ type: "reset-best" });
-      w.postMessage({ type: "set-config", config: seedConfig });
+      if (i === 0) {
+        // Exploiter gets the carried-forward best config
+        w.postMessage({ type: "set-config", config: seedConfig, globalScore: 0, force: true });
+      }
+      // Explorers handle their own reset in reset-best (they pick a random config)
     }
   }
 
   // Submit if we have an unsubmitted improvement
   async function doSubmit(force = false): Promise<void> {
     if (submitting || !bestTape || bestScore <= lastSubmittedScore) return;
-
-    // Don't submit scores that won't beat the on-chain best
-    // (on-chain best is all-time across seeds, but submitting a lower score
-    // for a new seed is fine since per-seed tracking starts at 0)
-    // The contract tracks per-(claimant, seed), so this check is just a heuristic
-    // to avoid obviously wasteful submissions for the same seed within an epoch.
 
     // Check submission budget
     if (epochSubmissions >= MAX_SUBMISSIONS_PER_EPOCH && !force) {
@@ -160,7 +240,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
 
     lastSubmitStatus = ansi.color(ansi.yellow, `submitting (score: ${score})...`);
 
-    const result: SubmitResult = await submitTape(tape, opts.address, opts.apiUrl);
+    const result: SubmitResult = await submitTape(tape, opts.address, currentEpoch, opts.apiUrl);
 
     if (result.success) {
       totalSubmissions++;
@@ -181,15 +261,28 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   const tickInterval = setInterval(async () => {
     const epoch = getCurrentEpoch();
 
-    // Epoch changed — new seed window
+    // Epoch changed — new seed_id interval
     if (epoch !== currentEpoch) {
+      // Wait for any in-flight submit to drain so we don't miss a late best
+      while (submitting) await new Promise(r => setTimeout(r, 100));
       // Force-submit any unsubmitted improvement from the old epoch
       if (bestTape && bestScore > lastSubmittedScore) {
         await doSubmit(true);
       }
       currentEpoch = epoch;
+      currentSeed = null; // will be updated once the fetch resolves
       resetEpoch();
-      lastSubmitStatus = ansi.color(ansi.cyan, `new seed epoch (${epoch})`);
+      lastSubmitStatus = ansi.color(ansi.cyan, "new seed_id interval — fetching seed...");
+      announceSeedResolution = true;
+      // Refresh seed and on-chain score in the background
+      void refreshCurrentSeed(true);
+      fetchPlayerScore(opts.address, opts.apiUrl).then(info => { onChainBestScore = info.bestScore; });
+    }
+
+    // Initial/current epoch seed may not be materialized immediately.
+    // Keep polling in the background until it appears so the dashboard can update.
+    if (currentSeed === null) {
+      void refreshCurrentSeed();
     }
 
     // Try to submit if we have a settled improvement
@@ -219,11 +312,11 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       totalSubmissions,
       lastSubmitStatus,
       epochRemainingSec,
-      epoch: currentEpoch,
+      currentSeed,
       threads: threadCount,
       address: opts.address,
       startTime,
-      variantsTested,
+      workerBests,
       onChainBestScore,
       epochSubmissions,
       maxSubmissionsPerEpoch: MAX_SUBMISSIONS_PER_EPOCH,
@@ -246,10 +339,12 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       w.postMessage({ type: "stop" });
     }
 
+    // Drain any in-flight submit before the final one
+    while (submitting) await new Promise(r => setTimeout(r, 100));
     // Final submit if we have an unsubmitted improvement
     if (bestTape && bestScore > lastSubmittedScore) {
       console.log(ansi.color(ansi.yellow, `  Submitting best tape (score: ${bestScore})...`));
-      const result = await submitTape(bestTape, opts.address, opts.apiUrl);
+      const result = await submitTape(bestTape, opts.address, currentEpoch, opts.apiUrl);
       if (result.success) {
         totalSubmissions++;
         console.log(ansi.color(ansi.green, `  Submitted! Job: ${result.jobId || "ok"}`));

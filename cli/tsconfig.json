@@ -4,7 +4,11 @@
     "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.cli.tsbuildinfo",
     "target": "ES2022",
     "lib": ["ES2023"],
-    "types": ["bun-types"]
+    "types": ["bun-types"],
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   },
   "include": ["src/**/*.ts"]
 }
