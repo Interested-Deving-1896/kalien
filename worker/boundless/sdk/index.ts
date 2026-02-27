@@ -28,9 +28,6 @@ export {
   hexToUint8Array,
   uint8ArrayToHex,
   uint8ArrayToHex0x,
-  // ABI manual decoding
-  decodeFulfillmentDataManual,
-  decodeSealBytesManual,
 } from "./utils";
 
 export type {
@@ -42,7 +39,4 @@ export type {
   BoundlessCallback,
   BoundlessInput,
   BoundlessOffer,
-  BoundlessSubmitResult,
-  BoundlessPollResult,
-  OrderStreamRequest,
 } from "./types";

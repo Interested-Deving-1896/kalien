@@ -62,29 +62,6 @@ export interface BoundlessFulfillmentData {
   fulfillmentTxHash: string | null; // transactionHash from log
 }
 
-// ── Submit / Poll results ─────────────────────────────────────────────────
-
-export interface BoundlessSubmitResult {
-  /** The hex-formatted request ID (0x-prefixed) */
-  requestId: string;
-  /** The numeric bigint request ID */
-  requestIdBigInt: bigint;
-  /** IPFS CID if input was uploaded to Pinata (undefined for inline) */
-  ipfsCid?: string;
-  /** The on-chain tx hash */
-  txHash: string;
-}
-
-export interface BoundlessPollResult {
-  type: "running" | "success" | "retry" | "fatal";
-  /** Present when type === "success" */
-  fulfillment?: BoundlessFulfillmentData;
-  /** Present when type === "running", "retry", or "fatal" */
-  message?: string;
-  /** Present when type === "running" */
-  status?: "running";
-}
-
 // ── Config types (re-exported from parent config for SDK consumers) ────────
 
 export interface BoundlessClientConfig {
@@ -115,33 +92,3 @@ export interface BoundlessClientConfig {
   pinataJwt: string | null;
 }
 
-// ── Internal order stream format ─────────────────────────────────────────
-
-export interface OrderStreamRequest {
-  request: {
-    id: string;
-    requirements: {
-      callback: { addr: string; gasLimit: string };
-      predicate: { predicateType: string; data: string };
-      selector: string;
-    };
-    imageUrl: string;
-    input: { inputType: string; data: string };
-    offer: {
-      minPrice: string;
-      maxPrice: string;
-      rampUpStart: number;
-      rampUpPeriod: number;
-      lockTimeout: number;
-      timeout: number;
-      lockCollateral: string;
-    };
-  };
-  request_digest: string;
-  signature: {
-    r: string;
-    s: string;
-    yParity: string;
-    v: string;
-  };
-}

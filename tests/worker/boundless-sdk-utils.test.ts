@@ -9,7 +9,6 @@ import {
   hexToUint8Array,
   uint8ArrayToHex,
   uint8ArrayToHex0x,
-  decodeSealBytesManual,
 } from "../../worker/boundless/sdk/utils";
 
 // ── buildRequestId ─────────────────────────────────────────────────────────
@@ -229,31 +228,3 @@ describe("uint8ArrayToHex0x", () => {
   });
 });
 
-// ── decodeSealBytesManual ──────────────────────────────────────────────────
-
-describe("decodeSealBytesManual", () => {
-  it("decodes ABI-encoded bytes field (length-prefixed)", () => {
-    // Construct an ABI-encoded `bytes` value: 4 bytes [0xca, 0xfe, 0xba, 0xbe]
-    // First 32-byte word = length = 4
-    // Next padded data = cafebabe followed by 28 zero-bytes of padding
-    const lengthWord = "0000000000000000000000000000000000000000000000000000000000000004";
-    const dataWord = "cafebabe" + "0".repeat(56); // 32 bytes total
-    const sealHex = `0x${lengthWord}${dataWord}`;
-    const result = decodeSealBytesManual(sealHex);
-    expect(result).toEqual(new Uint8Array([0xca, 0xfe, 0xba, 0xbe]));
-  });
-
-  it("works without 0x prefix", () => {
-    const lengthWord = "0000000000000000000000000000000000000000000000000000000000000002";
-    const dataWord = "aabb" + "0".repeat(60);
-    const sealHex = `${lengthWord}${dataWord}`;
-    const result = decodeSealBytesManual(sealHex);
-    expect(result).toEqual(new Uint8Array([0xaa, 0xbb]));
-  });
-
-  it("decodes empty bytes field (length 0)", () => {
-    const lengthWord = "0000000000000000000000000000000000000000000000000000000000000000";
-    const result = decodeSealBytesManual(`0x${lengthWord}`);
-    expect(result).toEqual(new Uint8Array([]));
-  });
-});
