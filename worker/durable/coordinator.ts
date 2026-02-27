@@ -17,7 +17,8 @@ import { fetchEthPriceUsd, weiToUsd } from "../boundless/pricing";
 import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
-import { pollProver, pollProverOnce, summarizeProof } from "../prover/client";
+import { pollProver, pollProverOnce } from "../prover/client";
+import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import type {
   ClaimAttempt,
   CreateJobAccepted,
@@ -596,6 +597,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return null;
     }
 
+    let requestedClaimant = "";
+    let provedClaimant = "";
+    try {
+      requestedClaimant = parseClaimantStrKeyFromUserInput(job.claim.claimantAddress).normalized;
+      provedClaimant = parseClaimantStrKeyFromUserInput(summary.journal.claimant).normalized;
+    } catch {
+      return this.markFailed(jobId, "prover returned invalid claimant in journal");
+    }
+    if (requestedClaimant !== provedClaimant) {
+      return this.markFailed(
+        jobId,
+        `prover journal claimant mismatch: requested ${requestedClaimant}, proved ${provedClaimant}`,
+      );
+    }
+
     const now = nowIso();
     job.status = "succeeded";
     job.updatedAt = now;
@@ -608,9 +624,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       artifactKey,
       summary,
     };
-    // Journal claimant is the canonical reward recipient used on-chain.
-    // Keep coordinator state aligned with the proof journal once verified.
-    job.claim.claimantAddress = summary.journal.claimant;
+    // Keep canonicalized claimant in state after proof confirmation.
+    job.claim.claimantAddress = provedClaimant;
     job.error = null;
     job.claim.status = "queued";
     job.claim.lastError = null;
@@ -1025,22 +1040,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     if (pollResult.type === "success") {
-      let summary: Awaited<ReturnType<typeof summarizeProof>>;
-      try {
-        summary = summarizeProof(pollResult.response);
-      } catch (error) {
-        await this.markFailed(
-          activeJobId,
-          `invalid prover success payload: ${safeErrorMessage(error)}`,
-        );
-        return;
-      }
-
+      const summary = pollResult.summary;
       const artifactStorageKey = resultKey(activeJobId);
       try {
         await this.env.PROOF_ARTIFACTS.put(
           artifactStorageKey,
-          JSON.stringify({ stored_at: nowIso(), prover_response: pollResult.response }, null, 2),
+          JSON.stringify(pollResult.artifact, null, 2),
           {
             httpMetadata: { contentType: "application/json" },
             customMetadata: { jobId: activeJobId },

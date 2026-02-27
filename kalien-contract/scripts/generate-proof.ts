@@ -102,6 +102,10 @@ function parseArgs() {
     console.error("Usage requires --seed-id <u32>");
     process.exit(1);
   }
+  if (receiptKind !== "groth16") {
+    console.error("Usage requires --receipt-kind groth16 (v4-only flow)");
+    process.exit(1);
+  }
 
   const tapePath = resolve(tape);
   if (!out) {
@@ -150,7 +154,7 @@ interface ProverJobResponse {
       };
       receipt: any;
       requested_receipt_kind: string;
-      produced_receipt_kind?: string | null;
+      produced_receipt_kind: string;
       stats: {
         segments: number;
         total_cycles: number;
@@ -363,6 +367,11 @@ async function main() {
   }
 
   const { proof } = result.result;
+  if (proof.requested_receipt_kind !== "groth16" || proof.produced_receipt_kind !== "groth16") {
+    throw new Error(
+      `Expected groth16 proof, got requested=${proof.requested_receipt_kind} produced=${proof.produced_receipt_kind}`
+    );
+  }
   if ((proof.journal.final_score >>> 0) === 0) {
     throw new Error(
       "Prover returned final_score=0. Zero-score runs are not accepted for minting fixtures."
@@ -370,9 +379,7 @@ async function main() {
   }
 
   console.log(`Proof complete in ${result.result.elapsed_ms}ms`);
-  console.log(
-    `  Receipt kind: ${proof.produced_receipt_kind || proof.requested_receipt_kind}`
-  );
+  console.log(`  Receipt kind: ${proof.produced_receipt_kind}`);
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
   console.log(

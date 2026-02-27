@@ -31,7 +31,6 @@ enum DataKey {
 ```rust
 enum ScoreError {
     InvalidJournalFormat = 1,
-    InvalidRulesDigest = 2,
     JournalAlreadyClaimed = 3,
     ZeroScoreNotAllowed = 4,
     ScoreNotImproved = 5,

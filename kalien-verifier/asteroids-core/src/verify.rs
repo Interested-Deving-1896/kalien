@@ -399,6 +399,29 @@ mod tests {
     }
 
     #[test]
+    fn journal_raw_layout_is_stable() {
+        let journal = VerificationJournal {
+            seed_id: 0x0102_0304,
+            seed: 0x0506_0708,
+            frame_count: 0x1112_1314,
+            final_score: 0x2122_2324,
+            claimant: TEST_CLAIMANT.to_string(),
+        };
+        let raw = encode_journal_raw(&journal).unwrap();
+        let expected_claimant = encode_claimant_for_journal(TEST_CLAIMANT).unwrap();
+
+        assert_eq!(raw.len(), JOURNAL_LEN);
+        assert_eq!(&raw[0..4], &journal.seed_id.to_le_bytes());
+        assert_eq!(&raw[4..8], &journal.seed.to_le_bytes());
+        assert_eq!(&raw[8..12], &journal.frame_count.to_le_bytes());
+        assert_eq!(&raw[12..16], &journal.final_score.to_le_bytes());
+        assert_eq!(
+            &raw[16..16 + JOURNAL_CLAIMANT_ENCODED_LEN],
+            &expected_claimant
+        );
+    }
+
+    #[test]
     fn decode_journal_rejects_wrong_length() {
         let journal = VerificationJournal {
             seed_id: 2,
@@ -408,9 +431,18 @@ mod tests {
             claimant: TEST_CLAIMANT.to_string(),
         };
         let raw = encode_journal_raw(&journal).unwrap();
+        let too_short = raw[..JOURNAL_LEN - 1].to_vec();
         let mut too_long = raw.to_vec();
         too_long.push(0);
+        let short_err = decode_journal_raw(&too_short).unwrap_err();
         let err = decode_journal_raw(&too_long).unwrap_err();
+        assert_eq!(
+            short_err,
+            VerifyError::JournalLengthMismatch {
+                expected: JOURNAL_LEN,
+                actual: JOURNAL_LEN - 1,
+            }
+        );
         assert_eq!(
             err,
             VerifyError::JournalLengthMismatch {

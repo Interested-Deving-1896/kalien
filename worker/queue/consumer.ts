@@ -10,6 +10,7 @@ import { BoundlessClient } from "../boundless/sdk/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { writeProofTapeMapping } from "../leaderboard-store";
+import { hexToBytes, parseProofArtifactV4, sha256Hex } from "../proof-artifact";
 import { submitToProver } from "../prover/client";
 import type { ClaimQueueMessage, ProofJobRecord, ProofQueueMessage, ProofJournal } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
@@ -32,17 +33,6 @@ function isAlreadyClaimedOnChain(message: string, errorDetail?: string): boolean
 
 function journalRawHex(journal: ProofJournal): string {
   return Array.from(packJournalRaw(journal))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function sha256HexFromHex(hex: string): Promise<string> {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return Array.from(digest)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -290,7 +280,7 @@ async function processVastMessage(
 }
 
 // ---------------------------------------------------------------------------
-// Claim queue (unchanged)
+// Claim queue
 // ---------------------------------------------------------------------------
 
 async function processClaimQueueMessage(
@@ -360,9 +350,9 @@ async function processClaimQueueMessage(
     return;
   }
 
-  let artifactJson: { prover_response?: unknown };
+  let artifactJson: unknown;
   try {
-    artifactJson = (await artifact.json()) as { prover_response?: unknown };
+    artifactJson = (await artifact.json()) as unknown;
   } catch (error) {
     await coordinator.markClaimFailed(
       payload.jobId,
@@ -372,26 +362,45 @@ async function processClaimQueueMessage(
     return;
   }
 
-  let journalHex: string;
+  let parsedArtifact;
   try {
-    journalHex = journalRawHex(job.result.summary.journal);
+    parsedArtifact = parseProofArtifactV4(artifactJson);
   } catch (error) {
     await coordinator.markClaimFailed(
       payload.jobId,
-      `failed serializing journal for claim submission: ${safeErrorMessage(error)}`,
+      `invalid proof artifact payload: ${safeErrorMessage(error)}`,
     );
     message.ack();
     return;
   }
-  const digestHex = await sha256HexFromHex(journalHex);
+
+  const expectedJournalHex = journalRawHex(job.result.summary.journal);
+  if (parsedArtifact.journal_raw_hex !== expectedJournalHex) {
+    await coordinator.markClaimFailed(
+      payload.jobId,
+      "proof artifact journal_raw_hex does not match coordinator summary",
+    );
+    message.ack();
+    return;
+  }
+
+  const computedDigestHex = await sha256Hex(hexToBytes(parsedArtifact.journal_raw_hex, "journal_raw_hex"));
+  if (computedDigestHex !== parsedArtifact.journal_digest_hex) {
+    await coordinator.markClaimFailed(
+      payload.jobId,
+      "proof artifact journal_digest_hex does not match journal_raw_hex",
+    );
+    message.ack();
+    return;
+  }
 
   let relayResult: Awaited<ReturnType<typeof submitClaim>>;
   try {
     relayResult = await submitClaim(env, {
       jobId: payload.jobId,
-      journalRawHex: journalHex,
-      journalDigestHex: digestHex,
-      proverResponse: artifactJson.prover_response ?? null,
+      journalRawHex: parsedArtifact.journal_raw_hex,
+      journalDigestHex: parsedArtifact.journal_digest_hex,
+      sealHex: parsedArtifact.seal_hex,
     });
   } catch (error) {
     const reason = `claim submit error: ${safeErrorMessage(error)}`;

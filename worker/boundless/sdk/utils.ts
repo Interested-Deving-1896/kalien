@@ -48,6 +48,9 @@ export function hexToUint8Array(hex: string): Uint8Array {
   if (clean.length % 2 !== 0) {
     throw new Error(`invalid hex string length: ${clean.length}`);
   }
+  if (!/^[0-9a-fA-F]*$/.test(clean)) {
+    throw new Error("invalid hex string: contains non-hex characters");
+  }
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
@@ -119,4 +122,3 @@ export function parseBoundlessStatusUrl(statusUrl: string): bigint | null {
 export function requestIdToHex(requestId: bigint): `0x${string}` {
   return `0x${requestId.toString(16)}` as `0x${string}`;
 }
-

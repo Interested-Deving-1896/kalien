@@ -50,7 +50,6 @@ const MAX_SEED_AGE_WINDOWS: u32 = 143;
 #[repr(u32)]
 pub enum ScoreError {
     InvalidJournalFormat = 1,
-    InvalidRulesDigest = 2,
     JournalAlreadyClaimed = 3,
     ZeroScoreNotAllowed = 4,
     ScoreNotImproved = 5,

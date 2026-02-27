@@ -30,10 +30,10 @@ import { boundlessMarketAbi, eip712Types } from "../abi";
 import { encodeStdin } from "../stdin";
 import { uploadInput } from "../storage";
 import { fetchEthPriceUsd, usdToWei, weiToUsd } from "../pricing";
-import { adaptFulfillmentToProverResponse } from "../adapter";
+import { buildProofArtifactV4 } from "../../proof-artifact";
 import { parseAndValidateTape } from "../../tape";
 import { DEFAULT_MAX_TAPE_BYTES } from "../../constants";
-import type { ProverPollResult, ProverSubmitResult } from "../../types";
+import type { ProverPollResult, ProverSubmitResult, ProofResultSummary } from "../../types";
 import type {
   BoundlessClientConfig,
   BoundlessFulfillmentData,
@@ -46,7 +46,7 @@ import {
   requestIdToHex,
   uint8ArrayToHex,
 } from "./utils";
-import { packJournalRaw } from "../../../shared/stellar/journal";
+import { JOURNAL_LEN, packJournalRaw, unpackJournalRaw } from "../../../shared/stellar/journal";
 
 function parsePositiveNumber(value: string | number | null | undefined): number | null {
   if (value == null) return null;
@@ -437,12 +437,81 @@ export class BoundlessClient {
         ? cyclesResult.value
         : { programCycles: null, totalCycles: null };
 
-    // 4. Convert fulfillment to the prover response format
-    const proverResponse = adaptFulfillmentToProverResponse(fulfillmentData);
+    if (fulfillmentData.seal.length !== 260) {
+      return {
+        type: "fatal",
+        message: `boundless delivered invalid seal length: expected 260 bytes, got ${fulfillmentData.seal.length}`,
+      };
+    }
+
+    if (fulfillmentData.journal.length !== JOURNAL_LEN) {
+      return {
+        type: "fatal",
+        message: `boundless delivered invalid journal length: expected ${JOURNAL_LEN} bytes, got ${fulfillmentData.journal.length}`,
+      };
+    }
+
+    let journal;
+    try {
+      journal = unpackJournalRaw(fulfillmentData.journal);
+    } catch (error) {
+      return {
+        type: "fatal",
+        message: `boundless delivered malformed journal: ${safeErrorMessage(error)}`,
+      };
+    }
+
+    if ((journal.frame_count >>> 0) === 0) {
+      return {
+        type: "fatal",
+        message: "boundless delivered invalid journal: frame_count must be > 0",
+      };
+    }
+    if ((journal.final_score >>> 0) === 0) {
+      return {
+        type: "fatal",
+        message: "boundless delivered invalid journal: final_score must be > 0",
+      };
+    }
+
+    const normalizedProgramCycles =
+      programCycles == null ? 0 : Math.max(0, Math.floor(programCycles));
+    const normalizedTotalCycles =
+      totalCycles == null ? normalizedProgramCycles : Math.max(0, Math.floor(totalCycles));
+
+    const summary: ProofResultSummary = {
+      elapsedMs: 0,
+      requestedReceiptKind: "groth16",
+      producedReceiptKind: "groth16",
+      journal,
+      stats: {
+        segments: 0,
+        total_cycles: normalizedTotalCycles,
+        user_cycles: normalizedProgramCycles,
+        paging_cycles: 0,
+        reserved_cycles: 0,
+      },
+    };
+
+    let artifact;
+    try {
+      artifact = await buildProofArtifactV4(
+        "boundless",
+        new Date().toISOString(),
+        fulfillmentData.seal,
+        fulfillmentData.journal,
+      );
+    } catch (error) {
+      return {
+        type: "fatal",
+        message: `failed building boundless v4 proof artifact: ${safeErrorMessage(error)}`,
+      };
+    }
 
     return {
       type: "success",
-      response: proverResponse,
+      summary,
+      artifact,
       metadata: {
         actualCostUsd,
         proverAddress: fulfillmentData.proverAddress,
@@ -663,13 +732,43 @@ export class BoundlessClient {
    */
   private parseFulfillmentFromEventData(data: string): BoundlessFulfillmentData {
     const clean = data.startsWith("0x") ? data.slice(2) : data;
+    if (clean.length === 0 || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) {
+      throw new Error("invalid ProofDelivered event data encoding");
+    }
+    const totalChars = clean.length;
 
-    const readWordAt = (charOffset: number): string => clean.slice(charOffset, charOffset + 64);
-    const readUintAt = (charOffset: number): number => Number.parseInt(readWordAt(charOffset), 16);
+    const ensureRange = (start: number, end: number, label: string): void => {
+      if (start < 0 || end < start || end > totalChars) {
+        throw new Error(`malformed ProofDelivered event data: ${label} out of bounds`);
+      }
+    };
+    const readWordAt = (charOffset: number, label: string): string => {
+      ensureRange(charOffset, charOffset + 64, label);
+      return clean.slice(charOffset, charOffset + 64);
+    };
+    const readUintAt = (charOffset: number, label: string): number => {
+      const value = Number.parseInt(readWordAt(charOffset, label), 16);
+      if (!Number.isFinite(value)) {
+        throw new Error(`malformed ProofDelivered event data: failed to parse ${label}`);
+      }
+      return value;
+    };
+    const readDynamicBytesAt = (byteOffset: number, label: string): string => {
+      const lenWordCharOffset = t + byteOffset * 2;
+      const length = readUintAt(lenWordCharOffset, `${label} length`);
+      const bytesStart = lenWordCharOffset + 64;
+      const bytesEnd = bytesStart + length * 2;
+      ensureRange(bytesStart, bytesEnd, label);
+      return clean.slice(bytesStart, bytesEnd);
+    };
 
     // Outer: word 0 is the offset to the Fulfillment tuple (always 0x20 = 32 bytes)
-    const tupleByteOffset = readUintAt(0);
+    const tupleByteOffset = readUintAt(0, "tuple offset");
+    if (tupleByteOffset !== 32) {
+      throw new Error(`unexpected ProofDelivered tuple offset: ${tupleByteOffset}`);
+    }
     const t = tupleByteOffset * 2; // tuple start in hex chars
+    ensureRange(t, t + 6 * 64, "Fulfillment tuple head");
 
     // Fulfillment head (each field = 32 bytes = 64 hex chars):
     //   word 0 (t + 0*64): id (uint256) — skip
@@ -678,14 +777,12 @@ export class BoundlessClient {
     //   word 3 (t + 3*64): fulfillmentDataType (uint8)
     //   word 4 (t + 4*64): fulfillmentData offset (relative to tuple start)
     //   word 5 (t + 5*64): seal offset (relative to tuple start)
-    const fulfillmentDataType = readUintAt(t + 3 * 64);
-    const fdByteOffset = readUintAt(t + 4 * 64);
-    const sealByteOffset = readUintAt(t + 5 * 64);
+    const fulfillmentDataType = readUintAt(t + 3 * 64, "fulfillmentDataType");
+    const fdByteOffset = readUintAt(t + 4 * 64, "fulfillmentData offset");
+    const sealByteOffset = readUintAt(t + 5 * 64, "seal offset");
 
     // Read seal: length-prefixed bytes at (t + sealByteOffset * 2)
-    const sealLenCharOffset = t + sealByteOffset * 2;
-    const sealLen = readUintAt(sealLenCharOffset);
-    const sealHex = clean.slice(sealLenCharOffset + 64, sealLenCharOffset + 64 + sealLen * 2);
+    const sealHex = readDynamicBytesAt(sealByteOffset, "seal");
     const seal = hexToUint8Array(sealHex);
 
     if (fulfillmentDataType !== 1) {
@@ -695,15 +792,21 @@ export class BoundlessClient {
     }
 
     // Read fulfillmentData: length-prefixed bytes at (t + fdByteOffset * 2)
-    const fdLenCharOffset = t + fdByteOffset * 2;
-    const fdLen = readUintAt(fdLenCharOffset);
-    const fdHex = clean.slice(fdLenCharOffset + 64, fdLenCharOffset + 64 + fdLen * 2);
+    const fdHex = readDynamicBytesAt(fdByteOffset, "fulfillmentData");
 
     // fulfillmentData = abi.encode((bytes32 imageId, bytes journal))
-    // This is a tuple, so it may be prefixed by a tuple offset word (0x20 = 32).
-    // Check the first word: if it's 32 (0x20), skip it.
+    // Strict v4 decode: require tuple offset word 0x20.
+    if (fdHex.length < 128) {
+      throw new Error("malformed fulfillmentData payload");
+    }
     const firstWordVal = Number.parseInt(fdHex.slice(0, 64), 16);
-    const innerHex = firstWordVal === 32 ? fdHex.slice(64) : fdHex;
+    if (firstWordVal !== 32) {
+      throw new Error(`malformed fulfillmentData tuple offset: ${firstWordVal}`);
+    }
+    const innerHex = fdHex.slice(64);
+    if (innerHex.length < 128) {
+      throw new Error("malformed fulfillmentData tuple");
+    }
 
     // innerHex layout:
     //   word 0: imageId (bytes32) — skip
@@ -711,14 +814,20 @@ export class BoundlessClient {
     //   at (journalByteOffset * 2): journal length word
     //   at (journalByteOffset * 2 + 64): journal data
     const journalByteOffset = Number.parseInt(innerHex.slice(64, 128), 16);
+    const journalLenCharOffset = journalByteOffset * 2;
+    if (journalLenCharOffset < 0 || journalLenCharOffset + 64 > innerHex.length) {
+      throw new Error("malformed fulfillmentData journal length offset");
+    }
     const journalLen = Number.parseInt(
-      innerHex.slice(journalByteOffset * 2, journalByteOffset * 2 + 64),
+      innerHex.slice(journalLenCharOffset, journalLenCharOffset + 64),
       16,
     );
-    const journalHex = innerHex.slice(
-      journalByteOffset * 2 + 64,
-      journalByteOffset * 2 + 64 + journalLen * 2,
-    );
+    const journalHexStart = journalLenCharOffset + 64;
+    const journalHexEnd = journalHexStart + journalLen * 2;
+    if (journalHexStart < 0 || journalHexEnd > innerHex.length) {
+      throw new Error("malformed fulfillmentData journal bytes range");
+    }
+    const journalHex = innerHex.slice(journalHexStart, journalHexEnd);
     const journal = hexToUint8Array(journalHex);
 
     return { seal, journal, proverAddress: null, fulfillmentTxHash: null };

@@ -111,11 +111,11 @@ for receipt in "${RECEIPTS[@]}"; do
     exit 1
   fi
   case "$receipt" in
-    composite|succinct|groth16)
+    groth16)
       NORMALIZED_RECEIPTS+=("$receipt")
       ;;
     *)
-      echo "ERROR: unsupported receipt kind: $receipt (allowed: composite|succinct|groth16)" >&2
+      echo "ERROR: unsupported receipt kind: $receipt (allowed: groth16 only, v4 flow)" >&2
       exit 1
       ;;
   esac
@@ -217,14 +217,16 @@ run_proof() {
       echo "$jr" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-r = d.get('result', {})
-p = r.get('proof', {})
-s = p.get('stats', {})
-e = r.get('elapsed_ms', 0)
-segs = s.get('segments', '?')
-tc = s.get('total_cycles', 0)
-rk = p.get('requested_receipt_kind', '?')
-pk = p.get('produced_receipt_kind', '?')
+r = d['result']
+p = r['proof']
+s = p['stats']
+e = r['elapsed_ms']
+segs = s['segments']
+tc = s['total_cycles']
+rk = p['requested_receipt_kind']
+pk = p['produced_receipt_kind']
+if rk != 'groth16' or pk != 'groth16':
+    raise SystemExit(f'unexpected receipt kind transition: {rk} -> {pk}')
 print(f'  prover time:  {e/1000:.1f}s')
 print(f'  wall time:    ${wall_secs}s')
 print(f'  receipt:      {rk} -> {pk}')

@@ -62,7 +62,14 @@ function validProverGetJobResponse(overrides: Partial<ProverGetJobResponse> = {}
           paging_cycles: 1000,
           reserved_cycles: 1000,
         },
-        receipt: {},
+        receipt: {
+          inner: {
+            Groth16: {
+              seal: Array.from({ length: 256 }, (_, index) => index & 0xff),
+              verifier_parameters: [0x73c457ba, 0, 0, 0, 0, 0, 0, 0],
+            },
+          },
+        },
       },
       elapsed_ms: 5000,
     },
@@ -364,7 +371,10 @@ describe("prover client", () => {
         const result = await pollProverOnce(makeEnv(), "job-1");
         expect(result.type).toBe("success");
         if (result.type === "success") {
-          expect(result.response.job_id).toBe("prover-job-1");
+          expect(result.summary.journal.final_score).toBe(1337);
+          expect(result.artifact.version).toBe("v4");
+          expect(result.artifact.backend).toBe("vast");
+          expect(result.artifact.produced_receipt_kind).toBe("groth16");
         }
       } finally {
         globalThis.fetch = originalFetch;

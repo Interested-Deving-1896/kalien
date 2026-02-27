@@ -68,7 +68,6 @@ pub enum VerifyError {
     ScoreMismatch { claimed: u32, computed: u32 },
     InvalidClaimant { reason: &'static str },
     JournalLengthMismatch { expected: usize, actual: usize },
-    JournalReservedNonZero,
 }
 
 impl fmt::Display for VerifyError {
@@ -113,7 +112,6 @@ impl fmt::Display for VerifyError {
                 f,
                 "journal length mismatch: expected {expected} bytes, got {actual}"
             ),
-            Self::JournalReservedNonZero => write!(f, "journal reserved bytes are non-zero"),
         }
     }
 }
@@ -124,6 +122,7 @@ impl std::error::Error for VerifyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::JOURNAL_LEN;
 
     #[test]
     fn rule_code_display_is_stable() {
@@ -252,15 +251,11 @@ mod tests {
         .to_string()
         .contains("bad checksum"));
         assert!(VerifyError::JournalLengthMismatch {
-            expected: 64,
-            actual: 63
+            expected: JOURNAL_LEN,
+            actual: JOURNAL_LEN - 1
         }
         .to_string()
-        .contains("expected 64 bytes"));
-        assert_eq!(
-            VerifyError::JournalReservedNonZero.to_string(),
-            "journal reserved bytes are non-zero"
-        );
+        .contains(&format!("expected {JOURNAL_LEN} bytes")));
     }
 
     #[cfg(feature = "std")]

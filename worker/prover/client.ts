@@ -21,6 +21,7 @@ import type {
   ProverSubmitResult,
   ProofResultSummary,
 } from "../types";
+import { buildProofArtifactV4FromProverResponse } from "../proof-artifact";
 import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
@@ -382,7 +383,14 @@ export async function submitToProver(
     };
   }
 
-  const statusUrl = payload.status_url || `/api/jobs/${payload.job_id}`;
+  if (!payload.status_url || payload.status_url.trim().length === 0) {
+    return {
+      type: "fatal",
+      message: "prover create response was missing status_url",
+    };
+  }
+
+  const statusUrl = payload.status_url;
   return {
     type: "success",
     jobId: payload.job_id,
@@ -482,9 +490,36 @@ export async function pollProverOnce(
         clearProverJob: true,
       };
     }
+
+    let summary: ProofResultSummary;
+    try {
+      summary = summarizeProof(payload);
+    } catch (error) {
+      return {
+        type: "fatal",
+        message: `prover success payload failed strict v4 validation: ${safeErrorMessage(error)}`,
+      };
+    }
+
+    let artifact;
+    try {
+      artifact = await buildProofArtifactV4FromProverResponse(
+        "vast",
+        payload,
+        summary,
+        new Date().toISOString(),
+      );
+    } catch (error) {
+      return {
+        type: "fatal",
+        message: `failed building v4 proof artifact: ${safeErrorMessage(error)}`,
+      };
+    }
+
     return {
       type: "success",
-      response: payload,
+      summary,
+      artifact,
     };
   }
 
@@ -572,29 +607,64 @@ export function summarizeProof(response: ProverGetJobResponse): ProofResultSumma
   if (!result) {
     throw new Error("prover result payload missing");
   }
-  if (result.proof.journal.final_score >>> 0 === 0) {
+
+  const readJournalU32 = (value: unknown, field: "seed_id" | "seed" | "frame_count" | "final_score"): number => {
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+      throw new Error(`prover returned invalid ${field} in journal; expected u32`);
+    }
+    if (value < 0 || value > 0xffff_ffff) {
+      throw new Error(`prover returned out-of-range ${field} in journal; expected u32`);
+    }
+    return value >>> 0;
+  };
+
+  const seedId = readJournalU32(result.proof.journal.seed_id, "seed_id");
+  const seed = readJournalU32(result.proof.journal.seed, "seed");
+  const frameCount = readJournalU32(result.proof.journal.frame_count, "frame_count");
+  const finalScore = readJournalU32(result.proof.journal.final_score, "final_score");
+  if (frameCount === 0) {
+    throw new Error("prover returned frame_count=0; tape frame_count must be > 0");
+  }
+  if (finalScore === 0) {
     throw new Error("prover returned final_score=0; zero-score runs are not accepted");
   }
-  if (
-    typeof result.proof.journal.seed_id !== "number" ||
-    !Number.isFinite(result.proof.journal.seed_id)
-  ) {
-    throw new Error("prover returned invalid seed_id in journal");
-  }
+
   const claimant = result.proof.journal.claimant;
   if (typeof claimant !== "string") {
     throw new Error("prover returned invalid claimant in journal; expected Stellar G... or C...");
   }
+  let normalizedClaimant = "";
   try {
-    parseClaimantStrKeyFromUserInput(claimant);
+    normalizedClaimant = parseClaimantStrKeyFromUserInput(claimant).normalized;
   } catch {
     throw new Error("prover returned invalid claimant in journal; expected Stellar G... or C...");
   }
+
+  const requestedReceiptKind = result.proof.requested_receipt_kind;
+  if (requestedReceiptKind !== "groth16") {
+    throw new Error(
+      `prover returned requested_receipt_kind=${requestedReceiptKind}; expected groth16`,
+    );
+  }
+
+  const producedReceiptKind = result.proof.produced_receipt_kind;
+  if (producedReceiptKind !== "groth16") {
+    throw new Error(
+      `prover returned produced_receipt_kind=${String(producedReceiptKind)}; expected groth16`,
+    );
+  }
+
   return {
     elapsedMs: result.elapsed_ms,
-    requestedReceiptKind: result.proof.requested_receipt_kind,
-    producedReceiptKind: result.proof.produced_receipt_kind ?? null,
-    journal: result.proof.journal,
+    requestedReceiptKind,
+    producedReceiptKind,
+    journal: {
+      seed_id: seedId,
+      seed,
+      frame_count: frameCount,
+      final_score: finalScore,
+      claimant: normalizedClaimant,
+    },
     stats: result.proof.stats,
   };
 }

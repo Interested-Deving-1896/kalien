@@ -27,7 +27,7 @@ import { Address, xdr } from "@stellar/stellar-sdk";
 import { encodeStdin } from "../worker/boundless/stdin";
 import { boundlessMarketAbi, eip712Types } from "../worker/boundless/abi";
 import type { ProofRequest } from "../worker/boundless/types";
-import { adaptFulfillmentToProverResponse } from "../worker/boundless/adapter";
+import { buildProofArtifactV4, parseProofArtifactV4 } from "../worker/proof-artifact";
 import { parseAndValidateTape } from "../worker/tape";
 import { DEFAULT_BINDINGS_RPC_URL, DEFAULT_MAX_TAPE_BYTES } from "../worker/constants";
 import { fetchEthPriceUsd, usdToWei } from "../worker/boundless/pricing";
@@ -66,8 +66,8 @@ const ORDER_STREAM_URL = "https://base-mainnet.boundless.network";
 const RPC_URL = "https://base-mainnet.public.blastapi.io";
 
 const RELAYER_API_KEY = env.RELAYER_API_KEY;
-const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmNy4uXDFps6znakg8sHygCf2acRnVyBBsCAEV9rvEiaZW";
-const IMAGE_ID = "0xb7b997df521f1caee0fa5004f94e2623dce78aabf914f350c476ca2c19832e8f";
+const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmNzsanMnHoc4c5AJzWBpVDoQ4wzkpBbWKANtRGBH1EMtp";
+const IMAGE_ID = "0x036255e8f470eb40a3d6e9b3c987d064c54bd9cb63a35686096fc889f64a19e8";
 
 // Groth16V3_0 selector — explicitly request Groth16 proofs for Stellar
 const GROTH16_SELECTOR = "0x73c457ba" as const;
@@ -568,44 +568,36 @@ if (journalFields.final_score === 0) {
 }
 console.log("  PASS: seal and journal valid");
 
-// ── Step 6: Adapter pipeline round-trip ──────────────────────────────────
-console.log("\nStep 6: Testing adapter pipeline...");
-const adapted = adaptFulfillmentToProverResponse({ seal, journal, proverAddress: null, fulfillmentTxHash: null });
-
-// Verify the adapted response reconstructs the correct 260-byte seal
-const groth16 = (adapted.result!.proof.receipt as { inner: { Groth16: { seal: number[]; verifier_parameters: number[] } } }).inner.Groth16;
-const reconstructedSeal = new Uint8Array(260);
-const paramsBytes = new Uint8Array(32);
-const paramsView = new DataView(paramsBytes.buffer);
-for (let i = 0; i < groth16.verifier_parameters.length; i++) {
-  paramsView.setUint32(i * 4, groth16.verifier_parameters[i], true);
-}
-reconstructedSeal.set(paramsBytes.slice(0, 4), 0);
-reconstructedSeal.set(Uint8Array.from(groth16.seal), 4);
-
-let sealMatch = true;
-for (let i = 0; i < 260; i++) {
-  if (reconstructedSeal[i] !== seal[i]) { sealMatch = false; break; }
-}
-if (!sealMatch) {
-  console.error("  FAIL: adapter round-trip seal mismatch");
+// ── Step 6: v4 artifact pipeline round-trip ──────────────────────────────
+console.log("\nStep 6: Testing v4 artifact pipeline...");
+const artifact = await buildProofArtifactV4(
+  "boundless",
+  new Date().toISOString(),
+  seal,
+  journal,
+);
+const parsedArtifact = parseProofArtifactV4(artifact);
+const parsedSeal = hexToBytes(parsedArtifact.seal_hex);
+if (parsedSeal.length !== 260) {
+  console.error(`  FAIL: parsed seal length ${parsedSeal.length} != 260`);
   process.exit(1);
 }
-console.log("  PASS: adapter round-trip seal matches original");
-
-// Verify journal fields match
-const aj = adapted.result!.proof.journal;
-if (
-  aj.seed_id !== journalFields.seed_id ||
-  aj.seed !== journalFields.seed ||
-  aj.frame_count !== journalFields.frame_count ||
-  aj.final_score !== journalFields.final_score ||
-  aj.claimant !== journalFields.claimant
-) {
-  console.error("  FAIL: adapter journal mismatch");
-  process.exit(1);
+for (let i = 0; i < 260; i += 1) {
+  if (parsedSeal[i] !== seal[i]) {
+    console.error("  FAIL: v4 artifact seal mismatch");
+    process.exit(1);
+  }
 }
-console.log("  PASS: adapter journal fields match");
+console.log("  PASS: v4 artifact seal matches original");
+
+const parsedJournalBytes = hexToBytes(parsedArtifact.journal_raw_hex);
+for (let i = 0; i < JOURNAL_LEN; i += 1) {
+  if (parsedJournalBytes[i] !== journal[i]) {
+    console.error("  FAIL: v4 artifact journal mismatch");
+    process.exit(1);
+  }
+}
+console.log("  PASS: v4 artifact journal matches original");
 
 // ── Step 7: Build Soroban payload ────────────────────────────────────────
 console.log("\nStep 7: Building Soroban submit_score payload...");
@@ -624,8 +616,7 @@ const journalDigestHex = Array.from(journalDigestBytes).map(b => b.toString(16).
 console.log(`  Journal hex: ${journalRawHex} (${journalBuf.length} bytes)`);
 console.log(`  Journal SHA-256: ${journalDigestHex}`);
 
-// Build the Stellar seal from adapter output (same as extractGroth16SealFromProverResponse)
-const stellarSeal = reconstructedSeal; // already built in step 6
+const stellarSeal = parsedSeal;
 
 const scoreClient = new ScoreContractClient({
   contractId: SCORE_CONTRACT_ID,

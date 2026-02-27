@@ -301,6 +301,10 @@ measure_submit_score_groth16() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "Groth16 fixture journal must be compact (49 bytes)"
+    return 1
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -325,6 +329,10 @@ measure_submit_score_mock() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "Mock fixture journal must be compact (49 bytes)"
+    return 1
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 

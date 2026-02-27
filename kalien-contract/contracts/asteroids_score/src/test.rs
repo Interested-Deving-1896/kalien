@@ -105,13 +105,13 @@ fn make_journal(
 ) -> Bytes {
     let mut buf = [0u8; JOURNAL_LEN as usize];
 
-    buf[JOURNAL_SEED_ID_OFFSET as usize..(JOURNAL_SEED_ID_OFFSET + 4) as usize]
+    buf[JOURNAL_SEED_ID_OFFSET as usize..JOURNAL_SEED_ID_OFFSET as usize + 4]
         .copy_from_slice(&seed_id.to_le_bytes());
-    buf[JOURNAL_SEED_OFFSET as usize..(JOURNAL_SEED_OFFSET + 4) as usize]
+    buf[JOURNAL_SEED_OFFSET as usize..JOURNAL_SEED_OFFSET as usize + 4]
         .copy_from_slice(&seed.to_le_bytes());
-    buf[JOURNAL_FRAME_COUNT_OFFSET as usize..(JOURNAL_FRAME_COUNT_OFFSET + 4) as usize]
+    buf[JOURNAL_FRAME_COUNT_OFFSET as usize..JOURNAL_FRAME_COUNT_OFFSET as usize + 4]
         .copy_from_slice(&frame_count.to_le_bytes());
-    buf[JOURNAL_FINAL_SCORE_OFFSET as usize..(JOURNAL_FINAL_SCORE_OFFSET + 4) as usize]
+    buf[JOURNAL_FINAL_SCORE_OFFSET as usize..JOURNAL_FINAL_SCORE_OFFSET as usize + 4]
         .copy_from_slice(&final_score.to_le_bytes());
 
     let mut claimant_raw = [0u8; JOURNAL_CLAIMANT_ENCODED_LEN];
@@ -132,8 +132,7 @@ fn make_journal(
             claimant_raw[1..].copy_from_slice(&payload);
         }
     }
-    buf[JOURNAL_CLAIMANT_OFFSET as usize
-        ..(JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN as u32) as usize]
+    buf[JOURNAL_CLAIMANT_OFFSET as usize..JOURNAL_CLAIMANT_OFFSET as usize + JOURNAL_CLAIMANT_ENCODED_LEN]
         .copy_from_slice(&claimant_raw);
 
     Bytes::from_slice(env, &buf)
@@ -150,6 +149,16 @@ fn test_initialize() {
     assert_eq!(client.token_id(), token_addr);
     assert_eq!(client.rules_digest(), RULES_DIGEST);
     let _ = client.router_id();
+}
+
+#[test]
+fn test_journal_layout_constants_are_stable() {
+    assert_eq!(JOURNAL_SEED_ID_OFFSET, 0);
+    assert_eq!(JOURNAL_SEED_OFFSET, 4);
+    assert_eq!(JOURNAL_FRAME_COUNT_OFFSET, 8);
+    assert_eq!(JOURNAL_FINAL_SCORE_OFFSET, 12);
+    assert_eq!(JOURNAL_CLAIMANT_OFFSET, 16);
+    assert_eq!(JOURNAL_LEN, 49);
 }
 
 #[test]
@@ -232,6 +241,49 @@ fn test_submit_score_rejects_non_improvement() {
     assert_eq!(
         client.try_submit_score(&seal, &same),
         Err(Ok(ScoreError::ScoreNotImproved))
+    );
+}
+
+#[test]
+fn test_submit_score_rejects_invalid_journal_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let seal = dummy_seal(&env);
+    let short_journal = Bytes::from_slice(&env, &[0u8; JOURNAL_LEN as usize - 1]);
+    let long_journal = Bytes::from_slice(&env, &[0u8; JOURNAL_LEN as usize + 1]);
+
+    assert_eq!(
+        client.try_submit_score(&seal, &short_journal),
+        Err(Ok(ScoreError::InvalidJournalFormat))
+    );
+    assert_eq!(
+        client.try_submit_score(&seal, &long_journal),
+        Err(Ok(ScoreError::InvalidJournalFormat))
+    );
+}
+
+#[test]
+fn test_submit_score_rejects_invalid_claimant_kind() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin, _token_addr) = setup(&env);
+    let claimant = Address::generate(&env);
+    let seal = dummy_seal(&env);
+
+    set_ledger_time(&env, 80 * SEED_INTERVAL_SECONDS);
+    let current = client.current_seed();
+    let journal = make_journal(&env, current.seed, current.seed_id, 100, 5, &claimant);
+    let mut raw = [0u8; JOURNAL_LEN as usize];
+    journal.copy_into_slice(&mut raw);
+    raw[JOURNAL_CLAIMANT_OFFSET as usize] = 0xFF;
+    let invalid = Bytes::from_slice(&env, &raw);
+
+    assert_eq!(
+        client.try_submit_score(&seal, &invalid),
+        Err(Ok(ScoreError::InvalidJournalFormat))
     );
 }
 

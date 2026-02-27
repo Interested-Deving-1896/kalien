@@ -9,50 +9,30 @@ function toHex(bytes: Uint8Array): string {
 }
 
 describe("extractGroth16SealFromArtifact", () => {
-  it("builds a 260-byte stellar seal from Groth16 receipt payload", () => {
-    const rawSeal = Array.from({ length: 256 }, (_, index) => index);
+  it("reads the 260-byte stellar seal from v4 artifact payload", () => {
+    const sealBytes = new Uint8Array(260);
+    for (let i = 0; i < sealBytes.length; i += 1) {
+      sealBytes[i] = i & 0xff;
+    }
     const artifact = {
-      prover_response: {
-        result: {
-          proof: {
-            receipt: {
-              inner: {
-                Groth16: {
-                  seal: rawSeal,
-                  verifier_parameters: [0xa1b2c3d4, 0, 0, 0, 0, 0, 0, 0],
-                },
-              },
-            },
-          },
-        },
-      },
+      version: "v4",
+      seal_hex: toHex(sealBytes),
     };
 
     const seal = extractGroth16SealFromArtifact(artifact);
     expect(seal.length).toBe(260);
-    expect(Array.from(seal.slice(0, 4))).toEqual([0xd4, 0xc3, 0xb2, 0xa1]);
-    expect(Array.from(seal.slice(4, 12))).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-    expect(seal[259]).toBe(255);
+    expect(Array.from(seal.slice(0, 4))).toEqual([0, 1, 2, 3]);
+    expect(Array.from(seal.slice(4, 12))).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(seal[259]).toBe(3);
   });
 
-  it("throws on non-groth16 payloads", () => {
+  it("throws on unsupported artifact versions", () => {
     const artifact = {
-      prover_response: {
-        result: {
-          proof: {
-            receipt: {
-              inner: {
-                Succinct: {},
-              },
-            },
-          },
-        },
-      },
+      version: "v3",
+      seal_hex: "00".repeat(260),
     };
 
-    expect(() => extractGroth16SealFromArtifact(artifact)).toThrow(
-      "proof artifact is missing receipt.inner.Groth16",
-    );
+    expect(() => extractGroth16SealFromArtifact(artifact)).toThrow("unsupported proof artifact");
   });
 });
 

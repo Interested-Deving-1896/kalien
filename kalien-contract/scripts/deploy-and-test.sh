@@ -157,13 +157,7 @@ materialize_current_seed() {
     current_seed 2>&1) || return 1
 
   seed=$(echo "$current_seed_json" | jq -r '.seed // empty' 2>/dev/null || true)
-  seed_id=$(echo "$current_seed_json" | jq -r '.seed_id // .seedId // empty' 2>/dev/null || true)
-
-  # Fallback parser for non-JSON output formats.
-  if [[ -z "$seed" || -z "$seed_id" ]]; then
-    seed=$(echo "$current_seed_json" | sed -n 's/.*"seed":[[:space:]]*\([0-9]\+\).*/\1/p' | head -1)
-    seed_id=$(echo "$current_seed_json" | sed -n 's/.*"seed_id":[[:space:]]*\([0-9]\+\).*/\1/p' | head -1)
-  fi
+  seed_id=$(echo "$current_seed_json" | jq -r '.seed_id // empty' 2>/dev/null || true)
 
   if [[ -z "$seed" || -z "$seed_id" ]]; then
     err "failed to parse current_seed response: $current_seed_json"
@@ -328,14 +322,18 @@ test_submit_fixture() {
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
 
   if [[ ! -f "$journal_file" ]]; then
-    warn "SKIP: fixture file not found: $journal_file"
+    err "fixture file not found: $journal_file"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $label fixture is not AST4-compatible in forward-only mode"
+    err "$label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
@@ -418,14 +416,18 @@ test_reject_fixture() {
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
 
   if [[ ! -f "$journal_file" ]]; then
-    warn "SKIP: fixture file not found: $journal_file"
+    err "fixture file not found: $journal_file"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $label fixture is not AST4-compatible in forward-only mode"
+    err "$label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
@@ -634,7 +636,9 @@ test_submit_groth16_fixture() {
 
   for f in "$seal_file" "$journal_file"; do
     if [[ ! -f "$f" ]]; then
-      warn "SKIP: fixture file not found: $f"
+      err "fixture file not found: $f"
+      TOTAL=$((TOTAL + 1))
+      FAILED=$((FAILED + 1))
       return
     fi
   done
@@ -643,7 +647,9 @@ test_submit_groth16_fixture() {
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: Groth16 $label fixture is not AST4-compatible in forward-only mode"
+    err "Groth16 $label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
@@ -683,7 +689,9 @@ test_reject_groth16_fixture() {
 
   for f in "$seal_file" "$journal_file"; do
     if [[ ! -f "$f" ]]; then
-      warn "SKIP: fixture file not found: $f"
+      err "fixture file not found: $f"
+      TOTAL=$((TOTAL + 1))
+      FAILED=$((FAILED + 1))
       return
     fi
   done
@@ -692,7 +700,9 @@ test_reject_groth16_fixture() {
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
   if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: Groth16 $label fixture is not AST4-compatible in forward-only mode"
+    err "Groth16 $label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 

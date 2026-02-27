@@ -556,7 +556,7 @@ describe("API routes", () => {
       tape: {
         sizeBytes: 512,
         key: "proof-jobs/job-abc/input.tape",
-        metadata: { seed: 1, frameCount: 10, finalScore: 100, finalRngState: 0, checksum: 0 },
+        metadata: { seed: 1, seedId: 1, frameCount: 10, finalScore: 100, checksum: 0 },
       },
       queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
       prover: {
@@ -619,7 +619,7 @@ describe("API routes", () => {
       tape: {
         sizeBytes: 100,
         key: `proof-jobs/job-${i}/input.tape`,
-        metadata: { seed: i, frameCount: 10, finalScore: 100, finalRngState: 0, checksum: 0 },
+        metadata: { seed: i, seedId: i, frameCount: 10, finalScore: 100, checksum: 0 },
       },
       queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
       prover: { jobId: null, status: null, statusUrl: null, segmentLimitPo2: null, lastPolledAt: null, pollingErrors: 0 },
