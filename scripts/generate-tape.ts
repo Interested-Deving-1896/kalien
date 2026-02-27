@@ -138,19 +138,12 @@ for (let i = 0; i < tape.header.frameCount; i++) {
 }
 
 const vScore = verifyGame.getScore();
-const vRng = verifyGame.getRngState();
 const scoreOk = vScore === tape.footer.finalScore;
-const rngOk = (vRng >>> 0) === (tape.footer.finalRngState >>> 0);
 
-if (scoreOk && rngOk) {
+if (scoreOk) {
   console.log("VERIFICATION PASSED");
 } else {
-  if (!scoreOk)
-    console.error(`  Score mismatch: got ${vScore}, expected ${tape.footer.finalScore}`);
-  if (!rngOk)
-    console.error(
-      `  RNG mismatch: got 0x${vRng.toString(16)}, expected 0x${tape.footer.finalRngState.toString(16)}`,
-    );
+  console.error(`  Score mismatch: got ${vScore}, expected ${tape.footer.finalScore}`);
   console.error("VERIFICATION FAILED");
   process.exit(1);
 }

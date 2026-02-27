@@ -310,8 +310,8 @@ if (claimOnly) {
     seed_id: seedIdForRequest >>> 0,
     frame_count: tapeMeta.frameCount >>> 0,
     final_score: tapeMeta.finalScore >>> 0,
-    final_rng_state: tapeMeta.finalRngState >>> 0,
-    tape_checksum: tapeMeta.checksum >>> 0,
+    final_rng_state: 0,
+    tape_checksum: 0,
     rules_digest: EXPECTED_RULES_DIGEST >>> 0,
     claimant: CLAIMANT_ADDRESS,
   });

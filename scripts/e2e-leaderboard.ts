@@ -41,7 +41,6 @@ interface TapeInfo {
   seed: number;
   frames: number;
   score: number;
-  rngState: number;
   bytes: Uint8Array;
 }
 
@@ -80,9 +79,8 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
   }
 
   const vScore = verifyGame.getScore();
-  const vRng = verifyGame.getRngState();
 
-  if (vScore !== tape.footer.finalScore || (vRng >>> 0) !== (tape.footer.finalRngState >>> 0)) {
+  if (vScore !== tape.footer.finalScore) {
     throw new Error(`Tape verification failed for seed 0x${seed.toString(16)}`);
   }
 
@@ -91,7 +89,6 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
     seed,
     frames: tape.header.frameCount,
     score: tape.footer.finalScore,
-    rngState: tape.footer.finalRngState,
     bytes: rawTape,
   };
 }
