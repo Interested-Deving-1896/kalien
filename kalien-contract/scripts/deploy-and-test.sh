@@ -122,6 +122,64 @@ assert_fail() {
 }
 
 # ---------------------------------------------------------------------------
+# Seed helpers (for indexed live-window seeds)
+# ---------------------------------------------------------------------------
+
+u32_to_le_hex() {
+  local value="$1"
+  local be_hex
+  be_hex=$(printf '%08x' "$value")
+  echo "${be_hex:6:2}${be_hex:4:2}${be_hex:2:2}${be_hex:0:2}"
+}
+
+set_journal_seed_hex() {
+  local journal_hex="$1"
+  local seed="$2"
+  local seed_le
+  seed_le=$(u32_to_le_hex "$seed")
+  echo "${seed_le}${journal_hex:8}"
+}
+
+materialize_and_index_seed() {
+  local contract_id="$1"
+  local seed now_window w indexed
+
+  seed=$(stellar contract invoke -q \
+    --id "$contract_id" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    current_seed 2>&1) || return 1
+  seed=$(echo "$seed" | tr -d '"')
+
+  now_window=$(( $(date +%s) / 600 ))
+  indexed=0
+  for w in $((now_window - 2)) $((now_window - 1)) "$now_window" $((now_window + 1)) $((now_window + 2)); do
+    if [[ "$w" -lt 0 ]]; then
+      continue
+    fi
+    local result
+    result=$(stellar contract invoke -q \
+      --id "$contract_id" \
+      --source "$DEPLOYER_NAME" \
+      --network "$NETWORK" \
+      -- \
+      index_seed \
+      --window "$w" \
+      --seed "$seed" 2>&1) || true
+    result=$(echo "$result" | tr -d '"')
+    if [[ "$result" == "true" ]]; then
+      CURRENT_SEED="$seed"
+      CURRENT_WINDOW="$w"
+      indexed=1
+      break
+    fi
+  done
+
+  [[ "$indexed" -eq 1 ]]
+}
+
+# ---------------------------------------------------------------------------
 # State persistence
 # ---------------------------------------------------------------------------
 save_state() {
@@ -285,6 +343,15 @@ test_submit_fixture() {
     return
   fi
 
+  if ! materialize_and_index_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize/index live seed for $label"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
+  info "Indexed live seed $CURRENT_SEED at window $CURRENT_WINDOW"
+  journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
+
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
   # Compute journal digest and generate mock seal
@@ -368,6 +435,15 @@ test_reject_fixture() {
     return
   fi
 
+  if ! materialize_and_index_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize/index live seed for rejected fixture $label"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
+  info "Indexed live seed $CURRENT_SEED at window $CURRENT_WINDOW"
+  journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
+
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
   local journal_digest_hex
@@ -413,6 +489,14 @@ test_reject_zero_score() {
   # Build a 24-byte journal with score=0: seed(u32 LE) + frames + score + rng + checksum + rules_digest
   # seed=0xdeadbeef frames=100 score=0 rng=0 checksum=0 rules_digest=AST3(0x41535433)
   local journal_hex="efbeadde6400000000000000000000000000000033545341"
+  if ! materialize_and_index_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize/index live seed for zero-score rejection test"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
+  info "Indexed live seed $CURRENT_SEED at window $CURRENT_WINDOW"
+  journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
   local journal_digest_hex
@@ -550,7 +634,7 @@ deploy_groth16() {
 test_submit_groth16_fixture() {
   local label="$1" fixture_prefix="$2" expected_score="$3"
 
-  info "--- Test: submit Groth16 $label (expected score: $expected_score) ---"
+  info "--- Test: verify Groth16 $label (expected score: $expected_score) ---"
 
   local seal_file="$FIXTURES_DIR/${fixture_prefix}.seal"
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
@@ -570,60 +654,27 @@ test_submit_groth16_fixture() {
     return
   fi
 
-  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-
-  local journal_digest_hex
-  journal_digest_hex=$(sha256_of_hex "$journal_hex")
-
   info "Seal: ${#seal_hex} hex chars ($(( ${#seal_hex} / 2 )) bytes)"
 
-  # Submit score using real Groth16 seal (player signs via --source)
-  info "Submitting Groth16 proof..."
+  # Verify proof with real Groth16 seal from fixture.
+  info "Verifying Groth16 proof..."
   local result
   result=$(stellar contract invoke -q \
     --id "$GRF1_SCORE_CONTRACT_ID" \
-    --source "$PLAYER_NAME" \
+    --source "$DEPLOYER_NAME" \
     --network "$NETWORK" \
     -- \
-    submit_score \
+    verify_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) || {
-    err "submit_score (Groth16) failed for $label: $result"
+    err "verify_score (Groth16) failed for $label: $result"
     TOTAL=$((TOTAL + 1))
     FAILED=$((FAILED + 1))
     return
   }
 
-  assert_eq "Groth16 submit_score returned score" "$expected_score" "$result"
-
-  # Check is_claimed
-  local claimed
-  claimed=$(stellar contract invoke -q \
-    --id "$GRF1_SCORE_CONTRACT_ID" \
-    --source "$DEPLOYER_NAME" \
-    --network "$NETWORK" \
-    -- \
-    is_claimed \
-    --journal_digest "${journal_digest_hex}" \
-    2>&1) || true
-  assert_eq "Groth16 is_claimed after submit" "true" "$claimed"
-
-  # Test duplicate rejection
-  info "Testing Groth16 duplicate rejection..."
-  local dup_result
-  dup_result=$(stellar contract invoke -q \
-    --id "$GRF1_SCORE_CONTRACT_ID" \
-    --source "$PLAYER_NAME" \
-    --network "$NETWORK" \
-    -- \
-    submit_score \
-    --seal "$seal_hex" \
-    --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
-    2>&1) && dup_exit=0 || dup_exit=$?
-  assert_fail "Groth16 duplicate $label rejected" "$dup_exit"
+  assert_eq "Groth16 verify_score returned score" "$expected_score" "$result"
 }
 
 # ---------------------------------------------------------------------------
@@ -735,8 +786,10 @@ test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
 
 echo ""
 
-# 5. Check cumulative token balance (90 + 940 + 32860 = 33890, scaled by 10^7)
-test_cumulative_balance "338900000000"
+# 5. Check cumulative token balance.
+# All mock submissions are rewritten to the same live seed, so minting is:
+# 90 + (1030-90) + (32860-1030) = 32860, scaled by 10^7.
+test_cumulative_balance "328600000000"
 
 # 6. Groth16 tests (if proof-mode=all)
 if [[ "$PROOF_MODE" == "all" ]]; then
@@ -757,8 +810,9 @@ if [[ "$PROOF_MODE" == "all" ]]; then
 
   echo ""
 
-  # Check Groth16 cumulative token balance (90 + 940 + 32860 = 33890, scaled by 10^7)
-  info "--- Test: Groth16 cumulative token balance ---"
+  # Groth16 fixture checks are verify-only because fixture seeds are static and
+  # not guaranteed to match the live indexed seed window.
+  info "--- Test: Groth16 verify-only keeps token balance unchanged ---"
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
   grf1_balance=$(stellar contract invoke -q \
     --id "$GRF1_TOKEN_ID" \
@@ -769,7 +823,7 @@ if [[ "$PROOF_MODE" == "all" ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "338900000000" "$grf1_balance"
+  assert_eq "Groth16 token balance unchanged" "0" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------
