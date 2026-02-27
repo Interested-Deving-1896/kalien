@@ -85,6 +85,10 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
         setError("zero-score runs are not accepted for proving or earning KALIEN");
         return false;
       }
+      if ((run.record.seedId >>> 0) === 0) {
+        setError("this run is missing seed_id metadata; replay with a live chain seed");
+        return false;
+      }
       if (claimantAddress.trim().length === 0) {
         setError("connect a smart wallet before submitting a proof");
         return false;
@@ -108,7 +112,11 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
       setError(null);
 
       try {
-        const response = await submitProofJob(tapeBytes, claimantAddress);
+        const response = await submitProofJob(
+          tapeBytes,
+          claimantAddress,
+          run.record.seedId >>> 0,
+        );
         setJob(response.job);
         return true;
       } catch (err) {

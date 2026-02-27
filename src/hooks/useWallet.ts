@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type {
-  SmartAccountConfig,
-  SmartAccountRelayerMode,
-  SmartWalletSession,
-} from "../wallet/smartAccount";
+import type { SmartAccountConfig, SmartWalletSession } from "../wallet/smartAccount";
 import { loadSmartWalletModule } from "../wallet/loader";
 import { TESTNET_NETWORK_PASSPHRASE } from "../consts";
 
@@ -16,7 +12,6 @@ export interface UseWalletReturn {
   action: WalletAction;
   error: string | null;
   address: string;
-  relayerMode: SmartAccountRelayerMode;
   networkPassphrase: string;
   userName: string;
   setUserName: (name: string) => void;
@@ -34,7 +29,6 @@ export function useWallet(): UseWalletReturn {
   const [config, setConfig] = useState<Pick<SmartAccountConfig, "networkPassphrase">>({
     networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
   });
-  const [relayerMode, setRelayerMode] = useState<SmartAccountRelayerMode>("disabled");
 
   const address = session?.contractId ?? "";
   const isConnected = address.trim().length > 0;
@@ -53,7 +47,6 @@ export function useWallet(): UseWalletReturn {
         const walletModule = await loadSmartWalletModule();
         const nextConfig = walletModule.getSmartAccountConfig();
         setConfig({ networkPassphrase: nextConfig.networkPassphrase });
-        setRelayerMode(walletModule.getSmartAccountRelayerMode());
         await perform(walletModule);
       } catch (err) {
         const detail = err instanceof Error ? err.message : fallbackMsg;
@@ -105,13 +98,11 @@ export function useWallet(): UseWalletReturn {
       try {
         const walletModule = await loadSmartWalletModule();
         const nextConfig = walletModule.getSmartAccountConfig();
-        const nextRelayerMode = walletModule.getSmartAccountRelayerMode();
         const restoredSession = await walletModule.restoreSmartWalletSession();
         if (cancelled) {
           return;
         }
         setConfig({ networkPassphrase: nextConfig.networkPassphrase });
-        setRelayerMode(nextRelayerMode);
         setSession(restoredSession);
       } catch (err) {
         if (cancelled) {
@@ -140,7 +131,6 @@ export function useWallet(): UseWalletReturn {
     action,
     error,
     address,
-    relayerMode,
     networkPassphrase: config.networkPassphrase,
     userName,
     setUserName,

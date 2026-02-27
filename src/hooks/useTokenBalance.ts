@@ -3,7 +3,7 @@ import {
   getScoreContractIdFromEnv,
   getTokenContractIdFromEnv,
   readTokenBalance,
-} from "../chain/score";
+} from "../chain/token";
 import { formatWholeNumber, toDisplayKalien } from "../lib/format";
 
 export interface UseTokenBalanceReturn {

@@ -123,10 +123,9 @@ function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
               elapsedMs={flow.proof.job?.result?.summary?.elapsedMs}
               verifiedScore={flow.proof.job?.result?.summary?.journal.final_score}
               onPlayAgain={flow.dismissOverlay}
-              onSubmitOnChain={flow.submitOnChain}
-              canSubmitOnChain={flow.canSubmitOnChain}
               claimStatus={flow.claimStatus}
               claimTxHash={flow.claimTxHash}
+              claimError={flow.claimError}
             />
           )}
 

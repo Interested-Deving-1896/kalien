@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CompletedGameRun } from "../game/types";
-import { getProofArtifact, isTerminalProofStatus, listProofJobs } from "../proof/api";
-import { extractGroth16SealFromArtifact, packJournalRaw } from "../proof/artifact";
-import {
-  explainScoreSubmissionError,
-  getScoreContractIdFromEnv,
-  submitScoreTransaction,
-} from "../chain/score";
+import { isTerminalProofStatus, listProofJobs } from "../proof/api";
 import { deserializeTape } from "../game/tape";
 import type { UseWalletReturn } from "./useWallet";
 import { useProofJob, type UseProofJobReturn } from "./useProofJob";
@@ -24,14 +18,11 @@ export interface UseGameFlowReturn {
   handleGameOver: (run: CompletedGameRun) => void;
   dismissOverlay: () => void;
   submitForProof: () => Promise<void>;
-  submitOnChain: () => Promise<void>;
   loadTapeFile: () => void;
   claimStatus: "idle" | "submitting" | "succeeded" | "failed";
   claimTxHash: string | null;
   claimError: string | null;
   canSubmitForProof: boolean;
-  canSubmitOnChain: boolean;
-  scoreContractId: string | null;
 }
 
 export interface UseGameFlowDeps {
@@ -41,11 +32,6 @@ export interface UseGameFlowDeps {
 
 export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
   const [latestRun, setLatestRun] = useState<CompletedGameRun | null>(null);
-  const [claimStatus, setClaimStatus] = useState<"idle" | "submitting" | "succeeded" | "failed">(
-    "idle",
-  );
-  const [claimTxHash, setClaimTxHash] = useState<string | null>(null);
-  const [claimError, setClaimError] = useState<string | null>(null);
 
   const { wallet, balance } = deps;
 
@@ -53,7 +39,6 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     onClaimSucceeded: balance.refresh,
   });
 
-  const scoreContractId = getScoreContractIdFromEnv();
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
 
   // Restore in-progress job on mount by fetching the user's most recent job.
@@ -65,7 +50,11 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
       .then((response) => {
         if (cancelled) return;
         const latest = response.jobs[0];
-        if (latest && !isTerminalProofStatus(latest.status)) {
+        const claimPendingAfterProofSuccess =
+          latest?.status === "succeeded" &&
+          latest.claim.status !== "succeeded" &&
+          latest.claim.status !== "failed";
+        if (latest && (!isTerminalProofStatus(latest.status) || claimPendingAfterProofSuccess)) {
           proof.setJobFromExternal(latest);
         }
       })
@@ -77,25 +66,6 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
       cancelled = true;
     };
   }, [wallet.address, wallet.isConnected, proof.setJobFromExternal]);
-
-  // Reset claim state when proof job changes
-  useEffect(() => {
-    setClaimStatus("idle");
-    setClaimError(null);
-    setClaimTxHash(null);
-  }, [proof.job?.jobId]);
-
-  // Sync claim state when auto-claim succeeds via polling
-  useEffect(() => {
-    if (proof.job?.claim.status === "succeeded") {
-      setClaimStatus("succeeded");
-      setClaimError(null);
-      if (proof.job.claim.txHash) {
-        setClaimTxHash(proof.job.claim.txHash);
-      }
-      void balance.refresh();
-    }
-  }, [proof.job?.claim.status, proof.job?.claim.txHash, balance.refresh]);
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {
@@ -125,6 +95,7 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
           setLatestRun({
             record: {
               seed: tape.header.seed,
+              seedId: 0,
               inputs: tape.inputs,
               finalScore: tape.footer.finalScore,
               finalRngState: tape.footer.finalRngState,
@@ -150,60 +121,6 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     await proof.submitRun(latestRun, wallet.address);
   }, [latestRun, proof.submitRun, wallet.address]);
 
-  const submitOnChain = useCallback(async () => {
-    if (!proof.job?.result?.summary) {
-      setClaimStatus("failed");
-      setClaimError("proof result is not available yet");
-      return;
-    }
-
-    if (wallet.address.trim().length === 0) {
-      setClaimStatus("failed");
-      setClaimError("connect a smart wallet before submitting on-chain");
-      return;
-    }
-
-    if (!scoreContractId) {
-      setClaimStatus("failed");
-      setClaimError("missing VITE_SCORE_CONTRACT_ID in frontend env");
-      return;
-    }
-
-    setClaimStatus("submitting");
-    setClaimError(null);
-    setClaimTxHash(null);
-
-    try {
-      const artifact = await getProofArtifact(proof.job.jobId);
-      const seal = extractGroth16SealFromArtifact(artifact);
-      const journalRaw = packJournalRaw(proof.job.result.summary.journal);
-
-      if (wallet.relayerMode === "disabled") {
-        throw new Error("relayer is not configured for this wallet session");
-      }
-
-      const tx = await submitScoreTransaction({
-        scoreContractId,
-        claimantAddress: wallet.address,
-        seal,
-        journalRaw,
-      });
-
-      if (!tx.success) {
-        throw new Error(tx.error ?? "on-chain submission failed");
-      }
-
-      setClaimStatus("succeeded");
-      setClaimTxHash(tx.hash || null);
-      setClaimError(null);
-      void balance.refresh();
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : "on-chain submission failed";
-      setClaimStatus("failed");
-      setClaimError(explainScoreSubmissionError(detail));
-    }
-  }, [wallet.address, wallet.relayerMode, proof.job, balance.refresh, scoreContractId]);
-
   const canSubmitForProof =
     Boolean(latestRun) &&
     hasPositiveScore &&
@@ -212,12 +129,23 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     wallet.isConnected &&
     !wallet.isBusy;
 
-  const canSubmitOnChain =
-    proof.hasResult &&
-    wallet.isConnected &&
-    !wallet.isBusy &&
-    claimStatus !== "submitting" &&
-    Boolean(scoreContractId);
+  const claimStatus = useMemo<"idle" | "submitting" | "succeeded" | "failed">(() => {
+    const proofStatus = proof.job?.status;
+    const status = proof.job?.claim.status;
+    if (proofStatus !== "succeeded" || !status) {
+      return "idle";
+    }
+    if (status === "succeeded") {
+      return "succeeded";
+    }
+    if (status === "failed") {
+      return "failed";
+    }
+    // queued | submitting | retrying all map to "submitting" in this UI.
+    return "submitting";
+  }, [proof.job?.status, proof.job?.claim.status]);
+  const claimTxHash = proof.job?.claim.txHash ?? null;
+  const claimError = claimStatus === "failed" ? (proof.job?.claim.lastError ?? null) : null;
 
   const currentStep = useMemo<GameFlowStep>(() => {
     if (proof.job?.status === "succeeded") {
@@ -245,13 +173,10 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     handleGameOver,
     dismissOverlay,
     submitForProof,
-    submitOnChain,
     loadTapeFile,
     claimStatus,
     claimTxHash,
     claimError,
     canSubmitForProof,
-    canSubmitOnChain,
-    scoreContractId,
   };
 }

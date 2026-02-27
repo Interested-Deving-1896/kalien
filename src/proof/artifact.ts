@@ -1,9 +1,5 @@
 import type { ProofJournal } from "./api";
-
-export interface StoredProofArtifactEnvelope {
-  stored_at?: string;
-  prover_response?: unknown;
-}
+import { packJournalRaw as packJournalRawBytes } from "../../shared/stellar/journal";
 
 interface Groth16ReceiptLike {
   inner?: {
@@ -94,13 +90,5 @@ export function extractGroth16SealFromArtifact(artifact: unknown): Uint8Array {
 }
 
 export function packJournalRaw(journal: ProofJournal): Uint8Array {
-  const bytes = new Uint8Array(24);
-  const view = new DataView(bytes.buffer);
-  view.setUint32(0, journal.seed >>> 0, true);
-  view.setUint32(4, journal.frame_count >>> 0, true);
-  view.setUint32(8, journal.final_score >>> 0, true);
-  view.setUint32(12, journal.final_rng_state >>> 0, true);
-  view.setUint32(16, journal.tape_checksum >>> 0, true);
-  view.setUint32(20, journal.rules_digest >>> 0, true);
-  return bytes;
+  return packJournalRawBytes(journal);
 }

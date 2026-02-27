@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AsteroidsCanvas } from "../AsteroidsCanvas";
 import type { AsteroidsGame } from "@/game/AsteroidsGame";
 import type { CompletedGameRun } from "@/game/types";
+import { useSeed } from "@/hooks/useSeed";
 import { getTapeDownloadUrl } from "@/proof/api";
 import { ControlsHint } from "./ControlsHint";
 import { MobileAutopilotButton } from "./MobileAutopilotButton";
@@ -19,12 +20,25 @@ export function GamePanel({ onGameOver, overlay, replayJobId, className }: GameP
   const gameRef = useRef<AsteroidsGame | null>(null);
   const [game, setGame] = useState<AsteroidsGame | null>(null);
   const [autopilotOn, setAutopilotOn] = useState(false);
+  const { seed, seedId, secondsLeft } = useSeed();
 
-  const handleGameReady = useCallback((g: AsteroidsGame) => {
-    gameRef.current = g;
-    setGame(g);
-    setAutopilotOn(false);
-  }, []);
+  // Keep the game's pending seed in sync with the on-chain seed
+  useEffect(() => {
+    if (gameRef.current) {
+      gameRef.current.setCurrentSeed(seed, seedId, secondsLeft);
+    }
+  }, [seed, seedId, secondsLeft]);
+
+  const handleGameReady = useCallback(
+    (g: AsteroidsGame) => {
+      gameRef.current = g;
+      setGame(g);
+      setAutopilotOn(false);
+      // Apply current seed state immediately (can be null while epoch seed loads).
+      g.setCurrentSeed(seed, seedId, secondsLeft);
+    },
+    [seed, seedId, secondsLeft],
+  );
 
   useEffect(() => {
     if (!replayJobId || !game) return;

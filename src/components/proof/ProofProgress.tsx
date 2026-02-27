@@ -16,10 +16,9 @@ export interface ProofProgressProps {
   elapsedMs?: number;
   verifiedScore?: number;
   onPlayAgain?: () => void;
-  onSubmitOnChain?: () => void;
-  canSubmitOnChain?: boolean;
   claimStatus?: "idle" | "submitting" | "succeeded" | "failed";
   claimTxHash?: string | null;
+  claimError?: string | null;
   className?: string;
 }
 
@@ -32,10 +31,9 @@ export function ProofProgress({
   elapsedMs,
   verifiedScore,
   onPlayAgain,
-  onSubmitOnChain,
-  canSubmitOnChain,
   claimStatus = "idle",
   claimTxHash,
+  claimError,
   className,
 }: ProofProgressProps) {
   const isSucceeded = status === "succeeded";
@@ -131,9 +129,13 @@ export function ProofProgress({
       {claimStatus === "succeeded" && !claimTxHash && (
         <p className="m-0 text-xs text-secondary">Score successfully submitted on-chain!</p>
       )}
+      {claimStatus === "submitting" && (
+        <p className="m-0 text-xs text-muted-foreground">Submitting score on-chain...</p>
+      )}
 
       {/* Error display */}
       <ErrorMessage message={error} />
+      <ErrorMessage message={claimError} />
 
       {/* Hint + navigation during active proof */}
       {isBusy && (
@@ -158,25 +160,7 @@ export function ProofProgress({
         </>
       )}
 
-      {/* Submit on-chain after proof succeeds */}
-      {isSucceeded && hasResult && onSubmitOnChain && claimStatus !== "succeeded" && (
-        <Button
-          variant="active"
-          size="default"
-          onClick={onSubmitOnChain}
-          disabled={!canSubmitOnChain}
-          aria-label="Submit score on-chain to earn KALIEN"
-        >
-          {claimStatus === "submitting" ? (
-            <>
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              Submitting...
-            </>
-          ) : (
-            "Earn KALIEN"
-          )}
-        </Button>
-      )}
+      {/* On-chain claim is automatic via backend queue when proof succeeds. */}
     </Card>
   );
 }

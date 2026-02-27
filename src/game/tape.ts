@@ -6,7 +6,7 @@
  * HEADER (16 bytes):
  *   [0..3]   u32    magic           = 0x5A4B5450 ("ZKTP")
  *   [4]      u8     version         = 2
- *   [5]      u8     rules_tag       = 3
+ *   [5]      u8     rules_tag       = 4
  *   [6..7]   u8[2]  reserved        = 0
  *   [8..11]  u32    seed
  *   [12..15] u32    frameCount
@@ -158,8 +158,8 @@ export function deserializeTape(data: Uint8Array, maxFrames?: number): Tape {
 
   const rulesTag = view.getUint8(5);
   if (rulesTag !== RULES_TAG) {
-    throw new Error(
-      `Unknown rules tag: ${rulesTag} (expected ${RULES_TAG}). Regenerate the tape with the current AST3 client.`,
+      throw new Error(
+      `Unknown rules tag: ${rulesTag} (expected ${RULES_TAG}). Regenerate the tape with the current AST4 client.`,
     );
   }
   if (view.getUint8(6) !== 0 || view.getUint8(7) !== 0) {

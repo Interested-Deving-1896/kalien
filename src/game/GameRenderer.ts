@@ -56,6 +56,8 @@ export interface GameRenderState {
   wave: number;
   lives: number;
   gameSeed: number;
+  waitingForSeed: boolean;
+  pendingSeedSecondsLeft: number;
   gameTime: number;
   thrustActive: boolean;
   autopilotEnabled: boolean;
@@ -870,23 +872,55 @@ export class GameRenderer {
       ctx.fillText("ASTEROIDS", 0, 0);
       ctx.restore();
 
-      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillText("Arrow Keys: Turn + Thrust", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.46);
-      ctx.fillText("Space: Fire", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.52);
-      ctx.fillText("P: Pause  R: Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.58);
+      if (state.waitingForSeed) {
+        const boxX = WORLD_WIDTH * 0.5;
+        const boxY = WORLD_HEIGHT * 0.56;
+        const boxW = 430;
+        const boxH = 120;
+        const dots = ".".repeat((Math.floor(state.gameTime * 2) % 3) + 1);
+        const minutes = Math.floor(state.pendingSeedSecondsLeft / 60);
+        const seconds = String(state.pendingSeedSecondsLeft % 60).padStart(2, "0");
 
-      ctx.shadowColor = "#22d3ee";
-      ctx.fillStyle = "#22d3ee";
-      ctx.fillText("A: Toggle Autopilot", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(5, 17, 25, 0.9)";
+        ctx.fillRect(boxX - boxW / 2, boxY - boxH / 2, boxW, boxH);
+        ctx.strokeStyle = "rgba(82, 255, 191, 0.45)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(boxX - boxW / 2, boxY - boxH / 2, boxW, boxH);
 
-      ctx.shadowColor = "#a855f7";
-      ctx.fillStyle = "#a855f7";
-      ctx.fillText("L: Load Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.7);
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = "#4ade80";
+        ctx.fillStyle = "#d6fff0";
+        ctx.font = "700 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillText(`LOADING${dots}`, boxX, boxY - 20);
 
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = "#4ade80";
-      ctx.fillStyle = "#4ade80";
-      ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.78);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(157, 224, 255, 0.85)";
+        ctx.font = "600 18px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillText("Generating current epoch seed", boxX, boxY + 10);
+
+        ctx.fillStyle = "rgba(157, 224, 255, 0.65)";
+        ctx.font = "500 16px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillText(`next window in ${minutes}:${seconds}`, boxX, boxY + 36);
+      } else {
+        ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillText("Arrow Keys: Turn + Thrust", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.46);
+        ctx.fillText("Space: Fire", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.52);
+        ctx.fillText("P: Pause  R: Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.58);
+
+        ctx.shadowColor = "#22d3ee";
+        ctx.fillStyle = "#22d3ee";
+        ctx.fillText("A: Toggle Autopilot", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
+
+        ctx.shadowColor = "#a855f7";
+        ctx.fillStyle = "#a855f7";
+        ctx.fillText("L: Load Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.7);
+
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = "#4ade80";
+        ctx.fillStyle = "#4ade80";
+        ctx.fillText("Press Enter or Tap to Launch", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.78);
+      }
     }
 
     if (state.mode === "paused") {

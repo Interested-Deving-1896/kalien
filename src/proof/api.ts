@@ -16,6 +16,7 @@ export type ProofJobStatus =
 
 export interface TapeMetadata {
   seed: number;
+  seedId: number;
   frameCount: number;
   finalScore: number;
   finalRngState: number;
@@ -51,6 +52,8 @@ export interface ProverAttempt {
   actualCostUsd: number | null;
   proverAddress: string | null;
   fulfillmentTxHash: string | null;
+  programCycles?: number | null;
+  totalCycles?: number | null;
 }
 
 export interface ClaimAttempt {
@@ -69,7 +72,6 @@ export interface ProverTracking {
   statusUrl: string | null;
   lastPolledAt: string | null;
   pollingErrors: number;
-  recoveryAttempts: number;
   ipfsCid: string | null;
 }
 
@@ -88,11 +90,13 @@ export interface ClaimTracking {
 
 export interface ProofJournal {
   seed: number;
+  seed_id: number;
   frame_count: number;
   final_score: number;
   final_rng_state: number;
   tape_checksum: number;
   rules_digest: number;
+  claimant: string;
 }
 
 export interface ProofStats {
@@ -208,15 +212,19 @@ async function parseError(response: Response): Promise<ProofApiError> {
 export async function submitProofJob(
   tapeBytes: Uint8Array,
   claimantAddress: string,
+  seedId: number,
 ): Promise<SubmitProofJobResponse> {
   const body = new Uint8Array(tapeBytes).buffer;
+  const params = new URLSearchParams({
+    claimant: claimantAddress,
+    seed_id: String(seedId >>> 0),
+  });
   const headers: Record<string, string> = {
     "content-type": "application/octet-stream",
-    "x-claimant-address": claimantAddress,
   };
 
   const response = await fetchWithTimeout(
-    "/api/proofs/jobs",
+    `/api/proofs/jobs?${params.toString()}`,
     {
       method: "POST",
       headers,

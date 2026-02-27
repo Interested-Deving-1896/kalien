@@ -22,9 +22,6 @@ export interface LeaderboardEntry {
   mintedDelta: number;
   seed: number;
   frameCount: number | null;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   completedAt: string;
   claimStatus: ClaimStatus;
   claimTxHash: string | null;

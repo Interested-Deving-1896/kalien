@@ -50,6 +50,12 @@ export function formatMetric(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString() : "n/a";
 }
 
+export function formatCycles(cycles: number): string {
+  if (cycles >= 1_000_000_000) return `${(cycles / 1_000_000_000).toFixed(1)}B`;
+  if (cycles >= 1_000_000) return `${(cycles / 1_000_000).toFixed(1)}M`;
+  return cycles.toLocaleString();
+}
+
 export function formatFramesAsTime(frameCount: number, fps = 60): string {
   const totalSeconds = Math.round(frameCount / fps);
   if (totalSeconds < 60) {

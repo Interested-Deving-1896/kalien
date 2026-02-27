@@ -12,6 +12,7 @@ const statusBadgeVariants = cva(
         success: "text-secondary border-secondary/50 bg-[rgba(26,108,71,0.35)]",
         error: "text-destructive border-destructive/54 bg-[rgba(125,32,32,0.35)]",
         warning: "text-warning border-warning/50 bg-[rgba(42,22,15,0.42)]",
+        purple: "text-purple-400 border-purple-400/50 bg-[rgba(88,28,135,0.35)]",
         muted:
           "text-[rgba(184,214,247,0.95)] border-[rgba(141,182,226,0.45)] bg-[rgba(35,64,92,0.35)]",
       },

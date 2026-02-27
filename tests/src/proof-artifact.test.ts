@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { extractGroth16SealFromArtifact, packJournalRaw } from "../../src/proof/artifact";
+import { encodeClaimantForJournal, JOURNAL_LEN } from "../../shared/stellar/journal";
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -56,17 +57,24 @@ describe("extractGroth16SealFromArtifact", () => {
 });
 
 describe("packJournalRaw", () => {
-  it("encodes journal fields as 24-byte little-endian payload", () => {
+  it("encodes journal fields as fixed-length little-endian payload", () => {
+    const claimant = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     const raw = packJournalRaw({
       seed: 0xdeadbeef,
+      seed_id: 12345,
       frame_count: 3980,
       final_score: 90,
       final_rng_state: 0xeb0719ce,
       tape_checksum: 0x112e9de5,
-      rules_digest: 0x41535433,
+      rules_digest: 0x41535434,
+      claimant,
     });
 
-    expect(raw.length).toBe(24);
-    expect(toHex(raw)).toBe("efbeadde8c0f00005a000000ce1907ebe59d2e1133545341");
+    expect(raw.length).toBe(JOURNAL_LEN);
+    expect(toHex(raw.slice(0, 28))).toBe(
+      "efbeadde393000008c0f00005a000000ce1907ebe59d2e1134545341",
+    );
+    expect(raw.slice(28, 61)).toEqual(encodeClaimantForJournal(claimant));
+    expect(raw.slice(61, 64)).toEqual(new Uint8Array([0, 0, 0]));
   });
 });

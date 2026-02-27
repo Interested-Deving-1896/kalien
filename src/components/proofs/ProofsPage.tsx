@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Info } from "lucide-react";
 import { listProofJobs, isTerminalProofStatus, type ProofJobPublic } from "@/proof/api";
 import { timeAgo } from "@/lib/time";
@@ -26,7 +26,7 @@ function hasActiveJobs(jobs: ProofJobPublic[]): boolean {
 
 export function ProofsPage() {
   useDocumentTitle("Proofs");
-  const { wallet } = useWalletContext();
+  const { wallet, balance } = useWalletContext();
 
   const [jobs, setJobs] = useState<ProofJobPublic[]>([]);
   const [total, setTotal] = useState(0);
@@ -83,13 +83,29 @@ export function ProofsPage() {
 
   const activeJobs = hasActiveJobs(jobs);
 
-  // Auto-refresh when there are active (non-terminal) jobs
+  // Refresh header balance when a claim newly succeeds
+  const succeededCount = useMemo(
+    () => jobs.filter((j) => j.claim.status === "succeeded").length,
+    [jobs],
+  );
+  const prevSucceededCount = useRef(succeededCount);
   useEffect(() => {
-    if (!wallet.address || !activeJobs) return;
+    if (succeededCount > prevSucceededCount.current) {
+      void balance.refresh();
+    }
+    prevSucceededCount.current = succeededCount;
+  }, [succeededCount, balance]);
+
+  // Auto-refresh: fast (15s) when jobs are active, slow (60s) when idle.
+  // Skip when the tab is hidden to avoid wasted requests.
+  useEffect(() => {
+    if (!wallet.address) return;
 
     const interval = setInterval(() => {
-      fetchJobsRef.current?.(true);
-    }, AUTO_REFRESH_PROOFS_MS);
+      if (document.visibilityState === "visible") {
+        fetchJobsRef.current?.(true);
+      }
+    }, activeJobs ? AUTO_REFRESH_PROOFS_MS : 60_000);
 
     return () => clearInterval(interval);
   }, [wallet.address, activeJobs]);
@@ -156,7 +172,7 @@ export function ProofsPage() {
       {/* Wallet connecting / restoring */}
       {wallet.isBusy && (
         <Card className="animate-rise">
-          <p className="m-0 text-center text-muted-foreground">Restoring wallet session...</p>
+          <p className="m-0 text-center text-muted-foreground">Restoring wallet session…</p>
         </Card>
       )}
 
