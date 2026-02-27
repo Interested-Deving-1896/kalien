@@ -15,7 +15,6 @@ pub struct RunMetrics {
     pub max_frames: u32,
     pub frame_count: u32,
     pub final_score: u32,
-    pub final_rng_state: u32,
     pub final_lives: i32,
     pub final_wave: i32,
     pub game_over: bool,
@@ -91,7 +90,6 @@ pub fn run_bot_instance(
         seed,
         &inputs,
         result.final_score,
-        result.final_rng_state,
     );
     let journal = verify_tape(&tape, max_frames.max(result.frame_count).max(1))
         .map_err(|err| anyhow!("generated tape failed verification: {err}"))?;
@@ -123,7 +121,6 @@ pub fn run_bot_instance(
             max_frames,
             frame_count: result.frame_count,
             final_score: result.final_score,
-            final_rng_state: result.final_rng_state,
             final_lives: snapshot.lives,
             final_wave: snapshot.wave,
             game_over: snapshot.is_game_over,

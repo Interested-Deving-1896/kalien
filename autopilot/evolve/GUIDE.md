@@ -23,11 +23,11 @@ evolve/
 ## The Bot Under Evolution
 The `evolve-candidate` bot is a SearchBot defined in `src/bots/roster.rs` at the end of `search_bot_configs()`. It evaluates all 16 possible actions (4 bits: left, right, thrust, fire) every frame and picks the highest-utility action.
 
-## Current Game Contract (AST3)
+## Current Game Contract (AST4)
 
 Use these values as ground truth for analysis and tuning:
 
-- Ruleset: `AST3` (`RULES_DIGEST = 0x41535433`)
+- Ruleset: `AST4` (`RULES_DIGEST = 0x41535434`)
 - Max tournament horizon: `108000` frames (30 minutes at 60 FPS)
 - Score events: large asteroid `20`, medium asteroid `50`, small asteroid `100`, large saucer `200`, small saucer `990`
 - Input legality: every frame byte must be strict-legal under the verifier (autopilot runners already enforce this)

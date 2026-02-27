@@ -1,6 +1,6 @@
 # Profile switching
 
-This lab is on an AST3 clean baseline.
+This lab is on an AST4 clean baseline.
 
 - `base.json`: neutral profile.
 - `champion.json`: current working profile (starts equal to `base.json` after resets).

@@ -388,7 +388,7 @@ fn offline_bot_configs() -> &'static [OfflineConfig] {
 }
 
 pub(super) fn record_locked_bot_configs() -> &'static [ReplayConfig] {
-    // Intentionally empty after AST3 reset. Add record-lock bots only when
+    // Intentionally empty after AST4 reset. Add record-lock bots only when
     // a current-rules canonical tape is explicitly promoted.
     &[]
 }

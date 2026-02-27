@@ -1,2 +1,2 @@
-# AST3 reset: no canonical checkpoints yet.
-# Add checkpoint basenames here only after promoting AST3-verified runs.
+# AST4 reset: no canonical checkpoints yet.
+# Add checkpoint basenames here only after promoting AST4-verified runs.

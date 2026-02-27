@@ -404,7 +404,6 @@ where
             "final_score": run.metrics.final_score,
             "final_lives": run.metrics.final_lives,
             "final_wave": run.metrics.final_wave,
-            "final_rng_state": run.metrics.final_rng_state,
             "game_over": run.metrics.game_over,
             "objective_value": run.objective_value,
             "action_frames": run.metrics.action_frames,
