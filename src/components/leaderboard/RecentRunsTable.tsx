@@ -47,9 +47,9 @@ export function RecentRunsTable({
           <Table aria-label="Recent proved runs">
             <TableHeader>
               <TableRow>
-                <TableHead scope="col">Score</TableHead>
-                <TableHead scope="col">Frames</TableHead>
-                <TableHead scope="col">KALIEN Earned</TableHead>
+                <TableHead scope="col" className="text-right">Score</TableHead>
+                <TableHead scope="col" className="text-right">Frames</TableHead>
+                <TableHead scope="col" className="text-right">KALIEN Earned</TableHead>
                 <TableHead scope="col">Seed</TableHead>
                 <TableHead scope="col">Completed</TableHead>
                 <TableHead scope="col">Claim</TableHead>
