@@ -144,7 +144,7 @@ Deploy the asteroids_score contract to mainnet.
 - [ ] **Determine the correct `image_id`** for the production RISC0 guest
       program. This is the 32-byte hash that identifies the proving program.
       Get it from the prover build output or `methods/build.rs`. Currently:
-      `036255e8f470eb40a3d6e9b3c987d064c54bd9cb63a35686096fc889f64a19e8`
+      `37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111`
       (from `.testnet-state.env`). **Any change to the Rust guest code changes
       this value** — rebuild and re-verify.
 - [ ] **Deploy the contract to mainnet:**

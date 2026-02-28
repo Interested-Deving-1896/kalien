@@ -159,7 +159,7 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     BOUNDLESS_RPC_URL: "https://base-mainnet.public.blastapi.io",
     BOUNDLESS_PRIVATE_KEY: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     BOUNDLESS_IMAGE_URL: "https://gateway.pinata.cloud/ipfs/QmTest",
-    BOUNDLESS_IMAGE_ID: "0x036255e8f470eb40a3d6e9b3c987d064c54bd9cb63a35686096fc889f64a19e8",
+    BOUNDLESS_IMAGE_ID: "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
     ...overrides,
   } as WorkerEnv;
 }
@@ -211,7 +211,7 @@ describe("resolveBoundlessConfig", () => {
 
   it("normalizes image ID with 0x prefix", () => {
     const config = resolveBoundlessConfig(
-      makeEnv({ BOUNDLESS_IMAGE_ID: "036255e8f470eb40a3d6e9b3c987d064c54bd9cb63a35686096fc889f64a19e8" }),
+      makeEnv({ BOUNDLESS_IMAGE_ID: "37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111" }),
     )!;
     expect(config.imageId.startsWith("0x")).toBe(true);
   });

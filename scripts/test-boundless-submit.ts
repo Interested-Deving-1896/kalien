@@ -46,6 +46,11 @@ const requestIdArg = (() => {
   if (idx >= 0 && process.argv[idx + 1]) return process.argv[idx + 1];
   return null;
 })();
+const claimantArg = (() => {
+  const idx = process.argv.indexOf("--claimant");
+  if (idx >= 0 && process.argv[idx + 1]) return process.argv[idx + 1];
+  return null;
+})();
 const claimOnly = requestIdArg !== null;
 
 // ── Validate secrets ──────────────────────────────────────────────────────
@@ -66,8 +71,13 @@ const ORDER_STREAM_URL = "https://base-mainnet.boundless.network";
 const RPC_URL = "https://base-mainnet.public.blastapi.io";
 
 const RELAYER_API_KEY = env.RELAYER_API_KEY;
-const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmNzsanMnHoc4c5AJzWBpVDoQ4wzkpBbWKANtRGBH1EMtp";
-const IMAGE_ID = "0x036255e8f470eb40a3d6e9b3c987d064c54bd9cb63a35686096fc889f64a19e8";
+const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmQ7m1WcrHH4TABWwYjroZzKPeSmqBXv8NeMHvwGFzFwrk";
+const RAW_IMAGE_ID = (
+  env.BOUNDLESS_IMAGE_ID ??
+  env.PROVER_EXPECTED_IMAGE_ID ??
+  "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111"
+).toLowerCase();
+const IMAGE_ID = RAW_IMAGE_ID.startsWith("0x") ? RAW_IMAGE_ID : `0x${RAW_IMAGE_ID}`;
 
 // Groth16V3_0 selector — explicitly request Groth16 proofs for Stellar
 const GROTH16_SELECTOR = "0x73c457ba" as const;
@@ -91,7 +101,12 @@ const STELLAR_NETWORK_PASSPHRASE = env.STELLAR_NETWORK_PASSPHRASE
   ?? "Test SDF Network ; September 2015";
 const STELLAR_RPC_URL = DEFAULT_BINDINGS_RPC_URL;
 const RELAYER_URL = "https://channels.openzeppelin.com/testnet";
-const CLAIMANT_ADDRESS = "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
+const CLAIMANT_ADDRESS = claimantArg ?? env.CLAIMANT_ADDRESS ?? "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
+const scoreClient = new ScoreContractClient({
+  contractId: SCORE_CONTRACT_ID,
+  rpcUrl: STELLAR_RPC_URL,
+  networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
+});
 
 // Event fetch retry config
 const EVENT_FETCH_RETRIES = 15;
@@ -121,9 +136,8 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 /** Generate a fresh tape using the headless autopilot. */
-function generateFreshTape(): Uint8Array {
-  const seed = Date.now();
-  console.log(`  Generating tape with seed 0x${seed.toString(16).padStart(8, "0")}...`);
+function generateFreshTape(seed: number): Uint8Array {
+  console.log(`  Generating tape with seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}...`);
   const game = new AsteroidsGame({ headless: true, seed });
   game.startNewGame(seed);
   (game as unknown as { autopilot: Autopilot }).autopilot.setEnabled(true);
@@ -253,10 +267,17 @@ if (claimOnly) {
   console.log("Claimant:", CLAIMANT_ADDRESS);
   console.log("");
 
+  const currentSeedResult = await scoreClient.current_seed();
+  const currentSeed = currentSeedResult.result as { seed: number; seed_id: number };
+  const seedForRequest = currentSeed.seed >>> 0;
+  const seedIdForRequest = currentSeed.seed_id >>> 0;
+  console.log(
+    `Using current on-chain seed: seed_id=${seedIdForRequest}, seed=0x${seedForRequest.toString(16).toUpperCase().padStart(8, "0")}`,
+  );
+
   // Step 0: Generate fresh tape + encode stdin + upload to IPFS
   console.log("Step 0: Generating tape & uploading to IPFS...");
-  const tapeBytes = generateFreshTape();
-  const seedIdForRequest = Math.floor(Date.now() / 1000 / 600) >>> 0;
+  const tapeBytes = generateFreshTape(seedForRequest);
   const stdinBytes = encodeStdin(tapeBytes, {
     seedId: seedIdForRequest,
     claimantAddress: CLAIMANT_ADDRESS,
@@ -559,7 +580,7 @@ if (journal.length !== JOURNAL_LEN) {
 }
 const journalFields = unpackJournalRaw(journal);
 console.log(
-  `  Journal: seed_id=${journalFields.seed_id}, seed=0x${journalFields.seed.toString(16)}, claimant=${journalFields.claimant}, frames=${journalFields.frame_count}, score=${journalFields.final_score}`,
+  `  Journal: seed_id=${journalFields.seed_id}, seed=0x${journalFields.seed.toString(16).toUpperCase().padStart(8, "0")}, claimant=${journalFields.claimant}, frames=${journalFields.frame_count}, score=${journalFields.final_score}`,
 );
 
 if (journalFields.final_score === 0) {
@@ -618,12 +639,6 @@ console.log(`  Journal SHA-256: ${journalDigestHex}`);
 
 const stellarSeal = parsedSeal;
 
-const scoreClient = new ScoreContractClient({
-  contractId: SCORE_CONTRACT_ID,
-  rpcUrl: STELLAR_RPC_URL,
-  networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
-});
-
 // Check what imageId the contract currently has stored
 try {
   const storedImageId = await scoreClient.image_id();
@@ -678,14 +693,27 @@ try {
   }
 } catch (error: any) {
   const msg = error.message?.toLowerCase() ?? "";
+  const details =
+    typeof error?.errorDetails === "string"
+      ? error.errorDetails.toLowerCase()
+      : JSON.stringify(error?.errorDetails ?? error?.details ?? "").toLowerCase();
+  const combined = `${msg} ${details}`;
   // Expected contract rejections are still a valid E2E test
-  if (msg.includes("score not improved") || msg.includes("scorenotimproved")) {
+  if (
+    combined.includes("score not improved") ||
+    combined.includes("scorenotimproved") ||
+    /contract,\s*#5\b/.test(combined)
+  ) {
     console.log(`  Contract rejected: ScoreNotImproved (existing score is higher)`);
     console.log("  This is expected if the same tape was submitted before.");
     console.log("\n=== E2E Test PASSED — Pipeline valid, score already claimed ===");
     process.exit(0);
   }
-  if (msg.includes("already claimed") || msg.includes("journalalreadyclaimed")) {
+  if (
+    combined.includes("already claimed") ||
+    combined.includes("journalalreadyclaimed") ||
+    /contract,\s*#3\b/.test(combined)
+  ) {
     console.log(`  Contract rejected: JournalAlreadyClaimed`);
     console.log("  This is expected if the same proof was submitted before.");
     console.log("\n=== E2E Test PASSED — Pipeline valid, journal already claimed ===");
