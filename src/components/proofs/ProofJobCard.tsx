@@ -396,6 +396,11 @@ export function ProofJobCard({
           </span>
         </div>
 
+        {/* Seed */}
+        <span className="hidden text-xs tabular-nums text-muted-foreground sm:block">
+          {formatHex32(job.tape.metadata.seed)}
+        </span>
+
         {/* Status badge */}
         <div className="flex-1">
           <ProofStatusBadge job={job} />
