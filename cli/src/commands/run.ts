@@ -156,12 +156,16 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   // Spawn workers: worker 0 is the exploiter, the rest are explorers.
   // Exploiter: small mutations, always tracks the global best.
   // Explorers: large mutations, independent search, restart from random when stuck.
-  // String literal URL is required so Bun detects and embeds the worker at compile time.
-  const workerUrl = new URL("../worker/game-worker.ts", import.meta.url);
+  // In compiled binaries ($bunfs), import.meta.url-based URLs don't resolve;
+  // use a plain string literal instead (worker must be a --compile entrypoint).
+  // For `bun run` (dev), use import.meta.url so the path resolves from the source file.
+  const isCompiled = import.meta.url.includes("$bunfs");
   const workers: Worker[] = [];
   for (let i = 0; i < threadCount; i++) {
     const role = i === 0 ? "exploit" : "explore";
-    const worker = new Worker(workerUrl);
+    const worker = isCompiled
+      ? new Worker("./worker/game-worker.ts")
+      : new Worker(new URL("../worker/game-worker.ts", import.meta.url));
     worker.onmessage = (event: MessageEvent<WorkerToMainMessage>) => {
       const msg = event.data;
       switch (msg.type) {
