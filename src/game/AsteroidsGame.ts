@@ -6,6 +6,7 @@ import {
   LURK_SAUCER_SPAWN_FAST_FRAMES,
   LURK_TIME_THRESHOLD_FRAMES,
   MAX_FRAME_DELTA,
+  MAX_GAME_FRAMES,
   MAX_SUBSTEPS,
   SAUCER_BULLET_LIFETIME_FRAMES,
   SAUCER_BULLET_LIMIT,
@@ -648,6 +649,17 @@ export class AsteroidsGame {
 
   private updateSimulation(dt: number): void {
     this.frameCount++;
+
+    // 10-minute hard cap (36000 frames at 60fps)
+    if (this.frameCount >= MAX_GAME_FRAMES && this.mode !== "replay") {
+      this.mode = "game-over";
+      this.ship.canControl = false;
+      this.ship.respawnTimer = 99999;
+      if (this.renderer) {
+        this.saveHighScore();
+      }
+      return;
+    }
 
     // Read input for this frame (always, even when ship can't be controlled)
     this.currentFrameInput = this.inputSource

@@ -40,7 +40,7 @@ function parseArgs() {
   let out = "";
   let receiptKind = "groth16";
   let segmentLimitPo2 = "21";
-  let maxFrames = "18000";
+  let maxFrames = "36000";
   let imageId = "";
   let claimant = "";
   let seedId = "";

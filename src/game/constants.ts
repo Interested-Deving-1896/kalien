@@ -61,6 +61,9 @@ export const CRT_CURVATURE = 0.02;
 export const LURK_TIME_THRESHOLD_FRAMES = 360; // 6s * 60fps
 export const LURK_SAUCER_SPAWN_FAST_FRAMES = 180; // 3s * 60fps
 
+// Maximum game length: 36000 frames = 10 minutes at 60fps
+export const MAX_GAME_FRAMES = 36_000;
+
 // Rules version tag — written to tape header byte [5]
 export const RULES_TAG = 4; // "AST4"
 

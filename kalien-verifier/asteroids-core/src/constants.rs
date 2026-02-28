@@ -3,7 +3,7 @@ pub const TAPE_VERSION: u8 = 4;
 pub const TAPE_HEADER_SIZE: usize = 16;
 pub const TAPE_FOOTER_SIZE: usize = 8;
 
-pub const MAX_FRAMES_DEFAULT: u32 = 18_000;
+pub const MAX_FRAMES_DEFAULT: u32 = 36_000;
 
 pub const WORLD_WIDTH_Q12_4: i32 = 15_360;
 pub const WORLD_HEIGHT_Q12_4: i32 = 11_520;

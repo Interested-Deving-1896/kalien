@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 let tapePath = "";
-let maxFrames = 18_000;
+let maxFrames = 36_000;
 let journalOut = "";
 let segmentLimitPo2 = 19;
 let receiptKind = "groth16";

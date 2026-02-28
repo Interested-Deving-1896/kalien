@@ -23,7 +23,7 @@ const DEFAULT_CONTRACT_ID = process.env.SCORE_CONTRACT_ID
 
 // Parse arguments
 let explicitSeed: number | null = null;
-let maxFrames = DEFAULT_MAX_FRAMES; // ~5 minutes
+let maxFrames = DEFAULT_MAX_FRAMES; // ~10 minutes
 let outputPath = "";
 
 const args = process.argv.slice(2);

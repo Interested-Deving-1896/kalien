@@ -37,7 +37,7 @@ enum Commands {
         bot: String,
         #[arg(long)]
         seed: String,
-        #[arg(long, default_value_t = 18_000)]
+        #[arg(long, default_value_t = 36_000)]
         max_frames: u32,
         #[arg(long)]
         output: Option<PathBuf>,
@@ -61,7 +61,7 @@ enum Commands {
         seed_start: Option<String>,
         #[arg(long, default_value_t = 12)]
         seed_count: u32,
-        #[arg(long, default_value_t = 18_000)]
+        #[arg(long, default_value_t = 36_000)]
         max_frames: u32,
         #[arg(long, value_enum, default_value_t = CliObjective::Score)]
         objective: CliObjective,

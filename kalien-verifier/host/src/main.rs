@@ -31,7 +31,7 @@ impl Cli {
         let mut args = env::args().skip(1);
 
         let mut tape_path: Option<PathBuf> = None;
-        let mut max_frames = 18_000u32;
+        let mut max_frames = 36_000u32;
         let mut seed_id = 0u32;
         let mut claimant: Option<String> = None;
         let mut journal_out: Option<PathBuf> = None;
