@@ -10,6 +10,7 @@ export interface DashboardStats {
   epochRemainingSec: number;
   currentSeed: number | null;
   threads: number;
+  availableCores: number;
   address: string;
   startTime: number;
   workerBests: number[];
@@ -39,6 +40,7 @@ export function renderDashboard(stats: DashboardStats): void {
     epochRemainingSec,
     currentSeed,
     threads,
+    availableCores,
     address,
     startTime,
     workerBests,
@@ -120,7 +122,7 @@ export function renderDashboard(stats: DashboardStats): void {
   );
 
   // Per-thread scores (E = exploit, x = explore, ★ = global best holder)
-  const threadLabel = `  ${ansi.color(ansi.gray, `Threads (${threads}):`)} `;
+  const threadLabel = `  ${ansi.color(ansi.gray, `Threads (${threads}/${availableCores}):`)} `;
   lines.push(threadLabel + chipRows[0]);
   for (let r = 1; r < chipRows.length; r++) {
     lines.push(" ".repeat(16) + chipRows[r]);

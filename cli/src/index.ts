@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { cpus } from "os";
 import * as ansi from "./display/ansi";
 import { NETWORKS, DEFAULT_API_URL, type NetworkName } from "./constants";
 
@@ -20,9 +21,7 @@ ${ansi.bold}COMMANDS${ansi.reset}
 
 ${ansi.bold}RUN OPTIONS${ansi.reset}
   --address <addr>      Stellar wallet address for claims (required)
-  --threads <n>         Parallel worker count (default: CPU cores / 2)
-  --max                 Use all CPU cores
-  --interval <min>      Min minutes between submissions within an epoch (default: 1)
+  --threads <n|max|%>   Worker count: number, "max", or percentage (e.g. "25%"). Default: 50%
   --api-url <url>       API base URL (default: https://kalien.xyz)
   --network <net>          Stellar network: testnet or mainnet (default: testnet)
   --rpc-url <url>          Stellar RPC URL override (default: per network)
@@ -37,8 +36,9 @@ ${ansi.bold}CLEANUP OPTIONS${ansi.reset}
 
 ${ansi.bold}EXAMPLES${ansi.reset}
   kalien run --address GABC...XYZ
-  kalien run --address GABC...XYZ --threads 4 --interval 5
-  kalien run --address GABC...XYZ --max
+  kalien run --address GABC...XYZ --threads 4
+  kalien run --address GABC...XYZ --threads 25%
+  kalien run --address GABC...XYZ --threads max
   kalien replay game.tape
   kalien ps
   kalien cleanup --dry-run
@@ -52,7 +52,6 @@ function parseArgs(argv: string[]): {
 } {
   const booleanFlags = new Set([
     "help",
-    "max",
     "dry-run",
     "all",
     "orphan-only",
@@ -122,12 +121,20 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
+      const coreCount = cpus().length;
+      const threads =
+        args["threads"] === "max"
+          ? coreCount
+          : args["threads"]?.endsWith("%")
+            ? Math.max(1, Math.round(coreCount * parseInt(args["threads"]) / 100))
+            : args["threads"]
+              ? parseInt(args["threads"], 10)
+              : 0;
+
       const { runCommand } = await import("./commands/run");
       await runCommand({
         address,
-        threads: args["threads"] ? parseInt(args["threads"], 10) : 0,
-        max: args["max"] === "true",
-        interval: args["interval"] ? parseFloat(args["interval"]) : 1,
+        threads,
         apiUrl: args["api-url"] || DEFAULT_API_URL,
         rpcUrl,
         contractId,

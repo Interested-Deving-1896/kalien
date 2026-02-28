@@ -119,6 +119,10 @@ async function runOneGame(): Promise<void> {
     game.stepSimulation();
     frame++;
     if (game.getMode() === "game-over") break;
+    // Yield every 6000 frames (~100ms of work) so the worker can process
+    // incoming messages (stop, reset-best, set-config) and the OS scheduler
+    // can give time to other processes instead of pinning the core at 100%.
+    if (frame % 6000 === 0) await Bun.sleep(0);
   }
 
   const score = game.getScore();

@@ -26,8 +26,6 @@ function epochEndMs(epoch: number): number {
 export interface RunOptions {
   address: string;
   threads: number;
-  max: boolean;
-  interval: number; // minutes (minimum time between submissions within an epoch)
   apiUrl: string;
   rpcUrl: string;
   contractId: string;
@@ -36,13 +34,17 @@ export interface RunOptions {
 }
 
 export async function runCommand(opts: RunOptions): Promise<void> {
-  const threadCount = opts.max
-    ? cpus().length
-    : opts.threads > 0
-      ? opts.threads
-      : Math.max(1, Math.floor(cpus().length / 2));
+  const availableCores = cpus().length;
+  const threadCount = opts.threads > 0
+    ? opts.threads
+    : Math.max(1, Math.floor(availableCores / 2));
 
-  const minSubmitIntervalMs = opts.interval * 60 * 1000;
+  const pct = Math.round((threadCount / availableCores) * 100);
+  process.stdout.write(
+    ansi.color(ansi.cyan, "  Cores: ") +
+    ansi.color(ansi.white, `${threadCount}/${availableCores}`) +
+    ansi.color(ansi.dim, ` (${pct}%)\n`),
+  );
 
   // Fetch on-chain high score before starting workers
   process.stdout.write(ansi.color(ansi.cyan, "  Fetching on-chain score..."));
@@ -146,7 +148,6 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   let totalGamesPlayed = 0;
   let totalSubmissions = 0;
   let lastSubmitStatus = "";
-  let lastSubmitTime = 0;
   const startTime = Date.now();
   let submitting = false;
 
@@ -277,15 +278,6 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       return;
     }
 
-    // Respect minimum interval between submissions
-    const now = Date.now();
-    if (
-      !force &&
-      lastSubmitTime > 0 &&
-      now - lastSubmitTime < minSubmitIntervalMs
-    )
-      return;
-
     submitting = true;
     const tape = bestTape;
     const score = bestScore;
@@ -306,7 +298,6 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       totalSubmissions++;
       epochSubmissions++;
       lastSubmittedScore = score;
-      lastSubmitTime = Date.now();
       lastSubmitStatus = ansi.color(
         ansi.green,
         `score ${score} submitted (${result.jobId || "ok"})`,
@@ -406,6 +397,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       epochRemainingSec,
       currentSeed,
       threads: threadCount,
+      availableCores,
       address: opts.address,
       startTime,
       workerBests,
