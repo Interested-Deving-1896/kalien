@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { extractGroth16SealFromArtifact } from "../../src/proof/artifact";
-import { encodeClaimantForJournal, JOURNAL_LEN, packJournalRaw } from "../../shared/stellar/journal";
+import {
+  encodeClaimantForJournal,
+  JOURNAL_LEN,
+  packJournalRaw,
+} from "../../shared/stellar/journal";
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -32,7 +36,9 @@ describe("extractGroth16SealFromArtifact", () => {
       seal_hex: "00".repeat(260),
     };
 
-    expect(() => extractGroth16SealFromArtifact(artifact)).toThrow("unsupported proof artifact");
+    expect(() => extractGroth16SealFromArtifact(artifact)).toThrow(
+      "unsupported proof artifact",
+    );
   });
 });
 
@@ -48,9 +54,7 @@ describe("packJournalRaw", () => {
     });
 
     expect(raw.length).toBe(JOURNAL_LEN);
-    expect(toHex(raw.slice(0, 16))).toBe(
-      "39300000efbeadde8c0f00005a000000",
-    );
+    expect(toHex(raw.slice(0, 16))).toBe("39300000efbeadde8c0f00005a000000");
     expect(raw.slice(16, 49)).toEqual(encodeClaimantForJournal(claimant));
   });
 });

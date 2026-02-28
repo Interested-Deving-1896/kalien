@@ -88,7 +88,9 @@ describe("worker utils", () => {
 
   describe("safeErrorMessage", () => {
     it("extracts message from Error", () => {
-      expect(safeErrorMessage(new Error("something broke"))).toBe("something broke");
+      expect(safeErrorMessage(new Error("something broke"))).toBe(
+        "something broke",
+      );
     });
 
     it("falls back to String(error) when Error has empty message", () => {
@@ -102,7 +104,9 @@ describe("worker utils", () => {
     });
 
     it("collapses control characters", () => {
-      expect(safeErrorMessage(new Error("bad\x00\x01\x02data"))).toBe("bad data");
+      expect(safeErrorMessage(new Error("bad\x00\x01\x02data"))).toBe(
+        "bad data",
+      );
     });
 
     it("trims result", () => {

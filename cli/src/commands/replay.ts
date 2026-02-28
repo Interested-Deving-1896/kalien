@@ -3,7 +3,11 @@ import { AsteroidsGame } from "@/game/AsteroidsGame";
 import type { GameStateSnapshot } from "@/game/Autopilot";
 import { TapeInputSource } from "@/game/input-source";
 import { deserializeTape } from "@/game/tape";
-import { renderAsciiFrame, createReplayState, type ReplayHUD } from "../display/ascii-replay";
+import {
+  renderAsciiFrame,
+  createReplayState,
+  type ReplayHUD,
+} from "../display/ascii-replay";
 import * as ansi from "../display/ansi";
 
 export async function replayCommand(tapePath: string): Promise<void> {
@@ -20,7 +24,9 @@ export async function replayCommand(tapePath: string): Promise<void> {
   const tape = deserializeTape(tapeData);
 
   console.log(`${ansi.color(ansi.brightCyan, "KALIEN Replay")}`);
-  console.log(`  Seed:   0x${tape.header.seed.toString(16).toUpperCase().padStart(8, "0")}`);
+  console.log(
+    `  Seed:   0x${tape.header.seed.toString(16).toUpperCase().padStart(8, "0")}`,
+  );
   console.log(`  Frames: ${tape.header.frameCount}`);
   console.log(`  Score:  ${tape.footer.finalScore}`);
   console.log("");
@@ -90,7 +96,9 @@ export async function replayCommand(tapePath: string): Promise<void> {
     while (frame < totalFrames && !stopped && !restart) {
       if (paused) {
         // Re-render current frame without advancing state
-        const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
+        const snapshot = (
+          game as unknown as { getGameStateSnapshot(): GameStateSnapshot }
+        ).getGameStateSnapshot();
         const hud: ReplayHUD = {
           score: game.getScore(),
           wave: game.getWave(),
@@ -114,7 +122,9 @@ export async function replayCommand(tapePath: string): Promise<void> {
       }
 
       // Get snapshot for rendering
-      const snapshot = (game as any).getGameStateSnapshot() as GameStateSnapshot;
+      const snapshot = (
+        game as any
+      ).getGameStateSnapshot() as GameStateSnapshot;
       const hud: ReplayHUD = {
         score: game.getScore(),
         wave: game.getWave(),
@@ -144,7 +154,9 @@ export async function replayCommand(tapePath: string): Promise<void> {
   // Show final stats
   process.stdout.write(ansi.cursorShow + "\n\n");
   console.log(`${ansi.color(ansi.brightCyan, "  Replay complete")}`);
-  console.log(`  Final Score: ${ansi.color(ansi.brightGreen, String(tape.footer.finalScore))}`);
+  console.log(
+    `  Final Score: ${ansi.color(ansi.brightGreen, String(tape.footer.finalScore))}`,
+  );
   console.log(`  Frames: ${totalFrames}`);
   console.log("");
 }

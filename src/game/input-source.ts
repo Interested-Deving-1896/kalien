@@ -17,7 +17,12 @@ export interface InputSource {
  * to know about game-state snapshot creation.
  */
 export class LiveInputSource implements InputSource {
-  private lastInput: FrameInput = { left: false, right: false, thrust: false, fire: false };
+  private lastInput: FrameInput = {
+    left: false,
+    right: false,
+    thrust: false,
+    fire: false,
+  };
 
   constructor(
     private readonly input: InputController,

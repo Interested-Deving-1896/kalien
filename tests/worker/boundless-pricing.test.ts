@@ -68,7 +68,7 @@ describe("usdToWei", () => {
     const b = usdToWei(0.2, 3000);
     const c = usdToWei(0.3, 3000);
     // a + b should equal c (within ±1 wei for rounding)
-    const diff = (a + b) - c;
+    const diff = a + b - c;
     expect(diff >= -1n && diff <= 1n).toBe(true);
   });
 });
@@ -90,7 +90,8 @@ mock.module("viem", () => {
 });
 
 // Import after mock is set up
-const { fetchEthPriceUsd, resetEthPriceCache } = await import("../../worker/boundless/pricing");
+const { fetchEthPriceUsd, resetEthPriceCache } =
+  await import("../../worker/boundless/pricing");
 
 describe("fetchEthPriceUsd", () => {
   beforeEach(() => {
@@ -124,28 +125,30 @@ describe("fetchEthPriceUsd", () => {
   });
 
   it("throws for unsupported chainId", async () => {
-    await expect(fetchEthPriceUsd("https://rpc.example.com", 999)).rejects.toThrow(
-      "no Chainlink ETH/USD feed configured for chainId 999",
-    );
+    await expect(
+      fetchEthPriceUsd("https://rpc.example.com", 999),
+    ).rejects.toThrow("no Chainlink ETH/USD feed configured for chainId 999");
   });
 
   it("throws when Chainlink returns zero price", async () => {
     mockReadContract!.mockResolvedValueOnce([0n, 0n, 0n, 0n, 0n]);
-    await expect(fetchEthPriceUsd("https://rpc.example.com", 8453)).rejects.toThrow(
-      "Chainlink returned invalid ETH price: 0",
-    );
+    await expect(
+      fetchEthPriceUsd("https://rpc.example.com", 8453),
+    ).rejects.toThrow("Chainlink returned invalid ETH price: 0");
   });
 
   it("throws when Chainlink returns negative price", async () => {
     mockReadContract!.mockResolvedValueOnce([0n, -100_000_000n, 0n, 0n, 0n]);
-    await expect(fetchEthPriceUsd("https://rpc.example.com", 8453)).rejects.toThrow(
-      "Chainlink returned invalid ETH price",
-    );
+    await expect(
+      fetchEthPriceUsd("https://rpc.example.com", 8453),
+    ).rejects.toThrow("Chainlink returned invalid ETH price");
   });
 
   it("propagates RPC errors", async () => {
     mockReadContract!.mockRejectedValueOnce(new Error("RPC timeout"));
-    await expect(fetchEthPriceUsd("https://rpc.example.com", 8453)).rejects.toThrow("RPC timeout");
+    await expect(
+      fetchEthPriceUsd("https://rpc.example.com", 8453),
+    ).rejects.toThrow("RPC timeout");
   });
 });
 
@@ -157,19 +160,29 @@ import type { WorkerEnv } from "../../worker/env";
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
     BOUNDLESS_RPC_URL: "https://base-mainnet.public.blastapi.io",
-    BOUNDLESS_PRIVATE_KEY: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    BOUNDLESS_PRIVATE_KEY:
+      "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     BOUNDLESS_IMAGE_URL: "https://gateway.pinata.cloud/ipfs/QmTest",
-    BOUNDLESS_IMAGE_ID: "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
+    BOUNDLESS_IMAGE_ID:
+      "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
     ...overrides,
   } as WorkerEnv;
 }
 
 describe("resolveBoundlessConfig", () => {
   it("returns null when required vars are missing", () => {
-    expect(resolveBoundlessConfig(makeEnv({ BOUNDLESS_RPC_URL: "" }))).toBeNull();
-    expect(resolveBoundlessConfig(makeEnv({ BOUNDLESS_PRIVATE_KEY: undefined }))).toBeNull();
-    expect(resolveBoundlessConfig(makeEnv({ BOUNDLESS_IMAGE_URL: "" }))).toBeNull();
-    expect(resolveBoundlessConfig(makeEnv({ BOUNDLESS_IMAGE_ID: undefined }))).toBeNull();
+    expect(
+      resolveBoundlessConfig(makeEnv({ BOUNDLESS_RPC_URL: "" })),
+    ).toBeNull();
+    expect(
+      resolveBoundlessConfig(makeEnv({ BOUNDLESS_PRIVATE_KEY: undefined })),
+    ).toBeNull();
+    expect(
+      resolveBoundlessConfig(makeEnv({ BOUNDLESS_IMAGE_URL: "" })),
+    ).toBeNull();
+    expect(
+      resolveBoundlessConfig(makeEnv({ BOUNDLESS_IMAGE_ID: undefined })),
+    ).toBeNull();
   });
 
   it("returns config with USD pricing defaults ($0.02 / $0.0002)", () => {
@@ -181,7 +194,10 @@ describe("resolveBoundlessConfig", () => {
 
   it("reads custom USD pricing from env vars", () => {
     const config = resolveBoundlessConfig(
-      makeEnv({ BOUNDLESS_MAX_PRICE_USD: "0.05", BOUNDLESS_MIN_PRICE_USD: "0.001" }),
+      makeEnv({
+        BOUNDLESS_MAX_PRICE_USD: "0.05",
+        BOUNDLESS_MIN_PRICE_USD: "0.001",
+      }),
     );
     expect(config!.maxPriceUsd).toBe(0.05);
     expect(config!.minPriceUsd).toBe(0.001);
@@ -189,29 +205,39 @@ describe("resolveBoundlessConfig", () => {
 
   it("defaults to Base Mainnet auction timing", () => {
     const config = resolveBoundlessConfig(makeEnv())!;
-    expect(config.flatPeriodSec).toBe(60);     // 1 min
-    expect(config.rampPeriodSec).toBe(660);    // 11 min
-    expect(config.lockTimeoutSec).toBe(1740);  // 29 min
-    expect(config.timeoutSec).toBe(3540);      // 59 min
+    expect(config.flatPeriodSec).toBe(60); // 1 min
+    expect(config.rampPeriodSec).toBe(660); // 11 min
+    expect(config.lockTimeoutSec).toBe(1740); // 29 min
+    expect(config.timeoutSec).toBe(3540); // 59 min
   });
 
   it("defaults to Base Mainnet chain config", () => {
     const config = resolveBoundlessConfig(makeEnv())!;
     expect(config.chainId).toBe(8453n);
-    expect(config.marketAddress).toBe("0xfd152dadc5183870710fe54f939eae3ab9f0fe82");
-    expect(config.orderStreamUrl).toBe("https://base-mainnet.boundless.network");
+    expect(config.marketAddress).toBe(
+      "0xfd152dadc5183870710fe54f939eae3ab9f0fe82",
+    );
+    expect(config.orderStreamUrl).toBe(
+      "https://base-mainnet.boundless.network",
+    );
   });
 
   it("normalizes private key with 0x prefix", () => {
     const config = resolveBoundlessConfig(
-      makeEnv({ BOUNDLESS_PRIVATE_KEY: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }),
+      makeEnv({
+        BOUNDLESS_PRIVATE_KEY:
+          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      }),
     )!;
     expect(config.privateKey.startsWith("0x")).toBe(true);
   });
 
   it("normalizes image ID with 0x prefix", () => {
     const config = resolveBoundlessConfig(
-      makeEnv({ BOUNDLESS_IMAGE_ID: "37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111" }),
+      makeEnv({
+        BOUNDLESS_IMAGE_ID:
+          "37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
+      }),
     )!;
     expect(config.imageId.startsWith("0x")).toBe(true);
   });

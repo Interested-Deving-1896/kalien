@@ -32,7 +32,9 @@ export function SiteHeader() {
         </Link>
         <span className="flex items-center gap-1.5 rounded border border-[rgba(82,255,191,0.2)] bg-[rgba(82,255,191,0.06)] px-2 py-0.5 font-mono text-[0.65rem] text-[rgba(82,255,191,0.6)]">
           <span className="text-[rgba(82,255,191,0.4)]">seed</span>
-          <span className="text-[rgba(82,255,191,0.8)]">{seed !== null ? formatHex32(seed) : "···"}</span>
+          <span className="text-[rgba(82,255,191,0.8)]">
+            {seed !== null ? formatHex32(seed) : "···"}
+          </span>
           <span className="text-[rgba(82,255,191,0.25)]">·</span>
           <span title="next seed in">{formatCountdown(secondsLeft)}</span>
         </span>

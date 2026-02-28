@@ -608,7 +608,12 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
           cursor: null,
           limit: 200,
         });
-        return c.json({ success: true, forward: result, catchup: null, warning: null });
+        return c.json({
+          success: true,
+          forward: result,
+          catchup: null,
+          warning: null,
+        });
       }
       const result = await runScheduledLeaderboardSync(c.env);
       return c.json({ success: true, ...result });

@@ -658,9 +658,10 @@ function decodeScValBase64(value: unknown): unknown {
     if (binary.length >= 8) {
       const buf = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
-      const disc = (buf[0] << 24 | buf[1] << 16 | buf[2] << 8 | buf[3]) >>> 0;
-      if (disc === 15) { // SCV_SYMBOL
-        const strLen = (buf[4] << 24 | buf[5] << 16 | buf[6] << 8 | buf[7]) >>> 0;
+      const disc = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0;
+      if (disc === 15) {
+        // SCV_SYMBOL
+        const strLen = ((buf[4] << 24) | (buf[5] << 16) | (buf[6] << 8) | buf[7]) >>> 0;
         if (8 + strLen <= binary.length) {
           return new TextDecoder().decode(buf.slice(8, 8 + strLen));
         }
@@ -715,7 +716,9 @@ function extractScoreEventsFromLedgerBatch(
       for (let eventIndex = 0; eventIndex < txEvents.length; eventIndex += 1) {
         inspectedEventCount += 1;
 
-        const wrappedEvent = txEvents[eventIndex] as { event: () => xdr.ContractEvent };
+        const wrappedEvent = txEvents[eventIndex] as {
+          event: () => xdr.ContractEvent;
+        };
         const contractEvent = wrappedEvent.event();
         if (contractEvent.type().name !== "contract") {
           continue;
@@ -1621,9 +1624,12 @@ async function fetchLeaderboardEventsFromRpcEvents(
       }
 
       const fetchResult = normalizeRpcGetEventsPayload(result);
-      // Propagate retention bounds if we fetched them during health clamping
-      if (rpcBounds?.oldestLedger !== null && rpcBounds?.oldestLedger !== undefined) {
-        fetchResult.oldestLedger = rpcBounds.oldestLedger;
+      // Propagate retention bounds if we fetched them during health clamping.
+      // rpcBounds is mutated via ensureRpcBounds() (called through await above),
+      // but TS narrows it to `null` because only the closure assigns it.
+      const resolvedBounds = rpcBounds as RpcLedgerBounds | null;
+      if (resolvedBounds?.oldestLedger != null) {
+        fetchResult.oldestLedger = resolvedBounds.oldestLedger;
       }
       return fetchResult;
     }

@@ -1,40 +1,46 @@
 import { describe, expect, it, mock } from "bun:test";
-import { packJournalRaw, type JournalFields } from "../../shared/stellar/journal";
-import { bytesToHex, sha256Hex, STELLAR_GROTH16_SEAL_LEN } from "../../worker/proof-artifact";
+import {
+  packJournalRaw,
+  type JournalFields,
+} from "../../shared/stellar/journal";
+import {
+  bytesToHex,
+  sha256Hex,
+  STELLAR_GROTH16_SEAL_LEN,
+} from "../../worker/proof-artifact";
 import type { WorkerEnv } from "../../worker/env";
 
 // Mock coordinator and prover before importing the consumer
 mock.module("../../worker/durable/coordinator", () => ({
   coordinatorStub: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __coordinator: Record<string, unknown> }).__coordinator,
+    (env as WorkerEnv & { __coordinator: Record<string, unknown> })
+      .__coordinator,
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
 
 mock.module("../../worker/boundless/config", () => ({
   resolveBoundlessConfig: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ?? null,
+    (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ??
+    null,
 }));
 
 mock.module("../../worker/boundless/sdk/client", () => ({
   BoundlessClient: class MockBoundlessClient {
     constructor(_config: unknown) {}
-    async submitRequest(
-      _tape: Uint8Array,
-      _metadata: unknown,
-    ) {
+    async submitRequest(_tape: Uint8Array, _metadata: unknown) {
       return (globalThis as Record<string, unknown>).__boundlessSubmitResult;
     }
   },
-  fetchBoundlessCycles: async () => ({ programCycles: null, totalCycles: null }),
+  fetchBoundlessCycles: async () => ({
+    programCycles: null,
+    totalCycles: null,
+  }),
 }));
 
 mock.module("../../worker/prover/client", () => ({
-  submitToProver: async (
-    env: WorkerEnv,
-    _tape: Uint8Array,
-    _opts: unknown,
-  ) => (env as WorkerEnv & { __submitResult: unknown }).__submitResult,
+  submitToProver: async (env: WorkerEnv, _tape: Uint8Array, _opts: unknown) =>
+    (env as WorkerEnv & { __submitResult: unknown }).__submitResult,
   getValidatedProverHealth: async () => {
     throw new Error("health check not mocked in queue consumer tests");
   },
@@ -45,18 +51,27 @@ mock.module("../../worker/prover/client", () => ({
 }));
 
 mock.module("../../worker/claim/submit", () => ({
-  submitClaim: async (
-    env: WorkerEnv,
-    _request: unknown,
-  ) => {
-    const result = (env as WorkerEnv & { __claimResult: unknown }).__claimResult;
+  submitClaim: async (env: WorkerEnv, _request: unknown) => {
+    const result = (env as WorkerEnv & { __claimResult: unknown })
+      .__claimResult;
     // Fallback for when this mock leaks to other test files
-    return result ?? { type: "fatal", message: "claim submission is not configured; set SCORE_CONTRACT_ID, RELAYER_URL, and RELAYER_API_KEY for relayer-only submission" };
+    return (
+      result ?? {
+        type: "fatal",
+        message:
+          "claim submission is not configured; set SCORE_CONTRACT_ID, RELAYER_URL, and RELAYER_API_KEY for relayer-only submission",
+      }
+    );
   },
 }));
 
-const { handleQueueBatch, handleVastQueueBatch, handleDlqBatch, handleClaimQueueBatch, handleClaimDlqBatch } =
-  await import("../../worker/queue/consumer");
+const {
+  handleQueueBatch,
+  handleVastQueueBatch,
+  handleDlqBatch,
+  handleClaimQueueBatch,
+  handleClaimDlqBatch,
+} = await import("../../worker/queue/consumer");
 
 function makeMessage<T>(body: T, attempts = 1): Message<T> {
   let acked = false;
@@ -90,7 +105,9 @@ function makeBatch<T>(messages: Message<T>[]): MessageBatch<T> {
   } as MessageBatch<T>;
 }
 
-function makeCoordinator(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeCoordinator(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   const calls: Array<{ method: string; args: unknown[] }> = [];
 
   const defaults: Record<string, (...args: unknown[]) => Promise<unknown>> = {
@@ -147,7 +164,10 @@ function makeEnv(overrides: Record<string, unknown> = {}): WorkerEnv {
 describe("handleQueueBatch (Boundless)", () => {
   it("acks message with invalid payload (missing jobId)", async () => {
     const msg = makeMessage({} as { jobId: string });
-    await handleQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
+    await handleQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: makeCoordinator() }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -156,7 +176,10 @@ describe("handleQueueBatch (Boundless)", () => {
       beginQueueAttempt: async () => ({ jobId: "job-1", status: "succeeded" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -331,7 +354,9 @@ describe("handleQueueBatch (Boundless)", () => {
     }>;
     const failCall = calls.find((c) => c.method === "markFailed");
     expect(failCall).toBeDefined();
-    expect(String(failCall!.args[1])).toContain("boundless backend not configured");
+    expect(String(failCall!.args[1])).toContain(
+      "boundless backend not configured",
+    );
   });
 });
 
@@ -342,7 +367,10 @@ describe("handleQueueBatch (Boundless)", () => {
 describe("handleVastQueueBatch (VastAI)", () => {
   it("acks message with invalid payload", async () => {
     const msg = makeMessage({} as { jobId: string });
-    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
+    await handleVastQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: makeCoordinator() }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -356,7 +384,10 @@ describe("handleVastQueueBatch (VastAI)", () => {
       }),
     });
     const msg = makeMessage({ jobId: "job-1" }, 1);
-    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleVastQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
@@ -473,7 +504,10 @@ describe("handleDlqBatch", () => {
       getJob: async () => ({ jobId: "job-1", status: "retrying" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleDlqBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
@@ -486,7 +520,10 @@ describe("handleDlqBatch", () => {
       getJob: async () => ({ jobId: "job-1", status: "succeeded" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleDlqBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
@@ -496,7 +533,10 @@ describe("handleDlqBatch", () => {
 
   it("acks invalid messages", async () => {
     const msg = makeMessage({} as { jobId: string });
-    await handleDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
+    await handleDlqBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: makeCoordinator() }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 });
@@ -505,7 +545,8 @@ describe("handleDlqBatch", () => {
 // Claim queue
 // ---------------------------------------------------------------------------
 
-const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const TEST_CLAIMANT =
+  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const TEST_JOURNAL: JournalFields = {
   seed_id: 1,
   seed: 1,
@@ -534,7 +575,10 @@ describe("handleClaimQueueBatch", () => {
       beginClaimAttempt: async () => ({ jobId: "job-1", status: "failed" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleClaimQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleClaimQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -548,7 +592,10 @@ describe("handleClaimQueueBatch", () => {
       }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleClaimQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleClaimQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -705,7 +752,7 @@ describe("handleClaimQueueBatch", () => {
         type: "fatal",
         message: "claim rejected",
         errorDetail:
-          "errorDetails: { details: { error: \"escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #3)\" } }",
+          'errorDetails: { details: { error: "escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #3)" } }',
       },
       PROOF_ARTIFACTS: {
         get: async () => ({
@@ -752,7 +799,7 @@ describe("handleClaimQueueBatch", () => {
         type: "fatal",
         message: "claim rejected",
         errorDetail:
-          "errorDetails: { details: { error: \"escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #5)\" } }",
+          'errorDetails: { details: { error: "escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #5)" } }',
       },
       PROOF_ARTIFACTS: {
         get: async () => ({
@@ -779,7 +826,10 @@ describe("handleClaimDlqBatch", () => {
       }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleClaimDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    await handleClaimDlqBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;

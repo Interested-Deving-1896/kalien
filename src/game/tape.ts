@@ -105,11 +105,7 @@ export class TapeRecorder {
   }
 }
 
-export function serializeTape(
-  seed: number,
-  inputs: Uint8Array,
-  finalScore: number,
-): Uint8Array {
+export function serializeTape(seed: number, inputs: Uint8Array, finalScore: number): Uint8Array {
   const frameCount = inputs.length;
   const bodyBytes = (frameCount + 1) >> 1;
   const totalSize = TAPE_HEADER_SIZE + bodyBytes + TAPE_FOOTER_SIZE;

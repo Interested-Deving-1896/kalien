@@ -54,7 +54,8 @@ describe("leaderboard helpers", () => {
     const events: LeaderboardEventRecord[] = [
       makeEvent({
         eventId: "evt-a1",
-        claimantAddress: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+        claimantAddress:
+          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
         seed: 1,
         frameCount: 900,
         previousBest: 0,
@@ -63,7 +64,8 @@ describe("leaderboard helpers", () => {
       }),
       makeEvent({
         eventId: "evt-a2",
-        claimantAddress: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+        claimantAddress:
+          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
         seed: 1,
         frameCount: 1200,
         previousBest: 1200,
@@ -72,7 +74,8 @@ describe("leaderboard helpers", () => {
       }),
       makeEvent({
         eventId: "evt-b1",
-        claimantAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
+        claimantAddress:
+          "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
         seed: 8,
         frameCount: 1100,
         previousBest: 0,
@@ -107,7 +110,8 @@ describe("leaderboard helpers", () => {
     const events: LeaderboardEventRecord[] = [
       makeEvent({
         eventId: "old",
-        claimantAddress: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+        claimantAddress:
+          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
         seed: 1,
         previousBest: 0,
         newBest: 500,
@@ -115,7 +119,8 @@ describe("leaderboard helpers", () => {
       }),
       makeEvent({
         eventId: "fresh",
-        claimantAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
+        claimantAddress:
+          "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
         seed: 1,
         previousBest: 0,
         newBest: 900,
@@ -139,7 +144,8 @@ describe("leaderboard helpers", () => {
     const events: LeaderboardEventRecord[] = [
       makeEvent({
         eventId: "evt-a",
-        claimantAddress: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+        claimantAddress:
+          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
         seed: 1,
         previousBest: 0,
         newBest: 1000,
@@ -147,7 +153,8 @@ describe("leaderboard helpers", () => {
       }),
       makeEvent({
         eventId: "evt-b",
-        claimantAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
+        claimantAddress:
+          "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
         seed: 2,
         previousBest: 0,
         newBest: 900,

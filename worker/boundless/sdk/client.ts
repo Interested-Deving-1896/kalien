@@ -178,8 +178,9 @@ export class BoundlessClient {
         message: `failed building expected journal: ${safeErrorMessage(error)}`,
       };
     }
-    const digestInput = expectedJournal as unknown as BufferSource;
-    const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput));
+    const journalDigest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", expectedJournal as unknown as BufferSource),
+    );
     // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
     const imageIdBytes = hexToUint8Array(config.imageId as Hex);
     const predicateData = new Uint8Array(64);
@@ -374,7 +375,9 @@ export class BoundlessClient {
             args: [requestId],
           });
           if (price > 0n) lockPriceWei = price;
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
       }
 
       return {
@@ -461,13 +464,13 @@ export class BoundlessClient {
       };
     }
 
-    if ((journal.frame_count >>> 0) === 0) {
+    if (journal.frame_count >>> 0 === 0) {
       return {
         type: "fatal",
         message: "boundless delivered invalid journal: frame_count must be > 0",
       };
     }
-    if ((journal.final_score >>> 0) === 0) {
+    if (journal.final_score >>> 0 === 0) {
       return {
         type: "fatal",
         message: "boundless delivered invalid journal: final_score must be > 0",
@@ -581,7 +584,12 @@ export class BoundlessClient {
   private async submitToOrderStream(
     request: BoundlessProofRequest,
     signature: Hex,
-    domain: { name: string; version: string; chainId: bigint; verifyingContract: `0x${string}` },
+    domain: {
+      name: string;
+      version: string;
+      chainId: bigint;
+      verifyingContract: `0x${string}`;
+    },
   ): Promise<void> {
     const config = this.config;
 
@@ -686,7 +694,13 @@ export class BoundlessClient {
       ],
     });
 
-    const ourLog = (logs as Array<{ topics?: string[]; data?: string; transactionHash?: string }>).find((log) => {
+    const ourLog = (
+      logs as Array<{
+        topics?: string[];
+        data?: string;
+        transactionHash?: string;
+      }>
+    ).find((log) => {
       const topic0 = log.topics?.[0]?.toLowerCase();
       const topic1 = log.topics?.[1]?.toLowerCase();
       return (
@@ -701,9 +715,7 @@ export class BoundlessClient {
     }
 
     // Extract prover address from topics[2] (indexed address, left-padded to 32 bytes)
-    const proverAddress = ourLog.topics?.[2]
-      ? `0x${ourLog.topics[2].slice(-40)}`
-      : null;
+    const proverAddress = ourLog.topics?.[2] ? `0x${ourLog.topics[2].slice(-40)}` : null;
     const fulfillmentTxHash = ourLog.transactionHash ?? null;
 
     const result = this.parseFulfillmentFromEventData(ourLog.data);
@@ -883,7 +895,9 @@ export async function fetchBoundlessCycles(
           return null;
         }
 
-        const programCycles = parsePositiveNumber(entry.program_cycles ?? entry.total_program_cycles);
+        const programCycles = parsePositiveNumber(
+          entry.program_cycles ?? entry.total_program_cycles,
+        );
         const totalCycles = parsePositiveNumber(entry.total_cycles);
         if (totalCycles == null && programCycles == null) {
           return null;

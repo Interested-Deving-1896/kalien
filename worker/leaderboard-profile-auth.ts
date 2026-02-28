@@ -221,7 +221,10 @@ export async function fetchCredentialPublicKeyFromChain({
     });
 
     const tx = await client.get_context_rules({
-      context_rule_type: { tag: "Default", values: undefined as unknown as void },
+      context_rule_type: {
+        tag: "Default",
+        values: undefined as unknown as void,
+      },
     });
     const rules = tx.result;
 

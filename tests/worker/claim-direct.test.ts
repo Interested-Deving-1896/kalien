@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { resolveDirectClaimConfig, isDirectClaimConfigured } from "../../worker/claim/direct";
+import {
+  resolveDirectClaimConfig,
+  isDirectClaimConfigured,
+} from "../../worker/claim/direct";
 import type { WorkerEnv } from "../../worker/env";
 
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
@@ -19,18 +22,28 @@ describe("resolveDirectClaimConfig", () => {
   });
 
   it("returns null when SCORE_CONTRACT_ID is missing", () => {
-    expect(resolveDirectClaimConfig(makeEnv({ SCORE_CONTRACT_ID: "" }))).toBeNull();
-    expect(resolveDirectClaimConfig(makeEnv({ SCORE_CONTRACT_ID: undefined }))).toBeNull();
+    expect(
+      resolveDirectClaimConfig(makeEnv({ SCORE_CONTRACT_ID: "" })),
+    ).toBeNull();
+    expect(
+      resolveDirectClaimConfig(makeEnv({ SCORE_CONTRACT_ID: undefined })),
+    ).toBeNull();
   });
 
   it("returns null when RELAYER_URL is missing", () => {
     expect(resolveDirectClaimConfig(makeEnv({ RELAYER_URL: "" }))).toBeNull();
-    expect(resolveDirectClaimConfig(makeEnv({ RELAYER_URL: undefined }))).toBeNull();
+    expect(
+      resolveDirectClaimConfig(makeEnv({ RELAYER_URL: undefined })),
+    ).toBeNull();
   });
 
   it("returns null when RELAYER_API_KEY is missing", () => {
-    expect(resolveDirectClaimConfig(makeEnv({ RELAYER_API_KEY: "" }))).toBeNull();
-    expect(resolveDirectClaimConfig(makeEnv({ RELAYER_API_KEY: undefined }))).toBeNull();
+    expect(
+      resolveDirectClaimConfig(makeEnv({ RELAYER_API_KEY: "" })),
+    ).toBeNull();
+    expect(
+      resolveDirectClaimConfig(makeEnv({ RELAYER_API_KEY: undefined })),
+    ).toBeNull();
   });
 
   it("works without pluginId for managed channels hostname", () => {
@@ -64,7 +77,9 @@ describe("resolveDirectClaimConfig", () => {
   });
 
   it("returns null for invalid URL", () => {
-    const config = resolveDirectClaimConfig(makeEnv({ RELAYER_URL: "not a url" }));
+    const config = resolveDirectClaimConfig(
+      makeEnv({ RELAYER_URL: "not a url" }),
+    );
     expect(config).toBeNull();
   });
 });
@@ -75,6 +90,8 @@ describe("isDirectClaimConfigured", () => {
   });
 
   it("returns false when not configured", () => {
-    expect(isDirectClaimConfigured(makeEnv({ SCORE_CONTRACT_ID: "" }))).toBe(false);
+    expect(isDirectClaimConfigured(makeEnv({ SCORE_CONTRACT_ID: "" }))).toBe(
+      false,
+    );
   });
 });

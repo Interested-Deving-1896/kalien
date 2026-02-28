@@ -99,9 +99,7 @@ export async function buildProofArtifactV4(
   journalRaw: Uint8Array,
 ): Promise<ProofArtifactV4> {
   if (seal.length !== STELLAR_GROTH16_SEAL_LEN) {
-    throw new Error(
-      `seal must be exactly ${STELLAR_GROTH16_SEAL_LEN} bytes (got ${seal.length})`,
-    );
+    throw new Error(`seal must be exactly ${STELLAR_GROTH16_SEAL_LEN} bytes (got ${seal.length})`);
   }
   if (journalRaw.length !== JOURNAL_LEN) {
     throw new Error(`journal must be exactly ${JOURNAL_LEN} bytes (got ${journalRaw.length})`);
@@ -152,7 +150,9 @@ export function parseProofArtifactV4(payload: unknown): ProofArtifactV4 {
   const journalRawHex =
     typeof artifact.journal_raw_hex === "string" ? artifact.journal_raw_hex.toLowerCase() : "";
   const journalDigestHex =
-    typeof artifact.journal_digest_hex === "string" ? artifact.journal_digest_hex.toLowerCase() : "";
+    typeof artifact.journal_digest_hex === "string"
+      ? artifact.journal_digest_hex.toLowerCase()
+      : "";
   const requestedReceiptKind = artifact.requested_receipt_kind;
   const producedReceiptKind = artifact.produced_receipt_kind;
 

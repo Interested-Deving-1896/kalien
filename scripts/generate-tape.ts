@@ -16,10 +16,12 @@ import { deserializeTape } from "../src/game/tape";
 import { fetchSeedFromContract } from "../src/chain/seed";
 
 const DEFAULT_MAX_FRAMES = 36_000;
-const DEFAULT_RPC_URL = process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
-const DEFAULT_CONTRACT_ID = process.env.SCORE_CONTRACT_ID
-  ?? process.env.VITE_SCORE_CONTRACT_ID
-  ?? "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
+const DEFAULT_RPC_URL =
+  process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
+const DEFAULT_CONTRACT_ID =
+  process.env.SCORE_CONTRACT_ID ??
+  process.env.VITE_SCORE_CONTRACT_ID ??
+  "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
 
 // Parse arguments
 let explicitSeed: number | null = null;
@@ -71,7 +73,9 @@ if (!outputPath) {
 }
 
 console.log(`Generating tape:`);
-console.log(`  Seed:       0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
+console.log(
+  `  Seed:       0x${seed.toString(16).toUpperCase().padStart(8, "0")}`,
+);
 console.log(`  Max frames: ${maxFrames}`);
 console.log(`  Output:     ${outputPath}`);
 console.log();
@@ -110,7 +114,9 @@ console.log(`  Frames: ${frame}`);
 console.log(`  Score:  ${game.getScore()}`);
 console.log(`  Wave:   ${game.getWave()}`);
 console.log(`  Lives:  ${game.getLives()}`);
-console.log(`  Time:   ${elapsed.toFixed(1)}ms (${(frame / (elapsed / 1000)).toFixed(0)} fps)`);
+console.log(
+  `  Time:   ${elapsed.toFixed(1)}ms (${(frame / (elapsed / 1000)).toFixed(0)} fps)`,
+);
 
 const tapeData = game.getTape();
 if (!tapeData) {
@@ -128,7 +134,10 @@ console.log("Verifying tape...");
 const verifyData = new Uint8Array(readFileSync(outputPath));
 const tape = deserializeTape(verifyData, maxFrames);
 
-const verifyGame = new AsteroidsGame({ headless: true, seed: tape.header.seed });
+const verifyGame = new AsteroidsGame({
+  headless: true,
+  seed: tape.header.seed,
+});
 verifyGame.startNewGame(tape.header.seed);
 const verifySource = new TapeInputSource(tape.inputs);
 verifyGame.setInputSource(verifySource);
@@ -143,7 +152,9 @@ const scoreOk = vScore === tape.footer.finalScore;
 if (scoreOk) {
   console.log("VERIFICATION PASSED");
 } else {
-  console.error(`  Score mismatch: got ${vScore}, expected ${tape.footer.finalScore}`);
+  console.error(
+    `  Score mismatch: got ${vScore}, expected ${tape.footer.finalScore}`,
+  );
   console.error("VERIFICATION FAILED");
   process.exit(1);
 }

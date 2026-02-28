@@ -36,9 +36,7 @@ export function PlayerCard({ player }: PlayerCardProps) {
           {name}
         </h2>
         <p className="m-0">
-          <strong className="text-xs uppercase tracking-[0.04em] text-text-dim">
-            Address:
-          </strong>{" "}
+          <strong className="text-xs uppercase tracking-[0.04em] text-text-dim">Address:</strong>{" "}
           <code className="break-all text-text-soft">{player.claimant_address}</code>
         </p>
         {player.profile?.linkUrl && isSafeUrl(player.profile.linkUrl) ? (

@@ -2,10 +2,7 @@ import { Hono } from "hono";
 import { cache } from "hono/cache";
 import { fetchBoundlessCycles } from "../boundless/sdk/client";
 import { resolveBoundlessConfig } from "../boundless/config";
-import {
-  DEFAULT_MAX_TAPE_BYTES,
-  OPPORTUNISTIC_POLL_STALE_MS,
-} from "../constants";
+import { DEFAULT_MAX_TAPE_BYTES, OPPORTUNISTIC_POLL_STALE_MS } from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
@@ -156,8 +153,9 @@ function withCycleStats(
   programCycles: number | null | undefined,
   totalCycles: number | null | undefined,
 ): ProofJobRecord {
-  const stats = job.result?.summary?.stats;
-  if (!stats) return job;
+  const result = job.result;
+  const stats = result?.summary?.stats;
+  if (!result || !stats) return job;
 
   const normalizedTotal = normalizeCycleMetric(totalCycles);
   if (normalizedTotal == null || normalizedTotal <= 0) return job;
@@ -179,9 +177,9 @@ function withCycleStats(
   return {
     ...job,
     result: {
-      ...job.result!,
+      ...result,
       summary: {
-        ...job.result!.summary,
+        ...result.summary,
         stats: nextStats,
       },
     },

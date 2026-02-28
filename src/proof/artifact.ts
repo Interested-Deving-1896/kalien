@@ -12,10 +12,11 @@ function normalizeHex(raw: string, fieldName: string, expectedLength: number): s
 }
 
 export function extractGroth16SealFromArtifact(artifact: unknown): Uint8Array {
-  const parsed = artifact as ProofArtifactV4Like;
-  if (!parsed || typeof parsed !== "object") {
+  if (!artifact || typeof artifact !== "object") {
     throw new Error("proof artifact payload must be an object");
   }
+
+  const parsed = artifact as ProofArtifactV4Like;
 
   if (parsed.version !== "v4") {
     throw new Error(`unsupported proof artifact version: ${String(parsed.version)}`);

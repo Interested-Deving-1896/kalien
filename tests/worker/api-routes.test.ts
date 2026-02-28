@@ -1,7 +1,8 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 
-const VALID_CLAIMANT_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
+const VALID_CLAIMANT_CONTRACT =
+  "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
 const EXAMPLE_GENERATED_AT = "2026-02-14T00:00:00.000Z";
 const EXAMPLE_INGESTION_STATE = {
   provider: "rpc" as const,
@@ -135,17 +136,16 @@ mock.module("../../worker/leaderboard-sync", () => ({
 
 mock.module("../../worker/durable/coordinator", () => ({
   coordinatorStub: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __coordinator: Record<string, unknown> }).__coordinator,
+    (env as WorkerEnv & { __coordinator: Record<string, unknown> })
+      .__coordinator,
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
 
 const { Hono } = await import("hono");
 const { createApiRouter } = await import("../../worker/api/routes");
-const {
-  createLeaderboardDevRouter,
-  createLeaderboardPublicRouter,
-} = await import("../../worker/api/leaderboard-routes");
+const { createLeaderboardDevRouter, createLeaderboardPublicRouter } =
+  await import("../../worker/api/leaderboard-routes");
 
 const noopExecutionContext = {
   waitUntil() {
@@ -156,7 +156,9 @@ const noopExecutionContext = {
   },
 } as unknown as ExecutionContext;
 
-function makeCoordinatorStub(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeCoordinatorStub(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     getActiveJobsSummary: async () => ({
       total: 0,
@@ -185,7 +187,10 @@ function makeCoordinatorStub(overrides: Record<string, unknown> = {}): Record<st
 function makeMockD1Database(): D1Database {
   return {
     prepare: (query: string) => ({
-      bind: () => ({ run: async () => ({ success: true }), all: async () => ({ results: [] }) }),
+      bind: () => ({
+        run: async () => ({ success: true }),
+        all: async () => ({ results: [] }),
+      }),
       run: async () => ({ success: true }),
       all: async () => ({ results: [] }),
       first: async () => null,
@@ -198,7 +203,9 @@ function makeMockD1Database(): D1Database {
 }
 
 function makeEnv(
-  overrides: (Partial<WorkerEnv> & { __coordinator?: Record<string, unknown> }) | undefined = {},
+  overrides:
+    | (Partial<WorkerEnv> & { __coordinator?: Record<string, unknown> })
+    | undefined = {},
 ): WorkerEnv {
   const coordinator = overrides.__coordinator ?? makeCoordinatorStub();
 
@@ -246,7 +253,11 @@ async function requestApi(
 
 describe("API routes", () => {
   it("GET /health returns degraded prover status when health validation fails", async () => {
-    const response = await requestApi("/health", undefined, makeEnv({ PROVER_BASE_URL: "" }));
+    const response = await requestApi(
+      "/health",
+      undefined,
+      makeEnv({ PROVER_BASE_URL: "" }),
+    );
     expect(response.status).toBe(200);
 
     const payload = (await response.json()) as {
@@ -328,12 +339,20 @@ describe("API routes", () => {
   });
 
   it("GET /leaderboard validates window query", async () => {
-    const response = await requestApi("/leaderboard?window=bad-window", undefined, makeEnv());
+    const response = await requestApi(
+      "/leaderboard?window=bad-window",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(400);
   });
 
   it("GET /leaderboard returns leaderboard page for valid queries", async () => {
-    const response = await requestApi("/leaderboard?window=all&limit=25&offset=0", undefined, makeEnv());
+    const response = await requestApi(
+      "/leaderboard?window=all&limit=25&offset=0",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(200);
 
     const payload = (await response.json()) as {
@@ -347,7 +366,11 @@ describe("API routes", () => {
   });
 
   it("GET /leaderboard/player/:claimantAddress validates claimant address", async () => {
-    const response = await requestApi("/leaderboard/player/not-a-valid-claimant", undefined, makeEnv());
+    const response = await requestApi(
+      "/leaderboard/player/not-a-valid-claimant",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(400);
   });
 
@@ -413,7 +436,11 @@ describe("API routes", () => {
   });
 
   it("GET /proofs/jobs/:jobId returns 404 when job does not exist", async () => {
-    const response = await requestApi("/proofs/jobs/job-missing", undefined, makeEnv());
+    const response = await requestApi(
+      "/proofs/jobs/job-missing",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(404);
   });
 
@@ -434,7 +461,11 @@ describe("API routes", () => {
   });
 
   it("GET /proofs/jobs/:jobId/result returns 404 when result artifact is not found", async () => {
-    const response = await requestApi("/proofs/jobs/job-missing/result", undefined, makeEnv());
+    const response = await requestApi(
+      "/proofs/jobs/job-missing/result",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(404);
   });
 
@@ -550,7 +581,10 @@ describe("API routes", () => {
       makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as { success: boolean; message: string };
+    const payload = (await response.json()) as {
+      success: boolean;
+      message: string;
+    };
     expect(payload.success).toBe(true);
     expect(payload.message).toContain("cleared");
   });
@@ -612,15 +646,25 @@ describe("API routes", () => {
   it("GET /proofs/jobs returns 400 when address param is missing", async () => {
     const response = await requestApi("/proofs/jobs", undefined, makeEnv());
     expect(response.status).toBe(400);
-    const payload = (await response.json()) as { success: boolean; error: string };
+    const payload = (await response.json()) as {
+      success: boolean;
+      error: string;
+    };
     expect(payload.success).toBe(false);
     expect(payload.error).toContain("address");
   });
 
   it("GET /proofs/jobs returns 400 for an invalid address", async () => {
-    const response = await requestApi("/proofs/jobs?address=not-valid", undefined, makeEnv());
+    const response = await requestApi(
+      "/proofs/jobs?address=not-valid",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(400);
-    const payload = (await response.json()) as { success: boolean; error: string };
+    const payload = (await response.json()) as {
+      success: boolean;
+      error: string;
+    };
     expect(payload.success).toBe(false);
     expect(payload.error).toContain("invalid address");
   });
@@ -656,9 +700,20 @@ describe("API routes", () => {
       tape: {
         sizeBytes: 512,
         key: "proof-jobs/job-abc/input.tape",
-        metadata: { seed: 1, seedId: 1, frameCount: 10, finalScore: 100, checksum: 0 },
+        metadata: {
+          seed: 1,
+          seedId: 1,
+          frameCount: 10,
+          finalScore: 100,
+          checksum: 0,
+        },
       },
-      queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
+      queue: {
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+      },
       prover: {
         jobId: null,
         status: null,
@@ -718,9 +773,20 @@ describe("API routes", () => {
       tape: {
         sizeBytes: 512,
         key: "proof-jobs/job-cycles/input.tape",
-        metadata: { seed: 1, seedId: 1, frameCount: 10, finalScore: 100, checksum: 0 },
+        metadata: {
+          seed: 1,
+          seedId: 1,
+          frameCount: 10,
+          finalScore: 100,
+          checksum: 0,
+        },
       },
-      queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
+      queue: {
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+      },
       prover: {
         jobId: "0xabc",
         status: "succeeded",
@@ -796,7 +862,11 @@ describe("API routes", () => {
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
       success: boolean;
-      jobs: Array<{ result: { summary: { stats: { total_cycles: number; user_cycles: number } } } }>;
+      jobs: Array<{
+        result: {
+          summary: { stats: { total_cycles: number; user_cycles: number } };
+        };
+      }>;
     };
     expect(payload.success).toBe(true);
     expect(payload.jobs[0].result.summary.stats.total_cycles).toBe(789);
@@ -814,13 +884,40 @@ describe("API routes", () => {
       tape: {
         sizeBytes: 100,
         key: `proof-jobs/job-${i}/input.tape`,
-        metadata: { seed: i, seedId: i, frameCount: 10, finalScore: 100, checksum: 0 },
+        metadata: {
+          seed: i,
+          seedId: i,
+          frameCount: 10,
+          finalScore: 100,
+          checksum: 0,
+        },
       },
-      queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
-      prover: { jobId: null, status: null, statusUrl: null, segmentLimitPo2: null, lastPolledAt: null, pollingErrors: 0 },
+      queue: {
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+      },
+      prover: {
+        jobId: null,
+        status: null,
+        statusUrl: null,
+        segmentLimitPo2: null,
+        lastPolledAt: null,
+        pollingErrors: 0,
+      },
       proverAttempts: [],
       result: null,
-      claim: { claimantAddress: VALID_CLAIMANT_CONTRACT, status: "queued", attempts: 0, lastAttemptAt: null, lastError: null, nextRetryAt: null, submittedAt: null, txHash: null },
+      claim: {
+        claimantAddress: VALID_CLAIMANT_CONTRACT,
+        status: "queued",
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+        submittedAt: null,
+        txHash: null,
+      },
       error: null,
     }));
 
@@ -843,7 +940,11 @@ describe("API routes", () => {
   // ── GET /proofs/jobs/:jobId/tape ──────────────────────────────────────────
 
   it("GET /proofs/jobs/:jobId/tape returns 404 when job does not exist", async () => {
-    const response = await requestApi("/proofs/jobs/no-such-job/tape", undefined, makeEnv());
+    const response = await requestApi(
+      "/proofs/jobs/no-such-job/tape",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(404);
   });
 
@@ -855,7 +956,11 @@ describe("API routes", () => {
         __coordinator: makeCoordinatorStub({
           getJob: async () => ({
             jobId: "job-exists",
-            tape: { key: "proof-jobs/job-exists/input.tape", sizeBytes: 100, metadata: {} },
+            tape: {
+              key: "proof-jobs/job-exists/input.tape",
+              sizeBytes: 100,
+              metadata: {},
+            },
           }),
         }),
         // PROOF_ARTIFACTS.get returns null (tape not in R2)
@@ -878,7 +983,11 @@ describe("API routes", () => {
         __coordinator: makeCoordinatorStub({
           getJob: async () => ({
             jobId: "job-with-tape",
-            tape: { key: "proof-jobs/job-with-tape/input.tape", sizeBytes: 4, metadata: {} },
+            tape: {
+              key: "proof-jobs/job-with-tape/input.tape",
+              sizeBytes: 4,
+              metadata: {},
+            },
           }),
         }),
         PROOF_ARTIFACTS: {
@@ -896,8 +1005,12 @@ describe("API routes", () => {
       }),
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("application/octet-stream");
-    expect(response.headers.get("content-disposition")).toContain("job-with-tape.tape");
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toContain(
+      "job-with-tape.tape",
+    );
     const buf = await response.arrayBuffer();
     expect(new Uint8Array(buf)).toEqual(tapeBody);
   });

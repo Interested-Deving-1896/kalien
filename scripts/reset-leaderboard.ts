@@ -14,7 +14,8 @@ const devAuthHeaders: Record<string, string> = DEV_API_KEY
   ? { Authorization: `Bearer ${DEV_API_KEY}` }
   : {};
 const TESTNET_RPC = "https://soroban-testnet.stellar.org/";
-const SCORE_CONTRACT = "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
+const SCORE_CONTRACT =
+  "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
 
 function makeEnv(): WorkerEnv {
   return {
@@ -33,7 +34,9 @@ async function main() {
     headers: devAuthHeaders,
   });
   if (!resetResponse.ok) {
-    console.error(`Reset failed (${resetResponse.status}): ${await resetResponse.text()}`);
+    console.error(
+      `Reset failed (${resetResponse.status}): ${await resetResponse.text()}`,
+    );
     process.exit(1);
   }
   console.log("Reset:", await resetResponse.json());
@@ -55,7 +58,9 @@ async function main() {
   const allEvents: LeaderboardEventRecord[] = [];
   const BATCH_SIZE = 10_000; // ledgers per batch
 
-  console.log(`Scanning for score_submitted events from ledger ${oldestLedger} to ${latestLedger}...`);
+  console.log(
+    `Scanning for score_submitted events from ledger ${oldestLedger} to ${latestLedger}...`,
+  );
 
   let fromLedger = oldestLedger;
   while (fromLedger < latestLedger) {
@@ -76,7 +81,9 @@ async function main() {
       }
     } catch (error) {
       // RPC may reject large ranges — shrink and retry
-      console.warn(`  ledgers ${fromLedger}-${toLedger}: error (${error}), skipping`);
+      console.warn(
+        `  ledgers ${fromLedger}-${toLedger}: error (${error}), skipping`,
+      );
     }
     fromLedger = toLedger;
   }
@@ -89,7 +96,9 @@ async function main() {
   }
 
   // Deduplicate by eventId
-  const uniqueEvents = [...new Map(allEvents.map((e) => [e.eventId, e])).values()];
+  const uniqueEvents = [
+    ...new Map(allEvents.map((e) => [e.eventId, e])).values(),
+  ];
   console.log(`After dedup: ${uniqueEvents.length} unique events.`);
 
   // 4. Seed real events into the leaderboard
@@ -100,13 +109,17 @@ async function main() {
     body: JSON.stringify({ events: uniqueEvents }),
   });
   if (!seedResponse.ok) {
-    console.error(`Seed failed (${seedResponse.status}): ${await seedResponse.text()}`);
+    console.error(
+      `Seed failed (${seedResponse.status}): ${await seedResponse.text()}`,
+    );
     process.exit(1);
   }
   console.log("Seed result:", await seedResponse.json());
 
   // 5. Verify the leaderboard
-  const lbResponse = await fetch(`${BASE_URL}/api/leaderboard?window=all&limit=50`);
+  const lbResponse = await fetch(
+    `${BASE_URL}/api/leaderboard?window=all&limit=50`,
+  );
   const lb = (await lbResponse.json()) as {
     entries: Array<Record<string, unknown>>;
     pagination: { total: number };

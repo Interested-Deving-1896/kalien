@@ -1,4 +1,4 @@
-import { Address, rpc, xdr } from "@stellar/stellar-sdk";
+import { Address, xdr } from "@stellar/stellar-sdk";
 import { Client as ScoreClient } from "asteroids-score";
 
 export const SEED_INTERVAL_SECONDS = 600; // 10 minutes
@@ -21,10 +21,7 @@ export async function fetchSeedById(
   const timeout = setTimeout(() => controller.abort(), SEED_FETCH_TIMEOUT_MS);
   try {
     const contractAddress = Address.fromString(contractId).toScAddress();
-    const keyVal = xdr.ScVal.scvVec([
-      xdr.ScVal.scvSymbol("SeedById"),
-      xdr.ScVal.scvU32(seedId),
-    ]);
+    const keyVal = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("SeedById"), xdr.ScVal.scvU32(seedId)]);
     const ledgerKey = xdr.LedgerKey.contractData(
       new xdr.LedgerKeyContractData({
         contract: contractAddress,
@@ -36,7 +33,10 @@ export async function fetchSeedById(
 
     const response = await fetch(rpcUrl, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,

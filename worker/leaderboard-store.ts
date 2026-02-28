@@ -543,7 +543,11 @@ export async function upsertLeaderboardEvents(
 export async function upsertLeaderboardProfile(
   env: WorkerEnv,
   claimantAddress: string,
-  updates: { username: string | null; linkUrl: string | null; updatedAt?: string | null },
+  updates: {
+    username: string | null;
+    linkUrl: string | null;
+    updatedAt?: string | null;
+  },
 ): Promise<PlayerProfileRecord> {
   await ensureSchema(env);
   const db = getDb(env);

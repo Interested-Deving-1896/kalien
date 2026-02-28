@@ -326,7 +326,7 @@ function buildErrorDetail(parts: Record<string, unknown>): string {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(parts)) {
     if (value == null) continue;
-    const str = typeof value === "string" ? value : safeJsonStringify(value) ?? String(value);
+    const str = typeof value === "string" ? value : (safeJsonStringify(value) ?? String(value));
     if (str.length > 0) lines.push(`${key}: ${str}`);
   }
   return lines.join("\n");
@@ -380,8 +380,8 @@ async function submitSorobanOperationViaChannels(
           return classifySimulationContractError(contractCode, error.errorDetails);
         }
         // Opaque simulation failure — no contract error code found.
-        const isRetryable = !hasFatalClaimIndicator(error.message) &&
-          isRetryableDirectClaimMessage(error.message);
+        const isRetryable =
+          !hasFatalClaimIndicator(error.message) && isRetryableDirectClaimMessage(error.message);
         return {
           type: isRetryable ? "retry" : "fatal",
           message: `soroban simulation failed: ${error.message}`,
@@ -513,11 +513,10 @@ async function buildSubmitScorePayloadViaBindings(
   seal: Uint8Array,
   journalRaw: Uint8Array,
 ): Promise<SorobanInvokePayload> {
-  return buildInvokePayloadForContractFn(
-    scoreContractId,
-    "submit_score",
-    [xdr.ScVal.scvBytes(Buffer.from(seal)), xdr.ScVal.scvBytes(Buffer.from(journalRaw))],
-  );
+  return buildInvokePayloadForContractFn(scoreContractId, "submit_score", [
+    xdr.ScVal.scvBytes(Buffer.from(seal)),
+    xdr.ScVal.scvBytes(Buffer.from(journalRaw)),
+  ]);
 }
 
 function buildCurrentSeedPayload(scoreContractId: string): SorobanInvokePayload {
@@ -618,7 +617,11 @@ async function fetchSeedById(
 
     return value.u32() >>> 0;
   } catch (error) {
-    console.warn("[seed-refresh] fetchSeedById: failed", { rpcUrl, seedId, error: safeErrorMessage(error) });
+    console.warn("[seed-refresh] fetchSeedById: failed", {
+      rpcUrl,
+      seedId,
+      error: safeErrorMessage(error),
+    });
     return null;
   } finally {
     clearTimeout(timeout);
@@ -698,8 +701,8 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
     phase = "send_tx_current_seed";
     const result = await submitSorobanOperationViaChannels(config.channels, payload);
     let txHashCurrentSeed: string | null = null;
-    const currentSeedAcceptedWithoutHash = result.type === "retry" &&
-      isAcceptedWithoutHashMessage(result.message);
+    const currentSeedAcceptedWithoutHash =
+      result.type === "retry" && isAcceptedWithoutHashMessage(result.message);
     if (result.type === "success") {
       txHashCurrentSeed = result.txHash;
     } else if (!currentSeedAcceptedWithoutHash) {
@@ -730,10 +733,12 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
     const readDelaysMs = currentSeedAcceptedWithoutHash ? [0, 600, 1_500, 3_000] : [0, 1_000];
     for (const delayMs of readDelaysMs) {
       if (delayMs > 0) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential retry with backoff
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
 
       for (const candidateSeedId of candidateSeedIds) {
+        // eslint-disable-next-line no-await-in-loop -- sequential seed lookup with early exit
         const candidateSeed = await fetchSeedById(config.scoreContractId, rpcUrl, candidateSeedId);
         if (candidateSeed !== null) {
           seedId = candidateSeedId;
@@ -783,7 +788,9 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
   }
 }
 
-export async function ensureCurrentEpochSeed(env: WorkerEnv): Promise<EnsureCurrentEpochSeedResult> {
+export async function ensureCurrentEpochSeed(
+  env: WorkerEnv,
+): Promise<EnsureCurrentEpochSeedResult> {
   let state = await readCurrentEpochSeedState(env);
   if (state.seed !== null) {
     return {
@@ -849,7 +856,8 @@ export async function ensureCurrentEpochSeed(env: WorkerEnv): Promise<EnsureCurr
     // short delay — Channels may have accepted but RPC needs a moment.
     if (!refresh.success) {
       const msg = (refresh.message ?? "").toLowerCase();
-      const shouldRecheck = msg.includes("did not return hash") || isRetryableDirectClaimMessage(msg);
+      const shouldRecheck =
+        msg.includes("did not return hash") || isRetryableDirectClaimMessage(msg);
       if (shouldRecheck) {
         await new Promise((resolve) => setTimeout(resolve, 1_500));
         state = await readCurrentEpochSeedState(env).catch(() => state);

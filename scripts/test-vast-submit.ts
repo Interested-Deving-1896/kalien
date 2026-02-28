@@ -18,7 +18,10 @@ import { ChannelsClient } from "@openzeppelin/relayer-plugin-channels/dist/clien
 import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { Autopilot } from "../src/game/Autopilot";
 import { parseAndValidateTape } from "../worker/tape";
-import { DEFAULT_BINDINGS_RPC_URL, DEFAULT_MAX_TAPE_BYTES } from "../worker/constants";
+import {
+  DEFAULT_BINDINGS_RPC_URL,
+  DEFAULT_MAX_TAPE_BYTES,
+} from "../worker/constants";
 import { packJournalRaw, unpackJournalRaw } from "../shared/stellar/journal";
 import { parseClaimantStrKeyFromUserInput } from "../shared/stellar/strkey";
 import { env } from "./load-env";
@@ -72,22 +75,36 @@ function parseArg(name: string): string | null {
   return null;
 }
 
-const CLAIMANT_DEFAULT = "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
-const CLAIMANT_ADDRESS = parseArg("--claimant") ?? env.CLAIMANT_ADDRESS ?? CLAIMANT_DEFAULT;
-const PROVER_URL = (parseArg("--prover") ?? env.PROVER_BASE_URL ?? "https://risc0-kalien.stellar.buzz").replace(/\/$/, "");
-const SEGMENT_LIMIT_PO2 = Number.parseInt(parseArg("--segment-limit-po2") ?? "21", 10);
+const CLAIMANT_DEFAULT =
+  "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
+const CLAIMANT_ADDRESS =
+  parseArg("--claimant") ?? env.CLAIMANT_ADDRESS ?? CLAIMANT_DEFAULT;
+const PROVER_URL = (
+  parseArg("--prover") ??
+  env.PROVER_BASE_URL ??
+  "https://risc0-kalien.stellar.buzz"
+).replace(/\/$/, "");
+const SEGMENT_LIMIT_PO2 = Number.parseInt(
+  parseArg("--segment-limit-po2") ?? "21",
+  10,
+);
 const MAX_FRAMES = Number.parseInt(parseArg("--max-frames") ?? "36000", 10);
 const POLL_INTERVAL_MS = Number.parseInt(parseArg("--poll-ms") ?? "5000", 10);
-const POLL_TIMEOUT_MS = Number.parseInt(parseArg("--poll-timeout-ms") ?? `${20 * 60 * 1000}`, 10);
+const POLL_TIMEOUT_MS = Number.parseInt(
+  parseArg("--poll-timeout-ms") ?? `${20 * 60 * 1000}`,
+  10,
+);
 const RELAYER_URL = "https://channels.openzeppelin.com/testnet";
 
-const SCORE_CONTRACT_ID = env.SCORE_CONTRACT_ID
-  ?? env.VITE_SCORE_CONTRACT_ID
-  ?? "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
-const STELLAR_NETWORK_PASSPHRASE = env.STELLAR_NETWORK_PASSPHRASE
-  ?? env.CLAIM_NETWORK_PASSPHRASE
-  ?? env.VITE_NETWORK_PASSPHRASE
-  ?? "Test SDF Network ; September 2015";
+const SCORE_CONTRACT_ID =
+  env.SCORE_CONTRACT_ID ??
+  env.VITE_SCORE_CONTRACT_ID ??
+  "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
+const STELLAR_NETWORK_PASSPHRASE =
+  env.STELLAR_NETWORK_PASSPHRASE ??
+  env.CLAIM_NETWORK_PASSPHRASE ??
+  env.VITE_NETWORK_PASSPHRASE ??
+  "Test SDF Network ; September 2015";
 const STELLAR_RPC_URL = env.STELLAR_RPC_URL ?? DEFAULT_BINDINGS_RPC_URL;
 
 if (!env.RELAYER_API_KEY) {
@@ -113,7 +130,9 @@ if (!Number.isFinite(SEGMENT_LIMIT_PO2) || SEGMENT_LIMIT_PO2 < 1) {
 }
 
 function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -130,7 +149,9 @@ function extractSeal(receipt: Groth16Receipt): Uint8Array {
   }
 
   if (!Array.isArray(groth16.seal) || groth16.seal.length !== 256) {
-    throw new Error(`expected Groth16 seal length 256, got ${groth16.seal?.length ?? "missing"}`);
+    throw new Error(
+      `expected Groth16 seal length 256, got ${groth16.seal?.length ?? "missing"}`,
+    );
   }
   if (
     !Array.isArray(groth16.verifier_parameters) ||
@@ -188,20 +209,27 @@ async function submitTape(
     claimant: claimantAddress,
   });
 
-  const response = await fetch(`${PROVER_URL}/api/jobs/prove-tape/raw?${params.toString()}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/octet-stream" },
-    body: asArrayBuffer(tapeBytes),
-  });
+  const response = await fetch(
+    `${PROVER_URL}/api/jobs/prove-tape/raw?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: asArrayBuffer(tapeBytes),
+    },
+  );
 
   const body = (await response.json()) as ProverCreateResponse;
   if (!response.ok || !body.success || !body.job_id) {
-    throw new Error(`submit failed (${response.status}): ${body.error ?? JSON.stringify(body)}`);
+    throw new Error(
+      `submit failed (${response.status}): ${body.error ?? JSON.stringify(body)}`,
+    );
   }
   return body.job_id;
 }
 
-async function pollJob(jobId: string): Promise<NonNullable<ProverJobResponse["result"]>> {
+async function pollJob(
+  jobId: string,
+): Promise<NonNullable<ProverJobResponse["result"]>> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
@@ -253,7 +281,10 @@ async function main(): Promise<void> {
   );
 
   const currentSeedResult = await scoreClient.current_seed();
-  const currentSeed = currentSeedResult.result as { seed: number; seed_id: number };
+  const currentSeed = currentSeedResult.result as {
+    seed: number;
+    seed_id: number;
+  };
   const seed = currentSeed.seed >>> 0;
   const seedId = currentSeed.seed_id >>> 0;
   console.log(
@@ -266,8 +297,10 @@ async function main(): Promise<void> {
   console.log(
     `  Tape: ${tapeBytes.length} bytes, frames=${tapeMeta.frameCount}, score=${tapeMeta.finalScore}`,
   );
-  if ((tapeMeta.finalScore >>> 0) === 0) {
-    throw new Error("generated tape has final_score=0; increase --max-frames and retry");
+  if (tapeMeta.finalScore >>> 0 === 0) {
+    throw new Error(
+      "generated tape has final_score=0; increase --max-frames and retry",
+    );
   }
 
   console.log("\nStep 2: Submitting tape to VastAI prover...");
@@ -283,7 +316,10 @@ async function main(): Promise<void> {
     `  Prover done in ${elapsedSec}s (reported ${result.elapsed_ms}ms), receipt=${proof.requested_receipt_kind}->${proof.produced_receipt_kind}`,
   );
 
-  if (proof.requested_receipt_kind !== "groth16" || proof.produced_receipt_kind !== "groth16") {
+  if (
+    proof.requested_receipt_kind !== "groth16" ||
+    proof.produced_receipt_kind !== "groth16"
+  ) {
     throw new Error(
       `expected groth16 proof, got requested=${proof.requested_receipt_kind} produced=${proof.produced_receipt_kind}`,
     );
@@ -320,7 +356,9 @@ async function main(): Promise<void> {
   console.log(
     `  Journal: seed_id=${journal.seed_id}, seed=0x${journal.seed.toString(16).toUpperCase().padStart(8, "0")}, frames=${journal.frame_count}, score=${journal.final_score}`,
   );
-  console.log(`  Seal bytes: ${seal.length}, journal bytes: ${journalRaw.length}`);
+  console.log(
+    `  Seal bytes: ${seal.length}, journal bytes: ${journalRaw.length}`,
+  );
   console.log(`  Journal digest: ${bytesToHex(journalDigest)}`);
 
   const outPrefix = join(tmpdir(), `e2e-vast-proof-${Date.now()}`);
@@ -349,15 +387,21 @@ async function main(): Promise<void> {
 
   try {
     const imageResult = await scoreClient.image_id();
-    const contractImage = bytesToHex(imageResult.result as unknown as Uint8Array);
-    const proverImage = (proverHealth.image_id ?? "").replace(/^0x/, "").toLowerCase();
+    const contractImage = bytesToHex(
+      imageResult.result as unknown as Uint8Array,
+    );
+    const proverImage = (proverHealth.image_id ?? "")
+      .replace(/^0x/, "")
+      .toLowerCase();
     console.log(`  Contract image_id: ${contractImage}`);
     console.log(`  Prover image_id:   ${proverImage || "n/a"}`);
     if (proverImage && proverImage !== contractImage) {
       console.log("  WARNING: prover/contract image_id mismatch");
     }
   } catch (error) {
-    console.log(`  WARNING: unable to read contract image_id (${String(error)})`);
+    console.log(
+      `  WARNING: unable to read contract image_id (${String(error)})`,
+    );
   }
 
   console.log("\nStep 6: Submitting claim via Channels relayer...");
@@ -368,22 +412,35 @@ async function main(): Promise<void> {
   });
 
   try {
-    const relayerResult = await channelsClient.submitSorobanTransaction(payload);
+    const relayerResult =
+      await channelsClient.submitSorobanTransaction(payload);
     const txHash = relayerResult.hash?.trim() ?? "";
     const status = relayerResult.status?.trim().toLowerCase() ?? "";
     if (!txHash) {
-      throw new Error(`relayer returned no tx hash (status=${status || "unknown"})`);
+      throw new Error(
+        `relayer returned no tx hash (status=${status || "unknown"})`,
+      );
     }
     console.log(`  Stellar tx: ${txHash} (status: ${status})`);
-    console.log(`  Explorer: https://stellar.expert/explorer/testnet/tx/${txHash}`);
+    console.log(
+      `  Explorer: https://stellar.expert/explorer/testnet/tx/${txHash}`,
+    );
     console.log("\n=== E2E Test PASSED — Full VastAI -> Stellar Pipeline ===");
     return;
-  } catch (error: any) {
-    const msg = (error?.message ?? "").toLowerCase();
+  } catch (error) {
+    const errObj =
+      error && typeof error === "object"
+        ? (error as Record<string, unknown>)
+        : {};
+    const msg = (
+      error instanceof Error ? error.message : String(error)
+    ).toLowerCase();
     const details =
-      typeof error?.errorDetails === "string"
-        ? error.errorDetails.toLowerCase()
-        : JSON.stringify(error?.errorDetails ?? error?.details ?? "").toLowerCase();
+      typeof errObj.errorDetails === "string"
+        ? errObj.errorDetails.toLowerCase()
+        : JSON.stringify(
+            errObj.errorDetails ?? errObj.details ?? "",
+          ).toLowerCase();
     const combined = `${msg} ${details}`;
 
     if (
@@ -391,8 +448,12 @@ async function main(): Promise<void> {
       combined.includes("scorenotimproved") ||
       /contract,\s*#5\b/.test(combined)
     ) {
-      console.log("  Contract rejected: ScoreNotImproved (already have a better score)");
-      console.log("\n=== E2E Test PASSED — Pipeline valid, score already claimed ===");
+      console.log(
+        "  Contract rejected: ScoreNotImproved (already have a better score)",
+      );
+      console.log(
+        "\n=== E2E Test PASSED — Pipeline valid, score already claimed ===",
+      );
       return;
     }
     if (
@@ -401,7 +462,9 @@ async function main(): Promise<void> {
       /contract,\s*#3\b/.test(combined)
     ) {
       console.log("  Contract rejected: JournalAlreadyClaimed");
-      console.log("\n=== E2E Test PASSED — Pipeline valid, journal already claimed ===");
+      console.log(
+        "\n=== E2E Test PASSED — Pipeline valid, journal already claimed ===",
+      );
       return;
     }
 
@@ -410,6 +473,8 @@ async function main(): Promise<void> {
 }
 
 await main().catch((error) => {
-  console.error(`\nE2E test failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `\nE2E test failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 });

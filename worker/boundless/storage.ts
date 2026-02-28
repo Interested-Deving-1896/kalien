@@ -17,7 +17,9 @@ export async function uploadInput(
 
   // Build multipart form data
   const formData = new FormData();
-  const blob = new Blob([new Uint8Array(stdinBytes)], { type: "application/octet-stream" });
+  const blob = new Blob([new Uint8Array(stdinBytes)], {
+    type: "application/octet-stream",
+  });
   formData.append("file", blob, filename);
 
   const metadata = JSON.stringify({ name: filename });
@@ -47,7 +49,10 @@ export async function uploadInput(
     throw new Error("Pinata upload response missing IpfsHash");
   }
 
-  return { url: `${IPFS_GATEWAY_PREFIX}${result.IpfsHash}`, cid: result.IpfsHash };
+  return {
+    url: `${IPFS_GATEWAY_PREFIX}${result.IpfsHash}`,
+    cid: result.IpfsHash,
+  };
 }
 
 /**

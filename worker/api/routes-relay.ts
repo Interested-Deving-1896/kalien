@@ -61,7 +61,9 @@ function parseRelayPayload(body: unknown): { payload: RelayProxyPayload } | { er
       };
     }
     if (!Array.isArray(authValue)) {
-      return { error: "auth must be an array of base64 strings when func is provided" };
+      return {
+        error: "auth must be an array of base64 strings when func is provided",
+      };
     }
 
     const auth: string[] = [];
@@ -91,7 +93,11 @@ export function createRelayRouter(): Hono<{ Bindings: WorkerEnv }> {
   router.post("/", async (c) => {
     const ipKey = `relay:${clientIp(c)}`;
     if (!hasCapacity(ipKey, RELAY_SUBMISSION_LIMIT, RELAY_SUBMISSION_WINDOW_MS)) {
-      const retryAfter = retryAfterSeconds(ipKey, RELAY_SUBMISSION_LIMIT, RELAY_SUBMISSION_WINDOW_MS);
+      const retryAfter = retryAfterSeconds(
+        ipKey,
+        RELAY_SUBMISSION_LIMIT,
+        RELAY_SUBMISSION_WINDOW_MS,
+      );
       c.header("Retry-After", String(Math.max(1, retryAfter)));
       return jsonError(c, 429, "too many relay submissions; try again later");
     }

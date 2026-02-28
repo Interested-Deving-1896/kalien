@@ -29,7 +29,6 @@ export function getTokenContractIdFromEnv(): string | null {
   return nonEmptyEnv(import.meta.env.VITE_TOKEN_CONTRACT_ID);
 }
 
-
 export function parseSacAssetFromName(name: string): Asset {
   const normalized = name.trim();
   if (normalized === "native") {
@@ -52,7 +51,9 @@ export function parseSacAssetFromName(name: string): Asset {
     return new Asset(code, issuer);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`invalid stellar asset name "${name}": ${detail}`, { cause: error });
+    throw new Error(`invalid stellar asset name "${name}": ${detail}`, {
+      cause: error,
+    });
   }
 }
 

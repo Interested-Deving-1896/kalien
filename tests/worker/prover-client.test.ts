@@ -6,12 +6,16 @@ import {
   submitToProver,
   pollProverOnce,
 } from "../../worker/prover/client";
-import { EXPECTED_RULES_DIGEST, EXPECTED_RULESET } from "../../worker/constants";
+import {
+  EXPECTED_RULES_DIGEST,
+  EXPECTED_RULESET,
+} from "../../worker/constants";
 import type { WorkerEnv } from "../../worker/env";
 import type { ProverGetJobResponse } from "../../worker/types";
 
 const VALID_IMAGE_ID = "a".repeat(64);
-const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const TEST_CLAIMANT =
+  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
@@ -30,7 +34,9 @@ function validHealthPayload() {
   };
 }
 
-function validProverGetJobResponse(overrides: Partial<ProverGetJobResponse> = {}): ProverGetJobResponse {
+function validProverGetJobResponse(
+  overrides: Partial<ProverGetJobResponse> = {},
+): ProverGetJobResponse {
   return {
     job_id: "prover-job-1",
     status: "succeeded",
@@ -105,7 +111,12 @@ describe("prover client", () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async () =>
         new Response(
-          JSON.stringify({ status: "ok", image_id: "short", rules_digest: 1, ruleset: "WRONG" }),
+          JSON.stringify({
+            status: "ok",
+            image_id: "short",
+            rules_digest: 1,
+            ruleset: "WRONG",
+          }),
           { status: 200, headers: { "content-type": "application/json" } },
         )) as typeof fetch;
       try {
@@ -147,7 +158,6 @@ describe("prover client", () => {
       response.result!.proof.journal.final_score = 0;
       expect(() => summarizeProof(response)).toThrow("zero-score");
     });
-
   });
 
   describe("getValidatedProverHealth", () => {
@@ -159,7 +169,9 @@ describe("prover client", () => {
           headers: { "content-type": "application/json" },
         })) as typeof fetch;
       try {
-        const result = await getValidatedProverHealth(makeEnv(), { forceRefresh: true });
+        const result = await getValidatedProverHealth(makeEnv(), {
+          forceRefresh: true,
+        });
         expect(result.imageId).toBe(VALID_IMAGE_ID);
         expect(result.rulesDigest).toBe(EXPECTED_RULES_DIGEST >>> 0);
         expect(result.ruleset).toBe(EXPECTED_RULESET);
@@ -170,7 +182,9 @@ describe("prover client", () => {
 
     it("throws when PROVER_BASE_URL is missing", async () => {
       await expect(
-        getValidatedProverHealth(makeEnv({ PROVER_BASE_URL: "" }), { forceRefresh: true }),
+        getValidatedProverHealth(makeEnv({ PROVER_BASE_URL: "" }), {
+          forceRefresh: true,
+        }),
       ).rejects.toThrow("PROVER_BASE_URL");
     });
 
@@ -320,9 +334,12 @@ describe("prover client", () => {
             headers: { "content-type": "application/json" },
           });
         }
-        return new Response(JSON.stringify({ success: false, error: "rate limited" }), {
-          status: 429,
-        });
+        return new Response(
+          JSON.stringify({ success: false, error: "rate limited" }),
+          {
+            status: 429,
+          },
+        );
       }) as typeof fetch;
       try {
         const result = await submitToProver(makeEnv(), tapeBytes, {
@@ -445,7 +462,9 @@ describe("prover client", () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async () =>
         new Response(
-          JSON.stringify(validProverGetJobResponse({ status: "running", result: undefined })),
+          JSON.stringify(
+            validProverGetJobResponse({ status: "running", result: undefined }),
+          ),
           { status: 200, headers: { "content-type": "application/json" } },
         )) as typeof fetch;
       try {

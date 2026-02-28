@@ -63,7 +63,8 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     PROVER_BASE_URL: "http://127.0.0.1:8088",
     GALEXIE_RPC_BASE_URL: "https://rpc-test.example.com",
     CLAIM_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
-    SCORE_CONTRACT_ID: "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
+    SCORE_CONTRACT_ID:
+      "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
     ...overrides,
   } as WorkerEnv;
 }
@@ -104,13 +105,18 @@ describe("real event XDR decoding", () => {
 
 describe("real event RPC ingestion", () => {
   it("parses real getEvents response into leaderboard records", async () => {
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url !== "https://rpc-test.example.com/") {
         return new Response(null, { status: 404 });
       }
 
-      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      const body = init?.body
+        ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+        : {};
       if (body.method === "getHealth") {
         return jsonResponse({
           result: {
@@ -166,13 +172,26 @@ describe("real event RPC ingestion", () => {
       topic: ["AAAADwAAAAtub3Rfc2NvcmU="],
     };
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    globalThis.fetch = (async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const body = init?.body
+        ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+        : {};
       if (body.method === "getHealth") {
-        return jsonResponse({ result: { latestLedger: 1054109, oldestLedger: 933150 } });
+        return jsonResponse({
+          result: { latestLedger: 1054109, oldestLedger: 933150 },
+        });
       }
       if (body.method === "getEvents") {
-        return jsonResponse({ result: { events: [nonScoreEvent], cursor: null, latestLedger: 1054109 } });
+        return jsonResponse({
+          result: {
+            events: [nonScoreEvent],
+            cursor: null,
+            latestLedger: 1054109,
+          },
+        });
       }
       return new Response(null, { status: 404 });
     }) as typeof fetch;

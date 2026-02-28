@@ -187,7 +187,8 @@ export function ProofJobCard({
   const resultStats = result?.stats ?? null;
   const successAttempt = getSuccessfulAttempt(job);
   const successBackend = successAttempt?.backend ?? null;
-  const wallClockMs = (successAttempt ? computeWallClockMs(successAttempt) : null) ?? computeJobWallClockMs(job);
+  const wallClockMs =
+    (successAttempt ? computeWallClockMs(successAttempt) : null) ?? computeJobWallClockMs(job);
   const resultElapsedMs = isPositiveNumber(result?.elapsedMs) ? result.elapsedMs : null;
   const vastCycles = isPositiveNumber(resultStats?.total_cycles) ? resultStats.total_cycles : null;
   const attemptTotalCycles = isPositiveNumber(successAttempt?.totalCycles)
@@ -201,9 +202,7 @@ export function ProofJobCard({
   const waitingForBoundlessCycles =
     job.status === "succeeded" && successBackend === "boundless" && totalCycles == null;
   const cycleAnchorMs =
-    parseIsoMs(successAttempt?.endedAt) ??
-    parseIsoMs(job.completedAt) ??
-    parseIsoMs(job.updatedAt);
+    parseIsoMs(successAttempt?.endedAt) ?? parseIsoMs(job.completedAt) ?? parseIsoMs(job.updatedAt);
   const isCycleIndexingPending =
     waitingForBoundlessCycles &&
     (cycleAnchorMs == null || Date.now() - cycleAnchorMs < CYCLE_INDEXING_WINDOW_MS);
@@ -227,17 +226,14 @@ export function ProofJobCard({
       : wallClockMs != null
         ? formatDuration(wallClockMs)
         : null;
-  const costLabel =
-    actualCostUsd != null ? "Actual Cost" : maxPriceUsd != null ? "Max Cost" : null;
+  const costLabel = actualCostUsd != null ? "Actual Cost" : maxPriceUsd != null ? "Max Cost" : null;
   const costValue =
     actualCostUsd != null
       ? formatCostUsd(actualCostUsd)
       : maxPriceUsd != null
         ? formatCostUsd(maxPriceUsd)
         : null;
-  const proverValue = proverAddr
-    ? `${proverAddr.slice(0, 6)}…${proverAddr.slice(-4)}`
-    : null;
+  const proverValue = proverAddr ? `${proverAddr.slice(0, 6)}…${proverAddr.slice(-4)}` : null;
   const metricItems: Array<{
     key: string;
     label: string;
@@ -246,7 +242,12 @@ export function ProofJobCard({
     highlight?: boolean;
   }> = [];
   if (cycleValue != null) {
-    metricItems.push({ key: "cycles", label: "Total Cycles", value: cycleValue, icon: Cpu });
+    metricItems.push({
+      key: "cycles",
+      label: "Total Cycles",
+      value: cycleValue,
+      icon: Cpu,
+    });
   }
   if (durationLabel != null && durationValue != null) {
     metricItems.push({
@@ -258,7 +259,12 @@ export function ProofJobCard({
     });
   }
   if (costLabel != null && costValue != null) {
-    metricItems.push({ key: "cost", label: costLabel, value: costValue, icon: DollarSign });
+    metricItems.push({
+      key: "cost",
+      label: costLabel,
+      value: costValue,
+      icon: DollarSign,
+    });
   }
   if (proverValue != null) {
     metricItems.push({ key: "prover", label: "Prover", value: proverValue });
@@ -272,11 +278,7 @@ export function ProofJobCard({
         : metricItems.length === 2
           ? "lg:grid-cols-2"
           : "lg:grid-cols-1";
-  const cycleBackfillJobId =
-    expanded &&
-    isCycleIndexingPending
-      ? job.jobId
-      : null;
+  const cycleBackfillJobId = expanded && isCycleIndexingPending ? job.jobId : null;
 
   // While expanded: for succeeded Boundless jobs missing cycles, poll single-job
   // reads so indexer backfill can appear without a page reload.
@@ -332,10 +334,10 @@ export function ProofJobCard({
   if (claimAttempts.length === 0 && job.claim.attempts > 0) {
     const outcome =
       job.claim.status === "succeeded"
-        ? "success" as const
+        ? ("success" as const)
         : job.claim.status === "failed"
-          ? "failed" as const
-          : "in_progress" as const;
+          ? ("failed" as const)
+          : ("in_progress" as const);
     claimAttempts = [
       {
         index: 0,
@@ -543,7 +545,12 @@ export function ProofJobCard({
             <div>
               <h4 className="m-0 mb-2 font-display text-[0.65rem] uppercase tracking-[0.08em] text-muted-foreground">
                 Claim
-                <span className={cn("ml-2 normal-case tracking-normal", claimStatusColor(job.claim.status, job.claim.txHash))}>
+                <span
+                  className={cn(
+                    "ml-2 normal-case tracking-normal",
+                    claimStatusColor(job.claim.status, job.claim.txHash),
+                  )}
+                >
                   {claimStatusLabel(job.claim.status, job.claim.txHash)}
                 </span>
                 {canRetryClaim && (

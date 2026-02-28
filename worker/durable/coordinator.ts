@@ -448,7 +448,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     const hasAttemptCycles = attempt.totalCycles != null;
     const summaryTotal = job.result?.summary?.stats.total_cycles ?? null;
-    const summaryMissingCycles = !Number.isFinite(summaryTotal) || summaryTotal <= 0;
+    const summaryMissingCycles =
+      summaryTotal == null || !Number.isFinite(summaryTotal) || summaryTotal <= 0;
 
     if (!summaryMissingCycles && !hasAttemptCycles) {
       return job;
@@ -473,10 +474,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     try {
       const chainId = this.getBoundlessChainId();
-      const { programCycles, totalCycles } = await fetchBoundlessCycles(
-        chainId,
-        requestIdHex,
-      );
+      const { programCycles, totalCycles } = await fetchBoundlessCycles(chainId, requestIdHex);
       if (totalCycles != null) {
         let changed = false;
         if (attempt.programCycles !== programCycles) {
@@ -534,6 +532,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     let firstJobId: string | null = null;
 
     for (const jobId of activeJobIds) {
+      // eslint-disable-next-line no-await-in-loop -- sequential DO storage reads
       const job = await this.loadJob(jobId);
       if (!job || isTerminalProofStatus(job.status)) {
         continue;
@@ -594,6 +593,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   async getActiveJob(): Promise<ProofJobRecord | null> {
     const activeJobIds = await this.getActiveJobIds();
     for (const jobId of activeJobIds) {
+      // eslint-disable-next-line no-await-in-loop -- sequential DO storage reads
       const job = await this.loadJob(jobId);
       if (job && !isTerminalProofStatus(job.status)) {
         return job;
@@ -609,6 +609,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   async hasActiveVastJob(): Promise<boolean> {
     const activeJobIds = await this.getActiveJobIds();
     for (const jobId of activeJobIds) {
+      // eslint-disable-next-line no-await-in-loop -- sequential DO storage reads
       const job = await this.loadJob(jobId);
       if (
         job &&
@@ -1126,10 +1127,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       if (enrichment) {
         if (enrichment.errorDetail !== undefined) current.errorDetail = enrichment.errorDetail;
         if (enrichment.errorCode !== undefined) current.errorCode = enrichment.errorCode;
-        if (enrichment.actualCostUsd !== undefined) current.actualCostUsd = enrichment.actualCostUsd;
-        if (enrichment.proverAddress !== undefined) current.proverAddress = enrichment.proverAddress;
-        if (enrichment.fulfillmentTxHash !== undefined) current.fulfillmentTxHash = enrichment.fulfillmentTxHash;
-        if (enrichment.programCycles !== undefined) current.programCycles = enrichment.programCycles;
+        if (enrichment.actualCostUsd !== undefined)
+          current.actualCostUsd = enrichment.actualCostUsd;
+        if (enrichment.proverAddress !== undefined)
+          current.proverAddress = enrichment.proverAddress;
+        if (enrichment.fulfillmentTxHash !== undefined)
+          current.fulfillmentTxHash = enrichment.fulfillmentTxHash;
+        if (enrichment.programCycles !== undefined)
+          current.programCycles = enrichment.programCycles;
         if (enrichment.totalCycles !== undefined) current.totalCycles = enrichment.totalCycles;
       }
       await this.saveJob(job);
@@ -1157,6 +1162,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     // Determine next backend (alternate starting from Boundless if available)
     const lastBackend =
+      // eslint-disable-next-line unicorn/prefer-array-find -- findLast unavailable in worker lib target
       job.proverAttempts.filter((a) => a.outcome !== "in_progress").at(-1)?.backend ?? null;
     const hasBoundless = resolveBoundlessConfig(this.env) !== null;
     const hasVast = Boolean(this.env.PROVER_BASE_URL?.trim());
@@ -1266,17 +1272,28 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       }
 
       // Compute actualCostUsd from cached lockPriceWei if available
-      const metadata = { ...(pollResult.metadata ?? { actualCostUsd: null, proverAddress: null, fulfillmentTxHash: null }) };
+      const metadata = {
+        ...(pollResult.metadata ?? {
+          actualCostUsd: null,
+          proverAddress: null,
+          fulfillmentTxHash: null,
+        }),
+      };
       if (metadata.actualCostUsd == null) {
         const currentAttempt = job.proverAttempts?.find((a) => a.outcome === "in_progress");
         if (currentAttempt?.lockPriceWei) {
           try {
             const boundlessConfig = resolveBoundlessConfig(this.env);
             if (boundlessConfig) {
-              const ethPrice = await fetchEthPriceUsd(boundlessConfig.rpcUrl, Number(boundlessConfig.chainId));
+              const ethPrice = await fetchEthPriceUsd(
+                boundlessConfig.rpcUrl,
+                Number(boundlessConfig.chainId),
+              );
               metadata.actualCostUsd = weiToUsd(BigInt(currentAttempt.lockPriceWei), ethPrice);
             }
-          } catch { /* non-fatal */ }
+          } catch {
+            /* non-fatal */
+          }
         }
       }
 

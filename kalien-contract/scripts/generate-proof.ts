@@ -82,7 +82,7 @@ function parseArgs() {
 
   if (!tape) {
     console.error(
-      "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--out <file.json>]"
+      "Usage: bun run scripts/generate-proof.ts --tape <file.tape> [--prover <url>] [--out <file.json>]",
     );
     process.exit(1);
   }
@@ -94,11 +94,17 @@ function parseArgs() {
   try {
     normalizedClaimant = parseClaimantStrKeyFromUserInput(claimant).normalized;
   } catch {
-    console.error("Usage requires --claimant <valid Stellar G...|C... address>");
+    console.error(
+      "Usage requires --claimant <valid Stellar G...|C... address>",
+    );
     process.exit(1);
   }
   const parsedSeedId = Number.parseInt(seedId, 10);
-  if (!Number.isFinite(parsedSeedId) || parsedSeedId < 0 || parsedSeedId > 0xffffffff) {
+  if (
+    !Number.isFinite(parsedSeedId) ||
+    parsedSeedId < 0 ||
+    parsedSeedId > 0xffffffff
+  ) {
     console.error("Usage requires --seed-id <u32>");
     process.exit(1);
   }
@@ -131,6 +137,14 @@ function parseArgs() {
 // Prover API helpers
 // ---------------------------------------------------------------------------
 
+interface Groth16Receipt {
+  inner?: {
+    Groth16?: { seal: number[]; verifier_parameters: number[] };
+    Succinct?: unknown;
+    Composite?: unknown;
+  };
+}
+
 interface ProverCreateResponse {
   success: boolean;
   job_id: string;
@@ -152,7 +166,7 @@ interface ProverJobResponse {
         final_score: number;
         claimant: string;
       };
-      receipt: any;
+      receipt: Groth16Receipt;
       requested_receipt_kind: string;
       produced_receipt_kind: string;
       stats: {
@@ -200,7 +214,7 @@ async function submitTape(
 
   if (!resp.ok || !body.success) {
     throw new Error(
-      `Submit failed (${resp.status}): ${body.error || JSON.stringify(body)}`
+      `Submit failed (${resp.status}): ${body.error || JSON.stringify(body)}`,
     );
   }
 
@@ -210,7 +224,7 @@ async function submitTape(
 
 async function pollJob(
   proverUrl: string,
-  jobId: string
+  jobId: string,
 ): Promise<ProverJobResponse> {
   const url = `${proverUrl}/api/jobs/${jobId}`;
   const pollIntervalMs = 3000;
@@ -241,7 +255,7 @@ async function pollJob(
 // Seal extraction
 // ---------------------------------------------------------------------------
 
-function extractSeal(receipt: any): Uint8Array {
+function extractSeal(receipt: Groth16Receipt): Uint8Array {
   // Groth16 receipt structure:
   //   receipt.inner.Groth16.seal -- 256 u8 values (raw proof: a || b || c)
   //   receipt.inner.Groth16.verifier_parameters -- [u32; 8] (Digest, 32 bytes LE)
@@ -252,11 +266,11 @@ function extractSeal(receipt: any): Uint8Array {
   if (!inner || !inner.Groth16) {
     if (inner?.Succinct || inner?.Composite) {
       throw new Error(
-        "Receipt is not Groth16 -- only Groth16 proofs can be verified on Stellar"
+        "Receipt is not Groth16 -- only Groth16 proofs can be verified on Stellar",
       );
     }
     throw new Error(
-      `Unexpected receipt structure: ${JSON.stringify(Object.keys(inner || {}))}`
+      `Unexpected receipt structure: ${JSON.stringify(Object.keys(inner || {}))}`,
     );
   }
 
@@ -270,7 +284,7 @@ function extractSeal(receipt: any): Uint8Array {
 
   if (verifierParamsU32.length !== 8) {
     throw new Error(
-      `Expected [u32; 8] verifier_parameters, got length ${verifierParamsU32.length}`
+      `Expected [u32; 8] verifier_parameters, got length ${verifierParamsU32.length}`,
     );
   }
 
@@ -292,7 +306,9 @@ function extractSeal(receipt: any): Uint8Array {
   return seal;
 }
 
-function extractJournalRaw(journal: ProverJobResponse["result"]["proof"]["journal"]): Uint8Array {
+function extractJournalRaw(
+  journal: ProverJobResponse["result"]["proof"]["journal"],
+): Uint8Array {
   return packJournalRaw({
     seed_id: journal.seed_id >>> 0,
     seed: journal.seed >>> 0,
@@ -312,7 +328,7 @@ async function fetchImageIdFromProver(proverUrl: string): Promise<Uint8Array> {
   if (!health.image_id || health.image_id.length !== 64) {
     throw new Error(
       `Prover /health did not return a valid image_id (got: ${health.image_id ?? "missing"}). ` +
-        "Update the prover to include image_id in the health response, or pass --image-id manually."
+        "Update the prover to include image_id in the health response, or pass --image-id manually.",
     );
   }
   console.log(`  image_id from prover: ${health.image_id}`);
@@ -325,7 +341,9 @@ function extractImageId(imageIdOverride?: string): Uint8Array | null {
   if (imageIdOverride) {
     const hex = imageIdOverride.replace(/^0x/, "");
     if (hex.length !== 64) {
-      throw new Error(`--image-id must be 32 bytes (64 hex chars), got ${hex.length}`);
+      throw new Error(
+        `--image-id must be 32 bytes (64 hex chars), got ${hex.length}`,
+      );
     }
     return new Uint8Array(Buffer.from(hex, "hex"));
   }
@@ -367,14 +385,17 @@ async function main() {
   }
 
   const { proof } = result.result;
-  if (proof.requested_receipt_kind !== "groth16" || proof.produced_receipt_kind !== "groth16") {
+  if (
+    proof.requested_receipt_kind !== "groth16" ||
+    proof.produced_receipt_kind !== "groth16"
+  ) {
     throw new Error(
-      `Expected groth16 proof, got requested=${proof.requested_receipt_kind} produced=${proof.produced_receipt_kind}`
+      `Expected groth16 proof, got requested=${proof.requested_receipt_kind} produced=${proof.produced_receipt_kind}`,
     );
   }
-  if ((proof.journal.final_score >>> 0) === 0) {
+  if (proof.journal.final_score >>> 0 === 0) {
     throw new Error(
-      "Prover returned final_score=0. Zero-score runs are not accepted for minting fixtures."
+      "Prover returned final_score=0. Zero-score runs are not accepted for minting fixtures.",
     );
   }
 
@@ -383,7 +404,7 @@ async function main() {
   console.log(`  Score: ${proof.journal.final_score}`);
   console.log(`  Frames: ${proof.journal.frame_count}`);
   console.log(
-    `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`
+    `  Cycles: ${proof.stats.total_cycles.toLocaleString()} (${proof.stats.segments} segments)`,
   );
 
   // Extract on-chain data

@@ -66,7 +66,6 @@ interface SeedProfile {
   linkUrl: string | null;
 }
 
-
 const PLAYER_NAMES = [
   "AsteroidAce",
   "ZK_Pioneer",
@@ -104,7 +103,8 @@ const LINK_URLS = [
 ];
 
 const SEEDS = [
-  0xdeadbeef, 0xcafebabe, 0x12345678, 0xaabbccdd, 0x99887766, 0x11223344, 0xfeedface, 0x0badc0de,
+  0xdeadbeef, 0xcafebabe, 0x12345678, 0xaabbccdd, 0x99887766, 0x11223344,
+  0xfeedface, 0x0badc0de,
 ];
 
 function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
@@ -113,7 +113,8 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
   const now = Date.now();
 
   // 15 players, mix of G and C addresses
-  const players: { address: string; name: string; linkUrl: string | null }[] = [];
+  const players: { address: string; name: string; linkUrl: string | null }[] =
+    [];
   for (let i = 0; i < 15; i++) {
     const address = i < 5 ? fakeCAddress(i) : fakeGAddress(i);
     players.push({
@@ -140,7 +141,9 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
   for (let i = 0; i < 15; i++) {
     const player = players[i];
     const daysAgo = 2 + Math.floor(Math.random() * 5);
-    const closedAt = new Date(now - daysAgo * 24 * 60 * 60 * 1000 - Math.random() * 3600000);
+    const closedAt = new Date(
+      now - daysAgo * 24 * 60 * 60 * 1000 - Math.random() * 3600000,
+    );
     const seed = SEEDS[i % SEEDS.length];
     const score = 5000 + Math.floor(Math.random() * 20000);
     const frameCount = 1800 + Math.floor(Math.random() * 5000);
@@ -169,9 +172,10 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
     const hoursAgo = 5 + Math.floor(Math.random() * 18);
     const closedAt = new Date(now - hoursAgo * 60 * 60 * 1000);
     const seed = SEEDS[(i + 2) % SEEDS.length];
-    const previousBest = events.find(
-      (e) => e.claimantAddress === player.address && e.seed === seed,
-    )?.newBest ?? 0;
+    const previousBest =
+      events.find(
+        (e) => e.claimantAddress === player.address && e.seed === seed,
+      )?.newBest ?? 0;
     const score = previousBest + 3000 + Math.floor(Math.random() * 30000);
     const frameCount = 2500 + Math.floor(Math.random() * 8000);
     const mintedDelta = score - previousBest;
@@ -203,7 +207,10 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
     const previousBest = events
       .filter((e) => e.claimantAddress === player.address && e.seed === seed)
       .reduce((max, e) => Math.max(max, e.newBest), 0);
-    const score = Math.max(previousBest + 1000, 15000 + Math.floor(Math.random() * 50000));
+    const score = Math.max(
+      previousBest + 1000,
+      15000 + Math.floor(Math.random() * 50000),
+    );
     const frameCount = 3000 + Math.floor(Math.random() * 10000);
     const mintedDelta = score - previousBest;
 
@@ -229,7 +236,10 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
   const multiRunPlayer = players[0];
   const multiRunSeed = SEEDS[0];
   let runningBest = events
-    .filter((e) => e.claimantAddress === multiRunPlayer.address && e.seed === multiRunSeed)
+    .filter(
+      (e) =>
+        e.claimantAddress === multiRunPlayer.address && e.seed === multiRunSeed,
+    )
     .reduce((max, e) => Math.max(max, e.newBest), 0);
 
   for (let r = 0; r < 5; r++) {
@@ -286,10 +296,17 @@ function generateEvents(): { events: SeedEvent[]; profiles: SeedProfile[] } {
 async function main() {
   const { events, profiles } = generateEvents();
 
-  console.log(`Seeding ${events.length} events across ${profiles.length} players...`);
+  console.log(
+    `Seeding ${events.length} events across ${profiles.length} players...`,
+  );
   console.log(
     `  Time distribution: ${events.filter((e) => Date.now() - new Date(e.closedAt).getTime() < 10 * 60 * 1000).length} recent (10m), ` +
-      `${events.filter((e) => { const age = Date.now() - new Date(e.closedAt).getTime(); return age >= 10 * 60 * 1000 && age < 24 * 60 * 60 * 1000; }).length} day, ` +
+      `${
+        events.filter((e) => {
+          const age = Date.now() - new Date(e.closedAt).getTime();
+          return age >= 10 * 60 * 1000 && age < 24 * 60 * 60 * 1000;
+        }).length
+      } day, ` +
       `${events.filter((e) => Date.now() - new Date(e.closedAt).getTime() >= 24 * 60 * 60 * 1000).length} older`,
   );
 
@@ -321,7 +338,9 @@ async function main() {
     );
     for (const entry of entries) {
       const profile = entry.profile as { username?: string } | null;
-      const name = profile?.username || (entry.claimantAddress as string).slice(0, 12) + "...";
+      const name =
+        profile?.username ||
+        (entry.claimantAddress as string).slice(0, 12) + "...";
       console.log(
         `  #${entry.rank} ${name.padEnd(16)} score=${String(entry.score).padStart(7)} frames=${String(entry.frameCount ?? "n/a").padStart(6)} minted=${String(entry.mintedDelta).padStart(7)} seed=0x${((entry.seed as number) >>> 0).toString(16).toUpperCase().padStart(8, "0")}`,
       );
@@ -333,7 +352,9 @@ async function main() {
   const playerResponse = await fetch(
     `${BASE_URL}/api/leaderboard/player/${firstPlayer.claimantAddress}`,
   );
-  const playerResult = (await playerResponse.json()) as { player: Record<string, unknown> };
+  const playerResult = (await playerResponse.json()) as {
+    player: Record<string, unknown>;
+  };
   const stats = playerResult.player.stats as Record<string, unknown>;
   const ranks = playerResult.player.ranks as Record<string, unknown>;
   console.log(`\nPlayer detail for ${firstPlayer.username}:`);
@@ -343,7 +364,9 @@ async function main() {
   console.log(
     `  Ranks: 10m=${ranks.ten_min ?? "n/a"}, 24h=${ranks.day ?? "n/a"}, all=${ranks.all ?? "n/a"}`,
   );
-  const recentRuns = playerResult.player.recent_runs as Array<Record<string, unknown>>;
+  const recentRuns = playerResult.player.recent_runs as Array<
+    Record<string, unknown>
+  >;
   console.log(`  Recent runs: ${recentRuns.length}`);
 }
 

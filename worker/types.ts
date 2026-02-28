@@ -325,7 +325,28 @@ export interface ProverSuccessMetadata {
 }
 
 export type ProverPollResult =
-  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean; lockPriceWei?: bigint }
-  | { type: "success"; summary: ProofResultSummary; artifact: ProofArtifactV4; metadata?: ProverSuccessMetadata }
-  | { type: "retry"; message: string; clearProverJob?: boolean; errorCode?: string; errorDetail?: string }
-  | { type: "fatal"; message: string; errorCode?: string; errorDetail?: string };
+  | {
+      type: "running";
+      status: Extract<ProverJobStatus, "queued" | "running">;
+      locked?: boolean;
+      lockPriceWei?: bigint;
+    }
+  | {
+      type: "success";
+      summary: ProofResultSummary;
+      artifact: ProofArtifactV4;
+      metadata?: ProverSuccessMetadata;
+    }
+  | {
+      type: "retry";
+      message: string;
+      clearProverJob?: boolean;
+      errorCode?: string;
+      errorDetail?: string;
+    }
+  | {
+      type: "fatal";
+      message: string;
+      errorCode?: string;
+      errorDetail?: string;
+    };

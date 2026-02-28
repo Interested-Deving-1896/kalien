@@ -63,8 +63,10 @@ describe("datalake ingestion object-key behavior", () => {
     expect(result.events).toHaveLength(0);
     expect(result.nextCursor).toBe("ledger:3");
     expect(
-      urls.some((url) =>
-        url.includes("/v1/FFFFFFFD--2.xdr.zstd") || url.includes("/v1/FFFFFFFD--2.xdr.zst"),
+      urls.some(
+        (url) =>
+          url.includes("/v1/FFFFFFFD--2.xdr.zstd") ||
+          url.includes("/v1/FFFFFFFD--2.xdr.zst"),
       ),
     ).toBe(true);
     expect(urls.some((url) => url.includes("--2-2.xdr."))).toBe(false);
@@ -102,9 +104,10 @@ describe("datalake ingestion object-key behavior", () => {
     expect(result.events).toHaveLength(0);
     expect(result.nextCursor).toBe("ledger:128");
     expect(
-      urls.some((url) =>
-        url.includes("/v1/FFFFFFFF--0-4095999/FFFFFFBF--64-127.xdr.zstd") ||
-        url.includes("/v1/FFFFFFFF--0-4095999/FFFFFFBF--64-127.xdr.zst"),
+      urls.some(
+        (url) =>
+          url.includes("/v1/FFFFFFFF--0-4095999/FFFFFFBF--64-127.xdr.zstd") ||
+          url.includes("/v1/FFFFFFFF--0-4095999/FFFFFFBF--64-127.xdr.zst"),
       ),
     ).toBe(true);
   });

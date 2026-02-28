@@ -42,7 +42,8 @@ const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--headed") headed = true;
   if (args[i] === "--tape" && args[i + 1]) tapePath = resolve(args[++i]);
-  if (args[i] === "--timeout-ms" && args[i + 1]) proofTimeoutMs = parseInt(args[++i], 10);
+  if (args[i] === "--timeout-ms" && args[i + 1])
+    proofTimeoutMs = parseInt(args[++i], 10);
 }
 
 function log(msg: string) {
@@ -54,9 +55,16 @@ function step(n: number, msg: string) {
 }
 
 /** Generate a fresh tape with a unique seed so we never hit "already claimed". */
-function generateFreshTape(): { path: string; seed: number; score: number; frames: number } {
+function generateFreshTape(): {
+  path: string;
+  seed: number;
+  score: number;
+  frames: number;
+} {
   const seed = Date.now();
-  log(`Generating tape (seed=0x${seed.toString(16).toUpperCase().padStart(8, "0")}, max_frames=${MAX_TAPE_FRAMES})...`);
+  log(
+    `Generating tape (seed=0x${seed.toString(16).toUpperCase().padStart(8, "0")}, max_frames=${MAX_TAPE_FRAMES})...`,
+  );
   const game = new AsteroidsGame({ headless: true, seed });
   game.startNewGame(seed);
   (game as unknown as { autopilot: Autopilot }).autopilot.setEnabled(true);
@@ -87,7 +95,11 @@ async function waitForProofJob(
     const res = await fetch(`${BASE_URL}/api/proofs/jobs/${jobId}`);
     if (!res.ok) throw new Error(`Job status check failed: ${res.status}`);
     const data = (await res.json()) as {
-      job: { status: string; claim?: { status: string; txHash?: string }; error?: string };
+      job: {
+        status: string;
+        claim?: { status: string; txHash?: string };
+        error?: string;
+      };
     };
     const job = data.job;
 
@@ -104,7 +116,9 @@ async function waitForProofJob(
         return { status: "succeeded", claimTxHash: job.claim.txHash };
       }
       if (job.claim?.status === "failed") {
-        throw new Error(`Claim failed for job ${jobId} (proof succeeded but on-chain claim rejected)`);
+        throw new Error(
+          `Claim failed for job ${jobId} (proof succeeded but on-chain claim rejected)`,
+        );
       }
       // Claim still in progress (queued/submitting/retrying) — keep polling
     }
@@ -118,10 +132,13 @@ async function waitForProofJob(
 async function triggerLeaderboardSync(): Promise<boolean> {
   log("Triggering leaderboard sync...");
   try {
-    const res = await fetch(`${BASE_URL}/dev/api/leaderboard/sync?reset_cursor=1`, {
-      method: "POST",
-      headers: devAuthHeaders,
-    });
+    const res = await fetch(
+      `${BASE_URL}/dev/api/leaderboard/sync?reset_cursor=1`,
+      {
+        method: "POST",
+        headers: devAuthHeaders,
+      },
+    );
     const body = (await res.json()) as { success?: boolean };
     log(`  Sync response: ${res.status} success=${body.success}`);
     return res.ok && body.success === true;
@@ -152,11 +169,17 @@ async function main() {
   try {
     const res = await fetch(`${BASE_URL}/api/health`);
     if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-    const data = (await res.json()) as { prover?: { status?: string; backend?: string } };
+    const data = (await res.json()) as {
+      prover?: { status?: string; backend?: string };
+    };
     const proverStatus = data.prover?.status ?? "unknown";
-    log(`Worker healthy. Prover: ${proverStatus} (${data.prover?.backend ?? "unknown"})`);
+    log(
+      `Worker healthy. Prover: ${proverStatus} (${data.prover?.backend ?? "unknown"})`,
+    );
     if (proverStatus !== "healthy" && proverStatus !== "compatible") {
-      log(`WARNING: Prover status is "${proverStatus}" — proof submission may fail`);
+      log(
+        `WARNING: Prover status is "${proverStatus}" — proof submission may fail`,
+      );
     }
   } catch (err) {
     console.error(`Dev server not reachable at ${BASE_URL}:`, err);
@@ -223,7 +246,9 @@ async function main() {
     step(4, "Load tape via file chooser (press L in game menu)");
 
     // Set up the file chooser handler BEFORE pressing L
-    const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 5_000 });
+    const fileChooserPromise = page.waitForEvent("filechooser", {
+      timeout: 5_000,
+    });
 
     // Press L to load tape. The keydown handler is on window, so canvas focus
     // is not needed. We must NOT click the canvas — that would invoke the
@@ -254,7 +279,9 @@ async function main() {
     log("ScoreCard appeared — game-over triggered!");
     await screenshot("03-score-card");
 
-    const ariaLabel = await page.locator('[data-slot="score-card"]').getAttribute("aria-label");
+    const ariaLabel = await page
+      .locator('[data-slot="score-card"]')
+      .getAttribute("aria-label");
     log(`Score: ${ariaLabel}`);
 
     // Step 7: Create wallet with passkey
@@ -271,7 +298,9 @@ async function main() {
     log("Clicked Create Account — deploying Stellar smart wallet...");
 
     // Wait for wallet to be connected (30-60s for testnet smart contract deployment)
-    await page.waitForSelector('[aria-label="Account connected"]', { timeout: 120_000 });
+    await page.waitForSelector('[aria-label="Account connected"]', {
+      timeout: 120_000,
+    });
     log("Wallet connected!");
     await screenshot("04-wallet-connected");
 
@@ -288,7 +317,9 @@ async function main() {
 
     if (await proveBtn.isDisabled()) {
       await screenshot("08-prove-disabled");
-      throw new Error("Prove My Score is disabled — check wallet connection and score");
+      throw new Error(
+        "Prove My Score is disabled — check wallet connection and score",
+      );
     }
 
     // Intercept the submit response to capture job ID and claimant address
@@ -311,7 +342,9 @@ async function main() {
       const requestUrl = new URL(submitRes.request().url());
       capturedClaimantAddress = requestUrl.searchParams.get("claimant");
       if (submitRes.ok()) {
-        const submitData = (await submitRes.json()) as { job?: { jobId: string } };
+        const submitData = (await submitRes.json()) as {
+          job?: { jobId: string };
+        };
         capturedJobId = submitData.job?.jobId ?? null;
       }
       log(
@@ -332,7 +365,9 @@ async function main() {
     let jobId = capturedJobId;
     if (!jobId) {
       const content = await page.content();
-      const match = content.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+      const match = content.match(
+        /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/,
+      );
       if (match) {
         jobId = match[0];
         log(`Found job ID in page: ${jobId}`);
@@ -347,7 +382,9 @@ async function main() {
           : `${BASE_URL}/api/proofs/jobs?limit=1`;
         const listRes = await fetch(listUrl);
         if (listRes.ok) {
-          const listData = (await listRes.json()) as { jobs?: Array<{ jobId: string }> };
+          const listData = (await listRes.json()) as {
+            jobs?: Array<{ jobId: string }>;
+          };
           const firstJob = listData.jobs?.[0];
           if (firstJob?.jobId) {
             jobId = firstJob.jobId;
@@ -394,7 +431,8 @@ async function main() {
       // Check leaderboard API for our claimant
       await new Promise((r) => setTimeout(r, 2_000));
       const lbParams = new URLSearchParams({ window: "all", limit: "10" });
-      if (capturedClaimantAddress) lbParams.set("address", capturedClaimantAddress);
+      if (capturedClaimantAddress)
+        lbParams.set("address", capturedClaimantAddress);
       const lbRes = await fetch(`${BASE_URL}/api/leaderboard?${lbParams}`);
       if (!lbRes.ok) {
         log(`  Leaderboard API returned ${lbRes.status}`);
@@ -404,14 +442,20 @@ async function main() {
       const lbData = (await lbRes.json()) as {
         pagination: { total: number };
         ingestion: { total_events: number; highest_ledger: number };
-        entries: Array<{ rank: number; score: number; claimantAddress: string }>;
+        entries: Array<{
+          rank: number;
+          score: number;
+          claimantAddress: string;
+        }>;
         me?: { rank: number; score: number } | null;
       };
       log(
         `  Leaderboard: ${lbData.pagination.total} players, ${lbData.ingestion.total_events} events`,
       );
       if (lbData.entries.length > 0) {
-        log(`  Top: rank=${lbData.entries[0].rank} score=${lbData.entries[0].score}`);
+        log(
+          `  Top: rank=${lbData.entries[0].rank} score=${lbData.entries[0].score}`,
+        );
       }
 
       if (lbData.me) {
@@ -449,7 +493,9 @@ async function main() {
     console.log(`  Job ID:      ${jobId}`);
     console.log(`  Claim Tx:    ${proofResult.claimTxHash}`);
     console.log(`  Claimant:    ${capturedClaimantAddress ?? "unknown"}`);
-    console.log(`  Leaderboard: ${leaderboardOk ? "verified" : "skipped (no address)"}`);
+    console.log(
+      `  Leaderboard: ${leaderboardOk ? "verified" : "skipped (no address)"}`,
+    );
     console.log(`  Screenshots: ${SCREENSHOT_DIR}/e2e-*.png`);
     console.log(`${"=".repeat(60)}\n`);
   } catch (err) {

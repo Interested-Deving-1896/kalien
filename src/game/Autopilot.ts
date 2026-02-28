@@ -551,7 +551,9 @@ export class Autopilot {
       const bulletRange = SHIP_BULLET_RANGE;
       if (target.distance < bulletRange * 0.9) {
         // Rate limit shots (faster when lurk pressure)
-        const patience = this.lurkPressure ? this.config.shotPatience * 0.5 : this.config.shotPatience;
+        const patience = this.lurkPressure
+          ? this.config.shotPatience * 0.5
+          : this.config.shotPatience;
         if (gameTime - this.lastShotTime > patience) {
           input.fire = true;
           this.lastShotTime = gameTime;
@@ -581,7 +583,9 @@ export class Autopilot {
     } else {
       // No immediate threats
       // Approach target if far, maintain distance if close
-      const approachDist = this.lurkPressure ? this.config.safeDistance : this.config.safeDistance * 1.5;
+      const approachDist = this.lurkPressure
+        ? this.config.safeDistance
+        : this.config.safeDistance * 1.5;
       if (target.distance > approachDist) {
         // Move toward target if aimed roughly at it
         if (Math.abs(angleDiff) < Math.PI / 3) {

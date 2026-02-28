@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useMemo } from "react";
 import { useWallet, type UseWalletReturn } from "@/hooks/useWallet";
 import { useTokenBalance, type UseTokenBalanceReturn } from "@/hooks/useTokenBalance";
 
@@ -13,7 +13,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const wallet = useWallet();
   const balance = useTokenBalance(wallet.address);
 
-  return <WalletContext value={{ wallet, balance }}>{children}</WalletContext>;
+  const value = useMemo(() => ({ wallet, balance }), [wallet, balance]);
+
+  return <WalletContext value={value}>{children}</WalletContext>;
 }
 
 export function useWalletContext(): WalletContextValue {

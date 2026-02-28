@@ -263,16 +263,24 @@ export class GameRenderer {
     const life = size === "large" ? 0.5 : size === "medium" ? 0.35 : 0.25;
     const color = size === "large" ? "#ffd700" : size === "medium" ? "#f7931e" : "#ff6b35";
     this.shockwaves.push({
-      x, y, radius: 0, maxRadius, life, maxLife: life,
-      color, lineWidth: size === "large" ? 3 : 2,
+      x,
+      y,
+      radius: 0,
+      maxRadius,
+      life,
+      maxLife: life,
+      color,
+      lineWidth: size === "large" ? 3 : 2,
     });
   }
 
   onScorePopup(x: number, y: number, points: number): void {
     this.scorePopups.push({
       text: `+${points}`,
-      x, y,
-      life: 1.0, maxLife: 1.0,
+      x,
+      y,
+      life: 1.0,
+      maxLife: 1.0,
       vy: -50,
       color: points >= 200 ? "#ff6b6b" : points >= 100 ? "#ffd700" : "#b8ffe3",
     });
@@ -559,7 +567,8 @@ export class GameRenderer {
         const fromAngle = (fromIdx / vertexCount) * Math.PI * 2;
         const fromR = asteroid.radius * vertices[fromIdx] * 0.9;
         const toAngle = fromAngle + Math.PI * (0.6 + vertices[(c + 1) % vertexCount] * 0.8);
-        const toR = asteroid.radius * vertices[(fromIdx + Math.floor(vertexCount / 2)) % vertexCount] * 0.7;
+        const toR =
+          asteroid.radius * vertices[(fromIdx + Math.floor(vertexCount / 2)) % vertexCount] * 0.7;
         ctx.beginPath();
         ctx.moveTo(Math.cos(fromAngle) * fromR, Math.sin(fromAngle) * fromR);
         ctx.lineTo(Math.cos(toAngle) * toR, Math.sin(toAngle) * toR);

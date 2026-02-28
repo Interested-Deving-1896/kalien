@@ -58,10 +58,10 @@ export function GamePanel({ onGameOver, overlay, replayJobId, className }: GameP
   }, [replayJobId, game]);
 
   const handleToggleAutopilot = useCallback(() => {
-    const game = gameRef.current;
-    if (!game) return;
-    game.toggleAutopilot();
-    setAutopilotOn(game.isAutopilotEnabled());
+    const current = gameRef.current;
+    if (!current) return;
+    current.toggleAutopilot();
+    setAutopilotOn(current.isAutopilotEnabled());
   }, []);
 
   const handleGameOver = useCallback(

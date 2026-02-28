@@ -16,7 +16,9 @@ export function parseClaimantStrKey(value: string): {
   try {
     Address.fromString(value);
   } catch {
-    throw new Error("claimant address must be a valid Stellar G... or C... address");
+    throw new Error(
+      "claimant address must be a valid Stellar G... or C... address",
+    );
   }
 
   if (StrKey.isValidEd25519PublicKey(value)) {
@@ -27,7 +29,9 @@ export function parseClaimantStrKey(value: string): {
     return { normalized: value, type: "contract" };
   }
 
-  throw new Error("claimant address must be a valid Stellar G... or C... address");
+  throw new Error(
+    "claimant address must be a valid Stellar G... or C... address",
+  );
 }
 
 export function validateClaimantStrKey(value: string): void {

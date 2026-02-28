@@ -13,7 +13,10 @@ function bytesToBase64Url(bytes: Uint8Array): string {
   for (const byte of bytes) {
     binary += String.fromCharCode(byte);
   }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/u, "");
 }
 
 describe("leaderboard profile auth helpers", () => {
@@ -45,10 +48,14 @@ describe("leaderboard profile auth helpers", () => {
 
   it("rejects malformed raw public keys", () => {
     expect(() =>
-      encodeRawP256PublicKeyBase64UrlToCose(bytesToBase64Url(new Uint8Array([0x04, 0x01, 0x02]))),
+      encodeRawP256PublicKeyBase64UrlToCose(
+        bytesToBase64Url(new Uint8Array([0x04, 0x01, 0x02])),
+      ),
     ).toThrow("65-byte");
     expect(() =>
-      encodeRawP256PublicKeyBase64UrlToCose(bytesToBase64Url(new Uint8Array(65))),
+      encodeRawP256PublicKeyBase64UrlToCose(
+        bytesToBase64Url(new Uint8Array(65)),
+      ),
     ).toThrow("65-byte");
   });
 
@@ -97,7 +104,8 @@ describe("leaderboard profile auth helpers", () => {
   });
 
   it("marks indexer upstream failures as retryable", async () => {
-    const fetchImpl = (async () => new Response("upstream down", { status: 503 })) as typeof fetch;
+    const fetchImpl = (async () =>
+      new Response("upstream down", { status: 503 })) as typeof fetch;
 
     await expect(
       assertCredentialBelongsToClaimantContract({

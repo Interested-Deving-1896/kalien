@@ -32,7 +32,11 @@ ${ansi.bold}EXAMPLES${ansi.reset}
   kalien replay game.tape
 `;
 
-function parseArgs(argv: string[]): { command: string; args: Record<string, string>; positional: string[] } {
+function parseArgs(argv: string[]): {
+  command: string;
+  args: Record<string, string>;
+  positional: string[];
+} {
   const args: Record<string, string> = {};
   const positional: string[] = [];
   let command = "";
@@ -74,7 +78,9 @@ async function main(): Promise<void> {
       }
 
       if (!/^[GC][A-Z2-7]{55}$/.test(address)) {
-        console.error("Error: Invalid Stellar address format (must be 56 chars, starting with G or C)");
+        console.error(
+          "Error: Invalid Stellar address format (must be 56 chars, starting with G or C)",
+        );
         process.exit(1);
       }
 
@@ -90,7 +96,9 @@ async function main(): Promise<void> {
       const relayerApiKey = args["relayer-api-key"] || null;
 
       if (!contractId) {
-        console.error("Error: --contract-id is required for mainnet (no default set yet)");
+        console.error(
+          "Error: --contract-id is required for mainnet (no default set yet)",
+        );
         process.exit(1);
       }
 

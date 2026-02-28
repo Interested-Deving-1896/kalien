@@ -85,7 +85,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
         setError("zero-score runs are not accepted for proving or earning KALIEN");
         return false;
       }
-      if ((run.record.seedId >>> 0) === 0) {
+      if (run.record.seedId >>> 0 === 0) {
         setError("this run is missing seed_id metadata; replay with a live chain seed");
         return false;
       }
@@ -96,11 +96,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
 
       let tapeBytes: Uint8Array;
       try {
-        tapeBytes = serializeTape(
-          run.record.seed,
-          run.record.inputs,
-          run.record.finalScore,
-        );
+        tapeBytes = serializeTape(run.record.seed, run.record.inputs, run.record.finalScore);
       } catch (err) {
         const message = err instanceof Error ? err.message : "failed to serialize tape";
         setError(message);
@@ -111,11 +107,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
       setError(null);
 
       try {
-        const response = await submitProofJob(
-          tapeBytes,
-          claimantAddress,
-          run.record.seedId >>> 0,
-        );
+        const response = await submitProofJob(tapeBytes, claimantAddress, run.record.seedId >>> 0);
         setJob(response.job);
         return true;
       } catch (err) {

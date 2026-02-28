@@ -37,8 +37,8 @@ export const IPFS_GATEWAY_PREFIX = "https://gateway.pinata.cloud/ipfs/";
 // Boundless Indexer API base URLs by chain ID.
 // Returns program_cycles and total_cycles for fulfilled proof requests.
 export const BOUNDLESS_INDEXER_URLS: Partial<Record<string, string>> = {
-  "8453": "https://d2mdvlnmyov1e1.cloudfront.net",   // Base Mainnet
-  "84532": "https://d3kkukmpiqlzm1.cloudfront.net",  // Base Sepolia
+  "8453": "https://d2mdvlnmyov1e1.cloudfront.net", // Base Mainnet
+  "84532": "https://d3kkukmpiqlzm1.cloudfront.net", // Base Sepolia
 };
 
 // Inline stdin data larger than this (bytes) is uploaded to IPFS instead.

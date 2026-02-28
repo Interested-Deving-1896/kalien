@@ -8,9 +8,14 @@ console.log("Wallet:", account.address);
 const baseResp = await fetch("https://mainnet.base.org", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ jsonrpc: "2.0", method: "eth_getBalance", params: [account.address, "latest"], id: 1 }),
+  body: JSON.stringify({
+    jsonrpc: "2.0",
+    method: "eth_getBalance",
+    params: [account.address, "latest"],
+    id: 1,
+  }),
 });
-const baseData = (await baseResp.json()) as any;
+const baseData = (await baseResp.json()) as { result: string };
 const baseBal = BigInt(baseData.result);
 console.log("Base Mainnet:", (Number(baseBal) / 1e18).toFixed(6), "ETH");
 
@@ -18,8 +23,13 @@ console.log("Base Mainnet:", (Number(baseBal) / 1e18).toFixed(6), "ETH");
 const sepResp = await fetch("https://ethereum-sepolia-rpc.publicnode.com", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ jsonrpc: "2.0", method: "eth_getBalance", params: [account.address, "latest"], id: 1 }),
+  body: JSON.stringify({
+    jsonrpc: "2.0",
+    method: "eth_getBalance",
+    params: [account.address, "latest"],
+    id: 1,
+  }),
 });
-const sepData = (await sepResp.json()) as any;
+const sepData = (await sepResp.json()) as { result: string };
 const sepBal = BigInt(sepData.result);
 console.log("Eth Sepolia:", (Number(sepBal) / 1e18).toFixed(6), "ETH");

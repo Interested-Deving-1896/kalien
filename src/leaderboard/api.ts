@@ -205,7 +205,9 @@ export async function updateLeaderboardProfile(
 
   // Step 2: Sign with passkey via browser WebAuthn API
   const { startAuthentication } = await import("@simplewebauthn/browser");
-  const authResponse = await startAuthentication({ optionsJSON: optionsData.options });
+  const authResponse = await startAuthentication({
+    optionsJSON: optionsData.options,
+  });
 
   // Step 3: Submit profile update with WebAuthn proof
   const response = await fetchWithTimeout(

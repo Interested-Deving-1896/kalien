@@ -27,15 +27,23 @@ import { Address, xdr } from "@stellar/stellar-sdk";
 import { encodeStdin } from "../worker/boundless/stdin";
 import { boundlessMarketAbi, eip712Types } from "../worker/boundless/abi";
 import type { ProofRequest } from "../worker/boundless/types";
-import { buildProofArtifactV4, parseProofArtifactV4 } from "../worker/proof-artifact";
-import { parseAndValidateTape } from "../worker/tape";
-import { DEFAULT_BINDINGS_RPC_URL, DEFAULT_MAX_TAPE_BYTES } from "../worker/constants";
-import { fetchEthPriceUsd, usdToWei } from "../worker/boundless/pricing";
-import { packJournalRaw, unpackJournalRaw, JOURNAL_LEN } from "../shared/stellar/journal";
-import { Client as ScoreContractClient } from "asteroids-score";
 import {
-  ChannelsClient,
-} from "@openzeppelin/relayer-plugin-channels/dist/client";
+  buildProofArtifactV4,
+  parseProofArtifactV4,
+} from "../worker/proof-artifact";
+import { parseAndValidateTape } from "../worker/tape";
+import {
+  DEFAULT_BINDINGS_RPC_URL,
+  DEFAULT_MAX_TAPE_BYTES,
+} from "../worker/constants";
+import { fetchEthPriceUsd, usdToWei } from "../worker/boundless/pricing";
+import {
+  packJournalRaw,
+  unpackJournalRaw,
+  JOURNAL_LEN,
+} from "../shared/stellar/journal";
+import { Client as ScoreContractClient } from "asteroids-score";
+import { ChannelsClient } from "@openzeppelin/relayer-plugin-channels/dist/client";
 import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { Autopilot } from "../src/game/Autopilot";
 import { env } from "./load-env";
@@ -55,7 +63,9 @@ const claimOnly = requestIdArg !== null;
 
 // ── Validate secrets ──────────────────────────────────────────────────────
 if (!claimOnly && (!env.BOUNDLESS_PRIVATE_KEY || !env.PINATA_JWT)) {
-  console.error("Missing BOUNDLESS_PRIVATE_KEY or PINATA_JWT in scripts/.env, .dev.vars, or .env");
+  console.error(
+    "Missing BOUNDLESS_PRIVATE_KEY or PINATA_JWT in scripts/.env, .dev.vars, or .env",
+  );
   process.exit(1);
 }
 if (!env.RELAYER_API_KEY) {
@@ -71,37 +81,45 @@ const ORDER_STREAM_URL = "https://base-mainnet.boundless.network";
 const RPC_URL = "https://base-mainnet.public.blastapi.io";
 
 const RELAYER_API_KEY = env.RELAYER_API_KEY;
-const IMAGE_URL = "https://gateway.pinata.cloud/ipfs/QmQ7m1WcrHH4TABWwYjroZzKPeSmqBXv8NeMHvwGFzFwrk";
+const IMAGE_URL =
+  "https://gateway.pinata.cloud/ipfs/QmQ7m1WcrHH4TABWwYjroZzKPeSmqBXv8NeMHvwGFzFwrk";
 const RAW_IMAGE_ID = (
   env.BOUNDLESS_IMAGE_ID ??
   env.PROVER_EXPECTED_IMAGE_ID ??
   "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111"
 ).toLowerCase();
-const IMAGE_ID = RAW_IMAGE_ID.startsWith("0x") ? RAW_IMAGE_ID : `0x${RAW_IMAGE_ID}`;
+const IMAGE_ID = RAW_IMAGE_ID.startsWith("0x")
+  ? RAW_IMAGE_ID
+  : `0x${RAW_IMAGE_ID}`;
 
 // Groth16V3_0 selector — explicitly request Groth16 proofs for Stellar
 const GROTH16_SELECTOR = "0x73c457ba" as const;
 
-const MAX_PRICE_USD = 0.02;  // $0.02 — resolved to wei at submission via Chainlink
+const MAX_PRICE_USD = 0.02; // $0.02 — resolved to wei at submission via Chainlink
 const MIN_PRICE_USD = 0.0002; // ~1% of max — auction floor
-const FLAT_PERIOD_SEC = 60;    // 1 min prover discovery window before ramp
-const RAMP_PERIOD_SEC = 660;   // 11 min for price to ramp from minPrice to maxPrice
+const FLAT_PERIOD_SEC = 60; // 1 min prover discovery window before ramp
+const RAMP_PERIOD_SEC = 660; // 11 min for price to ramp from minPrice to maxPrice
 const LOCK_TIMEOUT_SEC = 1740; // 29 min from rampUpStart (11m ramp + 18m at max price)
-const TIMEOUT_SEC = 3540;      // lock (29m) + 30m expiry = 60m total
+const TIMEOUT_SEC = 3540; // lock (29m) + 30m expiry = 60m total
 const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 65 * 60_000; // 65 minutes
 const MAX_FRAMES = 36_000;
 
 // Stellar testnet defaults (override with SCORE_CONTRACT_ID / STELLAR_NETWORK_PASSPHRASE env vars)
-const SCORE_CONTRACT_ID = env.SCORE_CONTRACT_ID
-  ?? env.VITE_SCORE_CONTRACT_ID
-  ?? "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
-const STELLAR_NETWORK_PASSPHRASE = env.STELLAR_NETWORK_PASSPHRASE
-  ?? env.VITE_NETWORK_PASSPHRASE
-  ?? "Test SDF Network ; September 2015";
+const SCORE_CONTRACT_ID =
+  env.SCORE_CONTRACT_ID ??
+  env.VITE_SCORE_CONTRACT_ID ??
+  "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
+const STELLAR_NETWORK_PASSPHRASE =
+  env.STELLAR_NETWORK_PASSPHRASE ??
+  env.VITE_NETWORK_PASSPHRASE ??
+  "Test SDF Network ; September 2015";
 const STELLAR_RPC_URL = DEFAULT_BINDINGS_RPC_URL;
 const RELAYER_URL = "https://channels.openzeppelin.com/testnet";
-const CLAIMANT_ADDRESS = claimantArg ?? env.CLAIMANT_ADDRESS ?? "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
+const CLAIMANT_ADDRESS =
+  claimantArg ??
+  env.CLAIMANT_ADDRESS ??
+  "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
 const scoreClient = new ScoreContractClient({
   contractId: SCORE_CONTRACT_ID,
   rpcUrl: STELLAR_RPC_URL,
@@ -118,7 +136,8 @@ const publicClient = createPublicClient({
 });
 
 // ProofDelivered event topic0
-const PROOF_DELIVERED_TOPIC = "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const;
+const PROOF_DELIVERED_TOPIC =
+  "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 function formatEth(wei: bigint): string {
@@ -131,13 +150,16 @@ function formatEth(wei: bigint): string {
 function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
   const bytes = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < bytes.length; i++) bytes[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  for (let i = 0; i < bytes.length; i++)
+    bytes[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return bytes;
 }
 
 /** Generate a fresh tape using the headless autopilot. */
 function generateFreshTape(seed: number): Uint8Array {
-  console.log(`  Generating tape with seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}...`);
+  console.log(
+    `  Generating tape with seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}...`,
+  );
   const game = new AsteroidsGame({ headless: true, seed });
   game.startNewGame(seed);
   (game as unknown as { autopilot: Autopilot }).autopilot.setEnabled(true);
@@ -155,7 +177,9 @@ function generateFreshTape(seed: number): Uint8Array {
     process.exit(1);
   }
 
-  console.log(`  Tape: ${frame} frames, score ${game.getScore()}, wave ${game.getWave()} (${tapeData.length} bytes)`);
+  console.log(
+    `  Tape: ${frame} frames, score ${game.getScore()}, wave ${game.getWave()} (${tapeData.length} bytes)`,
+  );
   return new Uint8Array(tapeData);
 }
 
@@ -180,10 +204,14 @@ function generateFreshTape(seed: number): Uint8Array {
  *     word 2: journal length
  *     word 3+: journal data
  */
-function parseFulfillmentFromEventData(data: string): { seal: Uint8Array; journal: Uint8Array } | null {
+function parseFulfillmentFromEventData(
+  data: string,
+): { seal: Uint8Array; journal: Uint8Array } | null {
   const clean = data.startsWith("0x") ? data.slice(2) : data;
-  const readWordAt = (charOffset: number) => clean.slice(charOffset, charOffset + 64);
-  const readUintAt = (charOffset: number) => Number.parseInt(readWordAt(charOffset), 16);
+  const readWordAt = (charOffset: number) =>
+    clean.slice(charOffset, charOffset + 64);
+  const readUintAt = (charOffset: number) =>
+    Number.parseInt(readWordAt(charOffset), 16);
 
   // Outer: offset to Fulfillment tuple
   const tupleByteOffset = readUintAt(0);
@@ -197,10 +225,14 @@ function parseFulfillmentFromEventData(data: string): { seal: Uint8Array; journa
   // Read seal: length-prefixed bytes at sealByteOffset from tuple start
   const sealLenPos = t + sealByteOffset * 2;
   const sealLen = readUintAt(sealLenPos);
-  const seal = hexToBytes(clean.slice(sealLenPos + 64, sealLenPos + 64 + sealLen * 2));
+  const seal = hexToBytes(
+    clean.slice(sealLenPos + 64, sealLenPos + 64 + sealLen * 2),
+  );
 
   if (fulfillmentDataType !== 1) {
-    console.error(`  Unexpected fulfillmentDataType: ${fulfillmentDataType} (expected 1 = ImageIdAndJournal)`);
+    console.error(
+      `  Unexpected fulfillmentDataType: ${fulfillmentDataType} (expected 1 = ImageIdAndJournal)`,
+    );
     return null;
   }
 
@@ -216,8 +248,16 @@ function parseFulfillmentFromEventData(data: string): { seal: Uint8Array; journa
 
   // innerHex layout: imageId (bytes32) | offset to journal | journal length | journal data
   const journalByteOffset = Number.parseInt(innerHex.slice(64, 128), 16);
-  const journalLen = Number.parseInt(innerHex.slice(journalByteOffset * 2, journalByteOffset * 2 + 64), 16);
-  const journal = hexToBytes(innerHex.slice(journalByteOffset * 2 + 64, journalByteOffset * 2 + 64 + journalLen * 2));
+  const journalLen = Number.parseInt(
+    innerHex.slice(journalByteOffset * 2, journalByteOffset * 2 + 64),
+    16,
+  );
+  const journal = hexToBytes(
+    innerHex.slice(
+      journalByteOffset * 2 + 64,
+      journalByteOffset * 2 + 64 + journalLen * 2,
+    ),
+  );
 
   return { seal, journal };
 }
@@ -242,7 +282,9 @@ if (claimOnly) {
     args: [requestId],
   });
   if (!fulfilled) {
-    console.error("  Request is NOT fulfilled. Use full mode to submit a new request.");
+    console.error(
+      "  Request is NOT fulfilled. Use full mode to submit a new request.",
+    );
     process.exit(1);
   }
   console.log("  Confirmed: request is fulfilled on-chain\n");
@@ -262,13 +304,20 @@ if (claimOnly) {
   console.log("Contract:", MARKET_ADDRESS);
   console.log("Selector:", GROTH16_SELECTOR, "(Groth16V3_0)");
   console.log(`ETH price: $${ethPriceUsd.toFixed(2)}`);
-  console.log(`Price: $${MIN_PRICE_USD} → $${MAX_PRICE_USD} (${formatEth(minPrice)} → ${formatEth(maxPrice)} ETH)`);
-  console.log(`Auction: ${FLAT_PERIOD_SEC / 60}m flat + ${RAMP_PERIOD_SEC / 60}m ramp + ${(LOCK_TIMEOUT_SEC - RAMP_PERIOD_SEC) / 60}m lock + ${(TIMEOUT_SEC - LOCK_TIMEOUT_SEC) / 60}m expiry = ${(FLAT_PERIOD_SEC + TIMEOUT_SEC) / 60}m total`);
+  console.log(
+    `Price: $${MIN_PRICE_USD} → $${MAX_PRICE_USD} (${formatEth(minPrice)} → ${formatEth(maxPrice)} ETH)`,
+  );
+  console.log(
+    `Auction: ${FLAT_PERIOD_SEC / 60}m flat + ${RAMP_PERIOD_SEC / 60}m ramp + ${(LOCK_TIMEOUT_SEC - RAMP_PERIOD_SEC) / 60}m lock + ${(TIMEOUT_SEC - LOCK_TIMEOUT_SEC) / 60}m expiry = ${(FLAT_PERIOD_SEC + TIMEOUT_SEC) / 60}m total`,
+  );
   console.log("Claimant:", CLAIMANT_ADDRESS);
   console.log("");
 
   const currentSeedResult = await scoreClient.current_seed();
-  const currentSeed = currentSeedResult.result as { seed: number; seed_id: number };
+  const currentSeed = currentSeedResult.result as {
+    seed: number;
+    seed_id: number;
+  };
   const seedForRequest = currentSeed.seed >>> 0;
   const seedIdForRequest = currentSeed.seed_id >>> 0;
   console.log(
@@ -284,19 +333,33 @@ if (claimOnly) {
   });
   console.log(`  Stdin: ${stdinBytes.length} bytes`);
 
-  const hashBuffer = await crypto.subtle.digest("SHA-256", new Uint8Array(stdinBytes));
-  const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    new Uint8Array(stdinBytes),
+  );
+  const hashHex = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   const filename = `${hashHex}.input`;
 
   const formData = new FormData();
-  formData.append("file", new Blob([new Uint8Array(stdinBytes)], { type: "application/octet-stream" }), filename);
+  formData.append(
+    "file",
+    new Blob([new Uint8Array(stdinBytes)], {
+      type: "application/octet-stream",
+    }),
+    filename,
+  );
   formData.append("pinataMetadata", JSON.stringify({ name: filename }));
 
-  const pinataResp = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${PINATA_JWT}` },
-    body: formData,
-  });
+  const pinataResp = await fetch(
+    "https://api.pinata.cloud/pinning/pinFileToIPFS",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PINATA_JWT}` },
+      body: formData,
+    },
+  );
 
   if (!pinataResp.ok) {
     const err = await pinataResp.text().catch(() => "");
@@ -312,7 +375,9 @@ if (claimOnly) {
   const stdinUrl = `https://gateway.pinata.cloud/ipfs/${pinataResult.IpfsHash}`;
   console.log(`  Uploaded: ${stdinUrl}`);
 
-  const stdinUrlHex = `0x${Array.from(new TextEncoder().encode(stdinUrl)).map(b => b.toString(16).padStart(2, "0")).join("")}` as Hex;
+  const stdinUrlHex = `0x${Array.from(new TextEncoder().encode(stdinUrl))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")}` as Hex;
 
   // Step 1: Build + sign + submit on-chain
   console.log("\nStep 1: Signing & submitting on-chain...");
@@ -333,14 +398,20 @@ if (claimOnly) {
     final_score: tapeMeta.finalScore >>> 0,
     claimant: CLAIMANT_ADDRESS,
   });
-  const digestInput = expectedJournal as unknown as BufferSource;
-  const journalDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput));
+  const journalDigest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      expectedJournal as unknown as BufferSource,
+    ),
+  );
   // DigestMatch data = abi.encodePacked(imageId, sha256(journal)) = 64 bytes
   const imageIdBytes = hexToBytes(IMAGE_ID);
   const predicateData = new Uint8Array(64);
   predicateData.set(imageIdBytes, 0);
   predicateData.set(journalDigest, 32);
-  const predicateDataHex = `0x${Array.from(predicateData).map(b => b.toString(16).padStart(2, "0")).join("")}` as Hex;
+  const predicateDataHex = `0x${Array.from(predicateData)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")}` as Hex;
   console.log(`  Predicate data: ${predicateDataHex}`);
 
   const proofRequest: ProofRequest = {
@@ -425,8 +496,14 @@ if (claimOnly) {
       request: {
         id: requestIdHex,
         requirements: {
-          callback: { addr: proofRequest.requirements.callback.addr, gasLimit: "0x0" },
-          predicate: { predicateType: "DigestMatch", data: proofRequest.requirements.predicate.data },
+          callback: {
+            addr: proofRequest.requirements.callback.addr,
+            gasLimit: "0x0",
+          },
+          predicate: {
+            predicateType: "DigestMatch",
+            data: proofRequest.requirements.predicate.data,
+          },
           selector: proofRequest.requirements.selector,
         },
         imageUrl: proofRequest.imageUrl,
@@ -442,7 +519,12 @@ if (claimOnly) {
         },
       },
       request_digest: requestDigest,
-      signature: { r, s, yParity: `0x${yParity.toString(16)}`, v: `0x${yParity.toString(16)}` },
+      signature: {
+        r,
+        s,
+        yParity: `0x${yParity.toString(16)}`,
+        v: `0x${yParity.toString(16)}`,
+      },
     };
 
     const resp = await fetch(`${ORDER_STREAM_URL}/api/v1/submit_order`, {
@@ -452,12 +534,18 @@ if (claimOnly) {
     });
     const osBody = await resp.text().catch(() => "");
     console.log(`  Order stream: ${resp.status} - ${osBody}`);
-  } catch (e: any) {
-    console.log(`  Order stream: failed (non-fatal) - ${e.message}`);
+  } catch (e) {
+    console.log(
+      `  Order stream: failed (non-fatal) - ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 
-  console.log(`\n  Submitted. ${FLAT_PERIOD_SEC / 60}m flat + ${RAMP_PERIOD_SEC / 60}m ramp starting.`);
-  console.log(`  Price: $${MIN_PRICE_USD} → $${MAX_PRICE_USD} (${formatEth(minPrice)} → ${formatEth(maxPrice)} ETH)`);
+  console.log(
+    `\n  Submitted. ${FLAT_PERIOD_SEC / 60}m flat + ${RAMP_PERIOD_SEC / 60}m ramp starting.`,
+  );
+  console.log(
+    `  Price: $${MIN_PRICE_USD} → $${MAX_PRICE_USD} (${formatEth(minPrice)} → ${formatEth(maxPrice)} ETH)`,
+  );
 
   // Step 3: Poll for fulfillment
   console.log("\nStep 3: Polling for fulfillment...");
@@ -485,8 +573,10 @@ if (claimOnly) {
       }
 
       console.log("running");
-    } catch (e: any) {
-      console.log(`error: ${e.message?.slice(0, 80)}`);
+    } catch (e) {
+      console.log(
+        `error: ${(e instanceof Error ? e.message : String(e)).slice(0, 80)}`,
+      );
     }
 
     if (Date.now() + POLL_INTERVAL_MS > deadline) {
@@ -509,25 +599,34 @@ let journal: Uint8Array | null = null;
 
 const requestIdTopic = `0x${requestId.toString(16).padStart(64, "0")}` as Hex;
 
-for (let eventAttempt = 1; eventAttempt <= EVENT_FETCH_RETRIES; eventAttempt++) {
+for (
+  let eventAttempt = 1;
+  eventAttempt <= EVENT_FETCH_RETRIES;
+  eventAttempt++
+) {
   try {
     const currentBlock = await publicClient.getBlockNumber();
     // BlastAPI ignores topic filters, returns ALL contract events.
     // We filter manually by topic[0] (event sig) AND topic[1] (requestId).
     const logs = await publicClient.request({
       method: "eth_getLogs",
-      params: [{
-        address: MARKET_ADDRESS,
-        topics: [PROOF_DELIVERED_TOPIC, requestIdTopic],
-        fromBlock: `0x${(currentBlock - 9900n).toString(16)}` as const,
-        toBlock: `0x${currentBlock.toString(16)}` as const,
-      }],
+      params: [
+        {
+          address: MARKET_ADDRESS,
+          topics: [PROOF_DELIVERED_TOPIC, requestIdTopic],
+          fromBlock: `0x${(currentBlock - 9900n).toString(16)}` as const,
+          toBlock: `0x${currentBlock.toString(16)}` as const,
+        },
+      ],
     });
 
     const ourLog = logs.find((log) => {
       const topic0 = log.topics?.[0]?.toLowerCase();
       const topic1 = log.topics?.[1]?.toLowerCase();
-      return topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() && topic1 === requestIdTopic.toLowerCase();
+      return (
+        topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() &&
+        topic1 === requestIdTopic.toLowerCase()
+      );
     });
 
     if (ourLog?.data) {
@@ -535,24 +634,37 @@ for (let eventAttempt = 1; eventAttempt <= EVENT_FETCH_RETRIES; eventAttempt++) 
       if (parsed) {
         seal = parsed.seal;
         journal = parsed.journal;
-        console.log(`  Found on attempt ${eventAttempt}: seal ${seal.length} bytes, journal ${journal.length} bytes`);
+        console.log(
+          `  Found on attempt ${eventAttempt}: seal ${seal.length} bytes, journal ${journal.length} bytes`,
+        );
         break;
       }
     }
 
-    console.log(`  Not found (attempt ${eventAttempt}/${EVENT_FETCH_RETRIES}), retrying in ${EVENT_FETCH_BACKOFF_MS / 1000}s...`);
-  } catch (e: any) {
-    console.log(`  Event fetch error (attempt ${eventAttempt}/${EVENT_FETCH_RETRIES}): ${e.message?.slice(0, 100)}`);
+    console.log(
+      `  Not found (attempt ${eventAttempt}/${EVENT_FETCH_RETRIES}), retrying in ${EVENT_FETCH_BACKOFF_MS / 1000}s...`,
+    );
+  } catch (e) {
+    console.log(
+      `  Event fetch error (attempt ${eventAttempt}/${EVENT_FETCH_RETRIES}): ${(e instanceof Error ? e.message : String(e)).slice(0, 100)}`,
+    );
   }
 
-  if (eventAttempt < EVENT_FETCH_RETRIES) await new Promise((r) => setTimeout(r, EVENT_FETCH_BACKOFF_MS));
+  if (eventAttempt < EVENT_FETCH_RETRIES)
+    await new Promise((r) => setTimeout(r, EVENT_FETCH_BACKOFF_MS));
 }
 
 if (!seal || !journal) {
-  console.error(`\n  FAILED: Could not fetch ProofDelivered event after ${EVENT_FETCH_RETRIES} attempts.`);
-  console.error("  The proof was fulfilled on-chain but we couldn't retrieve the event data.");
+  console.error(
+    `\n  FAILED: Could not fetch ProofDelivered event after ${EVENT_FETCH_RETRIES} attempts.`,
+  );
+  console.error(
+    "  The proof was fulfilled on-chain but we couldn't retrieve the event data.",
+  );
   console.error("  Try again with:");
-  console.error(`  bun run scripts/test-boundless-submit.ts --request-id 0x${requestId.toString(16)}`);
+  console.error(
+    `  bun run scripts/test-boundless-submit.ts --request-id 0x${requestId.toString(16)}`,
+  );
   process.exit(1);
 }
 
@@ -561,21 +673,31 @@ console.log("\nStep 5: Validating proof data...");
 
 // Seal: 260 bytes = 4-byte selector + 256-byte Groth16 proof
 if (seal.length !== 260) {
-  console.error(`  FAIL: seal is ${seal.length} bytes (expected 260 for Groth16)`);
-  console.error("  This likely means the prover delivered a non-Groth16 proof.");
+  console.error(
+    `  FAIL: seal is ${seal.length} bytes (expected 260 for Groth16)`,
+  );
+  console.error(
+    "  This likely means the prover delivered a non-Groth16 proof.",
+  );
   console.error("  Ensure the request uses selector 0x73c457ba (Groth16V3_0).");
   process.exit(1);
 }
-const selectorHex = `0x${Array.from(seal.slice(0, 4)).map(b => b.toString(16).padStart(2, "0")).join("")}`;
+const selectorHex = `0x${Array.from(seal.slice(0, 4))
+  .map((b) => b.toString(16).padStart(2, "0"))
+  .join("")}`;
 console.log(`  Seal: ${seal.length} bytes, selector: ${selectorHex}`);
 if (selectorHex !== GROTH16_SELECTOR) {
-  console.error(`  FAIL: selector ${selectorHex} !== ${GROTH16_SELECTOR} (Groth16V3_0)`);
+  console.error(
+    `  FAIL: selector ${selectorHex} !== ${GROTH16_SELECTOR} (Groth16V3_0)`,
+  );
   process.exit(1);
 }
 
 // Journal: fixed 49-byte format.
 if (journal.length !== JOURNAL_LEN) {
-  console.error(`  FAIL: journal is ${journal.length} bytes (expected ${JOURNAL_LEN})`);
+  console.error(
+    `  FAIL: journal is ${journal.length} bytes (expected ${JOURNAL_LEN})`,
+  );
   process.exit(1);
 }
 const journalFields = unpackJournalRaw(journal);
@@ -625,15 +747,22 @@ console.log("\nStep 7: Building Soroban submit_score payload...");
 
 // Encode journal as hex (matching worker/queue/consumer.ts journalRawHex)
 const journalBuf = packJournalRaw(journalFields);
-const journalRawHex = Array.from(journalBuf).map(b => b.toString(16).padStart(2, "0")).join("");
+const journalRawHex = Array.from(journalBuf)
+  .map((b) => b.toString(16).padStart(2, "0"))
+  .join("");
 
 // SHA-256 digest of the journal (for logging)
 const journalDigestBytes = new Uint8Array(
-  await crypto.subtle.digest("SHA-256", new Uint8Array(
-    journalRawHex.match(/.{2}/g)!.map(h => Number.parseInt(h, 16)),
-  )),
+  await crypto.subtle.digest(
+    "SHA-256",
+    new Uint8Array(
+      journalRawHex.match(/.{2}/g)!.map((h) => Number.parseInt(h, 16)),
+    ),
+  ),
 );
-const journalDigestHex = Array.from(journalDigestBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+const journalDigestHex = Array.from(journalDigestBytes)
+  .map((b) => b.toString(16).padStart(2, "0"))
+  .join("");
 console.log(`  Journal hex: ${journalRawHex} (${journalBuf.length} bytes)`);
 console.log(`  Journal SHA-256: ${journalDigestHex}`);
 
@@ -642,14 +771,20 @@ const stellarSeal = parsedSeal;
 // Check what imageId the contract currently has stored
 try {
   const storedImageId = await scoreClient.image_id();
-  const storedHex = Buffer.from(storedImageId.result as unknown as Uint8Array).toString("hex");
+  const storedHex = Buffer.from(
+    storedImageId.result as unknown as Uint8Array,
+  ).toString("hex");
   console.log(`  Contract imageId: 0x${storedHex}`);
   console.log(`  Our ELF imageId:  ${IMAGE_ID}`);
   if (`0x${storedHex}` !== IMAGE_ID) {
-    console.error("  WARNING: imageId MISMATCH — contract needs set_image_id update");
+    console.error(
+      "  WARNING: imageId MISMATCH — contract needs set_image_id update",
+    );
   }
-} catch (e: any) {
-  console.log(`  Could not read contract imageId: ${e.message?.slice(0, 80)}`);
+} catch (e) {
+  console.log(
+    `  Could not read contract imageId: ${(e instanceof Error ? e.message : String(e)).slice(0, 80)}`,
+  );
 }
 
 const invokeArgs = new xdr.InvokeContractArgs({
@@ -665,7 +800,9 @@ const payload = {
   func: hostFn.toXDR("base64"),
   auth: [] as string[],
 };
-console.log(`  Payload built: func=${payload.func.length} chars, ${payload.auth.length} auth entries`);
+console.log(
+  `  Payload built: func=${payload.func.length} chars, ${payload.auth.length} auth entries`,
+);
 console.log("  PASS: Soroban payload built successfully");
 
 // ── Step 8: Submit to Stellar via Channels relayer ───────────────────────
@@ -684,19 +821,33 @@ try {
 
   if (txHashStellar.length > 0) {
     console.log(`  Stellar tx: ${txHashStellar} (status: ${status})`);
-    console.log(`  Explorer: https://stellar.expert/explorer/testnet/tx/${txHashStellar}`);
-    console.log("\n=== E2E Test PASSED — Full Boundless → Stellar Pipeline ===");
+    console.log(
+      `  Explorer: https://stellar.expert/explorer/testnet/tx/${txHashStellar}`,
+    );
+    console.log(
+      "\n=== E2E Test PASSED — Full Boundless → Stellar Pipeline ===",
+    );
     process.exit(0);
   } else {
-    console.error(`  Relayer accepted but no tx hash returned (status: ${status})`);
+    console.error(
+      `  Relayer accepted but no tx hash returned (status: ${status})`,
+    );
     process.exit(1);
   }
-} catch (error: any) {
-  const msg = error.message?.toLowerCase() ?? "";
+} catch (error) {
+  const errObj =
+    error && typeof error === "object"
+      ? (error as Record<string, unknown>)
+      : {};
+  const msg = (
+    error instanceof Error ? error.message : String(error)
+  ).toLowerCase();
   const details =
-    typeof error?.errorDetails === "string"
-      ? error.errorDetails.toLowerCase()
-      : JSON.stringify(error?.errorDetails ?? error?.details ?? "").toLowerCase();
+    typeof errObj.errorDetails === "string"
+      ? errObj.errorDetails.toLowerCase()
+      : JSON.stringify(
+          errObj.errorDetails ?? errObj.details ?? "",
+        ).toLowerCase();
   const combined = `${msg} ${details}`;
   // Expected contract rejections are still a valid E2E test
   if (
@@ -704,9 +855,13 @@ try {
     combined.includes("scorenotimproved") ||
     /contract,\s*#5\b/.test(combined)
   ) {
-    console.log(`  Contract rejected: ScoreNotImproved (existing score is higher)`);
+    console.log(
+      `  Contract rejected: ScoreNotImproved (existing score is higher)`,
+    );
     console.log("  This is expected if the same tape was submitted before.");
-    console.log("\n=== E2E Test PASSED — Pipeline valid, score already claimed ===");
+    console.log(
+      "\n=== E2E Test PASSED — Pipeline valid, score already claimed ===",
+    );
     process.exit(0);
   }
   if (
@@ -716,9 +871,13 @@ try {
   ) {
     console.log(`  Contract rejected: JournalAlreadyClaimed`);
     console.log("  This is expected if the same proof was submitted before.");
-    console.log("\n=== E2E Test PASSED — Pipeline valid, journal already claimed ===");
+    console.log(
+      "\n=== E2E Test PASSED — Pipeline valid, journal already claimed ===",
+    );
     process.exit(0);
   }
-  console.error(`  Relayer submission failed: ${error.message}`);
+  console.error(
+    `  Relayer submission failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 }

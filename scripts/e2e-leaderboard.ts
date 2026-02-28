@@ -31,7 +31,8 @@ let MAX_FRAMES = 6_000; // ~100s of gameplay, keeps proofs fast
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--runs" && args[i + 1]) NUM_RUNS = parseInt(args[++i], 10);
-  if (args[i] === "--max-frames" && args[i + 1]) MAX_FRAMES = parseInt(args[++i], 10);
+  if (args[i] === "--max-frames" && args[i + 1])
+    MAX_FRAMES = parseInt(args[++i], 10);
 }
 
 // ── Tape generation ─────────────────────────────────────────────────
@@ -44,7 +45,11 @@ interface TapeInfo {
   bytes: Uint8Array;
 }
 
-function generateTape(seed: number, maxFrames: number, outputPath: string): TapeInfo {
+function generateTape(
+  seed: number,
+  maxFrames: number,
+  outputPath: string,
+): TapeInfo {
   // Generate tape using headless game + built-in autopilot
   const game = new AsteroidsGame({ headless: true, seed });
   game.startNewGame(seed);
@@ -61,7 +66,9 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
 
   const tapeData = game.getTape();
   if (!tapeData) {
-    throw new Error(`Failed to get tape data for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
+    throw new Error(
+      `Failed to get tape data for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`,
+    );
   }
   writeFileSync(outputPath, tapeData);
 
@@ -69,7 +76,10 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
   const rawTape = new Uint8Array(readFileSync(outputPath));
   const tape = deserializeTape(rawTape, maxFrames);
 
-  const verifyGame = new AsteroidsGame({ headless: true, seed: tape.header.seed });
+  const verifyGame = new AsteroidsGame({
+    headless: true,
+    seed: tape.header.seed,
+  });
   verifyGame.startNewGame(tape.header.seed);
   const verifySource = new TapeInputSource(tape.inputs);
   verifyGame.setInputSource(verifySource);
@@ -81,7 +91,9 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
   const vScore = verifyGame.getScore();
 
   if (vScore !== tape.footer.finalScore) {
-    throw new Error(`Tape verification failed for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
+    throw new Error(
+      `Tape verification failed for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`,
+    );
   }
 
   return {
@@ -108,20 +120,26 @@ async function submitTape(tape: TapeInfo): Promise<string> {
     claimant: CLAIMANT,
     seed_id: String(seedId >>> 0),
   });
-  const response = await fetch(`${BASE_URL}/api/proofs/jobs?${params.toString()}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/octet-stream",
+  const response = await fetch(
+    `${BASE_URL}/api/proofs/jobs?${params.toString()}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+      },
+      body: new Uint8Array(tape.bytes),
     },
-    body: new Uint8Array(tape.bytes),
-  });
+  );
 
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Submit failed (${response.status}): ${text}`);
   }
 
-  const data = (await response.json()) as { success: boolean; job: { jobId: string } };
+  const data = (await response.json()) as {
+    success: boolean;
+    job: { jobId: string };
+  };
   if (!data.success) {
     throw new Error(`Submit rejected: ${JSON.stringify(data)}`);
   }
@@ -137,7 +155,10 @@ async function getJobStatus(jobId: string): Promise<JobStatus> {
   return data.job;
 }
 
-async function waitForJob(jobId: string, timeoutMs = 600_000): Promise<JobStatus> {
+async function waitForJob(
+  jobId: string,
+  timeoutMs = 600_000,
+): Promise<JobStatus> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -176,7 +197,10 @@ interface LeaderboardEntry {
   mintedDelta: number;
 }
 
-async function getLeaderboard(window = "all", limit = 50): Promise<{
+async function getLeaderboard(
+  window = "all",
+  limit = 50,
+): Promise<{
   entries: LeaderboardEntry[];
   total: number;
   ingestion: { total_events: number; highest_ledger: number };
@@ -188,7 +212,10 @@ async function getLeaderboard(window = "all", limit = 50): Promise<{
   return {
     entries: data.entries as LeaderboardEntry[],
     total: (data.pagination as { total: number }).total,
-    ingestion: data.ingestion as { total_events: number; highest_ledger: number },
+    ingestion: data.ingestion as {
+      total_events: number;
+      highest_ledger: number;
+    },
   };
 }
 
@@ -220,7 +247,9 @@ async function main() {
   );
 
   // Step 1: Generate tapes
-  console.log(`--- Step 1: Generating ${NUM_RUNS} tapes (max ${MAX_FRAMES} frames each) ---`);
+  console.log(
+    `--- Step 1: Generating ${NUM_RUNS} tapes (max ${MAX_FRAMES} frames each) ---`,
+  );
   const tapes: TapeInfo[] = [];
   const tmpDir = "/tmp/claude";
 
@@ -244,12 +273,16 @@ async function main() {
   console.log(`  ${validTapes.length} valid tapes to submit\n`);
 
   if (validTapes.length === 0) {
-    console.error("No valid tapes generated (all zero score). Increase --max-frames.");
+    console.error(
+      "No valid tapes generated (all zero score). Increase --max-frames.",
+    );
     process.exit(1);
   }
 
   // Step 2: Submit each tape and wait for completion (sequential, single-active-job)
-  console.log(`--- Step 2: Submitting ${validTapes.length} tapes through pipeline ---`);
+  console.log(
+    `--- Step 2: Submitting ${validTapes.length} tapes through pipeline ---`,
+  );
 
   interface RunResult {
     tape: TapeInfo;
@@ -273,7 +306,9 @@ async function main() {
       );
 
       const jobId = await submitTape(tape);
-      console.log(`  ${label} Job ${jobId} queued, waiting for proof + claim...`);
+      console.log(
+        `  ${label} Job ${jobId} queued, waiting for proof + claim...`,
+      );
 
       const finalStatus = await waitForJob(jobId);
       const durationMs = Date.now() - startMs;
@@ -299,7 +334,9 @@ async function main() {
   }
 
   // Step 3: Wait for on-chain events to become available, then sync leaderboard
-  console.log(`\n--- Step 3: Waiting for on-chain events & syncing leaderboard ---`);
+  console.log(
+    `\n--- Step 3: Waiting for on-chain events & syncing leaderboard ---`,
+  );
 
   const claimedResults = results.filter((r) => r.claimTxHash);
   if (claimedResults.length === 0) {
@@ -343,7 +380,9 @@ async function main() {
     console.log(`  RPC latest ledger: ${latestLedger}`);
   } catch (error) {
     console.error(`  Failed to reach RPC: ${error}`);
-    console.warn("  Skipping RPC event verification — manually seed events below");
+    console.warn(
+      "  Skipping RPC event verification — manually seed events below",
+    );
     printSummary(results, errors, initialLb);
     process.exit(0);
   }
@@ -383,7 +422,9 @@ async function main() {
 
   // Retry once if some events are missing (RPC indexing lag)
   if (ourEvents.length < claimedResults.length) {
-    console.log(`  Waiting 15s and retrying for ${claimedResults.length - ourEvents.length} missing events...`);
+    console.log(
+      `  Waiting 15s and retrying for ${claimedResults.length - ourEvents.length} missing events...`,
+    );
     await new Promise((r) => setTimeout(r, 15_000));
     try {
       const retryResp = await fetch(rpcUrl, {
@@ -417,9 +458,8 @@ async function main() {
 
   if (ourEvents.length > 0) {
     // Use fetchLeaderboardEventsFromGalexie (exported) to normalize events via real RPC
-    const { fetchLeaderboardEventsFromGalexie } = await import(
-      "../worker/leaderboard-ingestion"
-    );
+    const { fetchLeaderboardEventsFromGalexie } =
+      await import("../worker/leaderboard-ingestion");
 
     // Find the min/max ledger of our events
     const ledgers = ourEvents
@@ -428,7 +468,9 @@ async function main() {
     const minLedger = Math.min(...ledgers);
     const maxLedger = Math.max(...ledgers);
 
-    console.log(`  Fetching events from ledger ${minLedger} to ${maxLedger + 1}...`);
+    console.log(
+      `  Fetching events from ledger ${minLedger} to ${maxLedger + 1}...`,
+    );
 
     const fetchResult = await fetchLeaderboardEventsFromGalexie(
       {
@@ -503,7 +545,14 @@ async function main() {
     }
   }
 
-  printSummary(results, errors, initialLb, finalLb, matchedCount, claimedResults.length);
+  printSummary(
+    results,
+    errors,
+    initialLb,
+    finalLb,
+    matchedCount,
+    claimedResults.length,
+  );
 
   // Cleanup tape files
   for (const tape of tapes) {
@@ -516,7 +565,12 @@ async function main() {
 }
 
 function printSummary(
-  results: Array<{ tape: TapeInfo; jobId: string; claimTxHash: string | null; durationMs: number }>,
+  results: Array<{
+    tape: TapeInfo;
+    jobId: string;
+    claimTxHash: string | null;
+    durationMs: number;
+  }>,
   errors: Array<{ tape: TapeInfo; error: string }>,
   initialLb?: { total: number; ingestion: { total_events: number } },
   finalLb?: { total: number; ingestion: { total_events: number } },
@@ -546,7 +600,9 @@ function printSummary(
     const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
     const min = Math.min(...durations);
     const max = Math.max(...durations);
-    console.log(`  Duration:   avg=${avg.toFixed(1)}s, min=${min.toFixed(1)}s, max=${max.toFixed(1)}s`);
+    console.log(
+      `  Duration:   avg=${avg.toFixed(1)}s, min=${min.toFixed(1)}s, max=${max.toFixed(1)}s`,
+    );
   }
 
   console.log(`\n  Runs:`);
@@ -569,7 +625,11 @@ function printSummary(
     process.exit(1);
   }
 
-  if (matchedCount !== undefined && claimedCount !== undefined && matchedCount < claimedCount) {
+  if (
+    matchedCount !== undefined &&
+    claimedCount !== undefined &&
+    matchedCount < claimedCount
+  ) {
     console.error(
       `WARNING: Only ${matchedCount}/${claimedCount} claimed scores found on leaderboard`,
     );

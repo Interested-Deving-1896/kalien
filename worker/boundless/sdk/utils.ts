@@ -30,7 +30,10 @@ export function buildRequestId(address: `0x${string}`, nonce: number): bigint {
  * @param requestId - The combined request ID bigint
  * @returns { address: 0x-prefixed 20-byte address (hex), nonce: uint32 }
  */
-export function decodeRequestId(requestId: bigint): { address: string; nonce: number } {
+export function decodeRequestId(requestId: bigint): {
+  address: string;
+  nonce: number;
+} {
   const nonce = Number(requestId & 0xffffffffn);
   const addressInt = requestId >> 32n;
   // Mask to 160 bits (20 bytes) and format as 0x-prefixed 40-char hex

@@ -82,7 +82,8 @@ function makeJob(overrides: Partial<ProofJobRecord> = {}): ProofJobRecord {
       },
     },
     claim: {
-      claimantAddress: "GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB",
+      claimantAddress:
+        "GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB",
       status: "succeeded",
       attempts: 1,
       lastAttemptAt: "2026-01-01T00:01:30.000Z",
@@ -113,7 +114,9 @@ describe("coordinator helpers", () => {
       expect(publicJob.status).toBe("succeeded");
       expect(publicJob.queue.attempts).toBe(1);
       expect(publicJob.prover.jobId).toBe("prover-job-1");
-      expect(publicJob.result?.artifactKey).toBe("proof-jobs/job-1/result.json");
+      expect(publicJob.result?.artifactKey).toBe(
+        "proof-jobs/job-1/result.json",
+      );
       expect(publicJob.claim.txHash).toBe("tx-hash-1");
       expect(publicJob.error).toBeNull();
     });
@@ -126,8 +129,18 @@ describe("coordinator helpers", () => {
 
     it("includes proverAttempts array", () => {
       const attempts = [
-        makeAttempt({ index: 0, backend: "boundless", outcome: "failed", error: "timeout" }),
-        makeAttempt({ index: 1, backend: "vast", outcome: "success", error: null }),
+        makeAttempt({
+          index: 0,
+          backend: "boundless",
+          outcome: "failed",
+          error: "timeout",
+        }),
+        makeAttempt({
+          index: 1,
+          backend: "vast",
+          outcome: "success",
+          error: null,
+        }),
       ];
       const job = makeJob({ proverAttempts: attempts });
       const publicJob = asPublicJob(job);

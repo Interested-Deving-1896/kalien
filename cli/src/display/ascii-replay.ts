@@ -26,7 +26,10 @@ interface TermExplosion {
 
 /** Persisted state across frames for effects that span multiple display frames */
 export interface ReplayState {
-  prevAsteroidPos: Map<number, { col: number; row: number; size: AsteroidSize }>;
+  prevAsteroidPos: Map<
+    number,
+    { col: number; row: number; size: AsteroidSize }
+  >;
   prevSaucerPos: Map<number, { col: number; row: number; small: boolean }>;
   explosions: TermExplosion[];
   stars: { col: number; row: number; ch: string }[];
@@ -50,11 +53,20 @@ export function createReplayState(): ReplayState {
 // ============================================================================
 
 function worldToTerm(
-  wx: number, wy: number, cols: number, rows: number,
+  wx: number,
+  wy: number,
+  cols: number,
+  rows: number,
 ): { col: number; row: number } {
   return {
-    col: Math.max(0, Math.min(cols - 1, Math.round((wx / WORLD_WIDTH) * (cols - 1)))),
-    row: Math.max(0, Math.min(rows - 1, Math.round((wy / WORLD_HEIGHT) * (rows - 1)))),
+    col: Math.max(
+      0,
+      Math.min(cols - 1, Math.round((wx / WORLD_WIDTH) * (cols - 1))),
+    ),
+    row: Math.max(
+      0,
+      Math.min(rows - 1, Math.round((wy / WORLD_HEIGHT) * (rows - 1))),
+    ),
   };
 }
 
@@ -77,13 +89,13 @@ function shipChar(angle: number): string {
   const a = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   const s = Math.PI / 8;
   if (a < s || a >= 15 * s) return "\u25b6"; // ▶ right
-  if (a < 3 * s) return "\u25e2";            // ◢ down-right
-  if (a < 5 * s) return "\u25bc";            // ▼ down
-  if (a < 7 * s) return "\u25e3";            // ◣ down-left
-  if (a < 9 * s) return "\u25c0";            // ◀ left
-  if (a < 11 * s) return "\u25e4";           // ◤ up-left
-  if (a < 13 * s) return "\u25b2";           // ▲ up
-  return "\u25e5";                            // ◥ up-right
+  if (a < 3 * s) return "\u25e2"; // ◢ down-right
+  if (a < 5 * s) return "\u25bc"; // ▼ down
+  if (a < 7 * s) return "\u25e3"; // ◣ down-left
+  if (a < 9 * s) return "\u25c0"; // ◀ left
+  if (a < 11 * s) return "\u25e4"; // ◤ up-left
+  if (a < 13 * s) return "\u25b2"; // ▲ up
+  return "\u25e5"; // ◥ up-right
 }
 
 // ============================================================================
@@ -91,10 +103,14 @@ function shipChar(angle: number): string {
 // ============================================================================
 
 function paintCell(
-  grid: string[][], colorGrid: string[][],
-  row: number, col: number,
-  ch: string, fg: string,
-  cols: number, rows: number,
+  grid: string[][],
+  colorGrid: string[][],
+  row: number,
+  col: number,
+  ch: string,
+  fg: string,
+  cols: number,
+  rows: number,
 ): void {
   if (row >= 0 && row < rows && col >= 0 && col < cols) {
     grid[row][col] = ch;
@@ -104,10 +120,13 @@ function paintCell(
 
 /** Paint a filled ellipse of block characters */
 function paintAsteroid(
-  grid: string[][], colorGrid: string[][],
-  centerCol: number, centerRow: number,
+  grid: string[][],
+  colorGrid: string[][],
+  centerCol: number,
+  centerRow: number,
   size: AsteroidSize,
-  cols: number, rows: number,
+  cols: number,
+  rows: number,
 ): void {
   const pxPerCol = WORLD_WIDTH / cols;
   const pxPerRow = WORLD_HEIGHT / rows;
@@ -117,11 +136,25 @@ function paintAsteroid(
   const rRow = Math.max(1, Math.round(worldRadius / pxPerRow));
 
   if (rCol <= 1 && rRow <= 1) {
-    paintCell(grid, colorGrid, centerRow, centerCol, "\u25c6", ansi.white, cols, rows); // ◆
+    paintCell(
+      grid,
+      colorGrid,
+      centerRow,
+      centerCol,
+      "\u25c6",
+      ansi.white,
+      cols,
+      rows,
+    ); // ◆
     return;
   }
 
-  const fg = size === "large" ? ansi.brightWhite : size === "medium" ? ansi.white : ansi.gray;
+  const fg =
+    size === "large"
+      ? ansi.brightWhite
+      : size === "medium"
+        ? ansi.white
+        : ansi.gray;
 
   for (let dr = -rRow; dr <= rRow; dr++) {
     for (let dc = -rCol; dc <= rCol; dc++) {
@@ -131,7 +164,16 @@ function paintAsteroid(
       if (d2 <= 1.0) {
         const dist = Math.sqrt(d2);
         const ch = dist < 0.35 ? "\u2588" : dist < 0.65 ? "\u2593" : "\u2591"; // █ ▓ ░
-        paintCell(grid, colorGrid, centerRow + dr, centerCol + dc, ch, fg, cols, rows);
+        paintCell(
+          grid,
+          colorGrid,
+          centerRow + dr,
+          centerCol + dc,
+          ch,
+          fg,
+          cols,
+          rows,
+        );
       }
     }
   }
@@ -139,18 +181,36 @@ function paintAsteroid(
 
 /** Paint an explosion effect (expanding ring that fades) */
 function paintExplosion(
-  grid: string[][], colorGrid: string[][],
-  col: number, row: number,
-  ttl: number, maxTtl: number,
-  cols: number, rows: number,
+  grid: string[][],
+  colorGrid: string[][],
+  col: number,
+  row: number,
+  ttl: number,
+  maxTtl: number,
+  cols: number,
+  rows: number,
 ): void {
   const progress = 1 - ttl / maxTtl; // 0→1 as explosion ages
 
   if (progress < 0.3) {
     // Phase 1: bright center burst
     paintCell(grid, colorGrid, row, col, "#", ansi.brightYellow, cols, rows);
-    for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-      paintCell(grid, colorGrid, row + dr, col + dc, "*", ansi.yellow, cols, rows);
+    for (const [dr, dc] of [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ]) {
+      paintCell(
+        grid,
+        colorGrid,
+        row + dr,
+        col + dc,
+        "*",
+        ansi.yellow,
+        cols,
+        rows,
+      );
     }
   } else if (progress < 0.6) {
     // Phase 2: expanding ring
@@ -159,7 +219,16 @@ function paintExplosion(
       for (let dc = -r; dc <= r; dc++) {
         const manhattan = Math.abs(dr) + Math.abs(dc);
         if (manhattan >= r - 1 && manhattan <= r) {
-          paintCell(grid, colorGrid, row + dr, col + dc, "+", ansi.yellow, cols, rows);
+          paintCell(
+            grid,
+            colorGrid,
+            row + dr,
+            col + dc,
+            "+",
+            ansi.yellow,
+            cols,
+            rows,
+          );
         }
       }
     }
@@ -191,7 +260,8 @@ function paintExplosion(
 // ============================================================================
 
 function generateStars(
-  cols: number, rows: number,
+  cols: number,
+  rows: number,
 ): { col: number; row: number; ch: string }[] {
   const stars: { col: number; row: number; ch: string }[] = [];
   const count = Math.floor(cols * rows * 0.012); // ~1.2% fill
@@ -248,7 +318,12 @@ export function renderAsciiFrame(
     // Check which previous saucers disappeared
     for (const [id, pos] of state.prevSaucerPos) {
       if (!currentSaucerIds.has(id)) {
-        state.explosions.push({ col: pos.col, row: pos.row, ttl: 7, maxTtl: 7 });
+        state.explosions.push({
+          col: pos.col,
+          row: pos.row,
+          ttl: 7,
+          maxTtl: 7,
+        });
       }
     }
 
@@ -283,7 +358,16 @@ export function renderAsciiFrame(
 
   // Layer 2: Explosions
   for (const exp of state.explosions) {
-    paintExplosion(grid, colorGrid, exp.col, exp.row, exp.ttl, exp.maxTtl, cols, rows);
+    paintExplosion(
+      grid,
+      colorGrid,
+      exp.col,
+      exp.row,
+      exp.ttl,
+      exp.maxTtl,
+      cols,
+      rows,
+    );
   }
 
   // Layer 3: Saucer bullets
@@ -295,7 +379,16 @@ export function renderAsciiFrame(
   // Layer 4: Player bullets
   for (const b of snapshot.bullets) {
     const { col, row } = worldToTerm(b.x, b.y, cols, rows);
-    paintCell(grid, colorGrid, row, col, "\u2022", ansi.brightYellow, cols, rows); // •
+    paintCell(
+      grid,
+      colorGrid,
+      row,
+      col,
+      "\u2022",
+      ansi.brightYellow,
+      cols,
+      rows,
+    ); // •
   }
 
   // Layer 5: Saucers (3-char wide)
@@ -316,8 +409,22 @@ export function renderAsciiFrame(
 
   // Layer 6: Ship
   if (snapshot.ship.alive && snapshot.ship.canControl) {
-    const { col, row } = worldToTerm(snapshot.ship.x, snapshot.ship.y, cols, rows);
-    paintCell(grid, colorGrid, row, col, shipChar(snapshot.ship.angle), ansi.brightCyan, cols, rows);
+    const { col, row } = worldToTerm(
+      snapshot.ship.x,
+      snapshot.ship.y,
+      cols,
+      rows,
+    );
+    paintCell(
+      grid,
+      colorGrid,
+      row,
+      col,
+      shipChar(snapshot.ship.angle),
+      ansi.brightCyan,
+      cols,
+      rows,
+    );
   }
 
   // --- Save entity positions for next frame's explosion detection (skip when paused) ---
@@ -338,33 +445,38 @@ export function renderAsciiFrame(
   const lines: string[] = [];
 
   // HUD line
-  const progressPct = hud.totalFrames > 0
-    ? Math.round((hud.frame / hud.totalFrames) * 100) : 0;
-  const livesStr = hud.lives > 0
-    ? ansi.color(ansi.green, "\u2665".repeat(Math.min(hud.lives, 10)))
-      + (hud.lives > 10 ? ansi.color(ansi.dim, `+${hud.lives - 10}`) : "")
-    : ansi.color(ansi.red, "\u2717"); // ✗
+  const progressPct =
+    hud.totalFrames > 0 ? Math.round((hud.frame / hud.totalFrames) * 100) : 0;
+  const livesStr =
+    hud.lives > 0
+      ? ansi.color(ansi.green, "\u2665".repeat(Math.min(hud.lives, 10))) +
+        (hud.lives > 10 ? ansi.color(ansi.dim, `+${hud.lives - 10}`) : "")
+      : ansi.color(ansi.red, "\u2717"); // ✗
 
   lines.push(
     ` ${ansi.color(ansi.dim, "SCORE")} ${ansi.color(ansi.brightGreen, String(hud.score).padStart(6))}` +
-    `  ${ansi.color(ansi.dim, "WAVE")} ${ansi.color(ansi.white, String(Math.max(1, hud.wave)))}` +
-    `  ${ansi.color(ansi.dim, "LIVES")} ${livesStr}` +
-    `  ${ansi.color(ansi.dim, `${progressPct}%`)}` +
-    `  ${ansi.color(hud.speed > 1 ? ansi.brightYellow : ansi.dim, `${hud.speed}x`)}` +
-    (hud.paused ? `  ${ansi.color(ansi.brightYellow, "\u23f8 PAUSED")}` : "")
+      `  ${ansi.color(ansi.dim, "WAVE")} ${ansi.color(ansi.white, String(Math.max(1, hud.wave)))}` +
+      `  ${ansi.color(ansi.dim, "LIVES")} ${livesStr}` +
+      `  ${ansi.color(ansi.dim, `${progressPct}%`)}` +
+      `  ${ansi.color(hud.speed > 1 ? ansi.brightYellow : ansi.dim, `${hud.speed}x`)}` +
+      (hud.paused ? `  ${ansi.color(ansi.brightYellow, "\u23f8 PAUSED")}` : ""),
   );
 
   // Progress bar
   const barWidth = Math.max(10, cols - 2);
-  const filled = Math.round(barWidth * (hud.frame / Math.max(1, hud.totalFrames)));
-  const barFilled = "\u2588".repeat(filled);     // █
+  const filled = Math.round(
+    barWidth * (hud.frame / Math.max(1, hud.totalFrames)),
+  );
+  const barFilled = "\u2588".repeat(filled); // █
   const barEmpty = "\u2591".repeat(barWidth - filled); // ░
   lines.push(
-    ` ${ansi.color(ansi.magenta, barFilled)}${ansi.color(ansi.dim, barEmpty)}`
+    ` ${ansi.color(ansi.magenta, barFilled)}${ansi.color(ansi.dim, barEmpty)}`,
   );
 
   // Border top
-  lines.push(ansi.color(ansi.dim, " \u250c" + "\u2500".repeat(cols) + "\u2510"));
+  lines.push(
+    ansi.color(ansi.dim, " \u250c" + "\u2500".repeat(cols) + "\u2510"),
+  );
 
   // Grid rows
   for (let r = 0; r < rows; r++) {
@@ -386,16 +498,18 @@ export function renderAsciiFrame(
   }
 
   // Border bottom
-  lines.push(ansi.color(ansi.dim, " \u2514" + "\u2500".repeat(cols) + "\u2518"));
+  lines.push(
+    ansi.color(ansi.dim, " \u2514" + "\u2500".repeat(cols) + "\u2518"),
+  );
 
   // Footer legend
   lines.push(
     ` ${ansi.color(ansi.dim, "[Space]")} ${ansi.color(ansi.gray, "Pause")}` +
-    `  ${ansi.color(ansi.dim, "[R]")} ${ansi.color(ansi.gray, "Restart")}` +
-    `  ${ansi.color(ansi.dim, "[1]")} ${ansi.color(ansi.gray, "1x")}` +
-    `  ${ansi.color(ansi.dim, "[2]")} ${ansi.color(ansi.gray, "2x")}` +
-    `  ${ansi.color(ansi.dim, "[4]")} ${ansi.color(ansi.gray, "4x")}` +
-    `  ${ansi.color(ansi.dim, "[Esc/Q]")} ${ansi.color(ansi.gray, "Quit")}`
+      `  ${ansi.color(ansi.dim, "[R]")} ${ansi.color(ansi.gray, "Restart")}` +
+      `  ${ansi.color(ansi.dim, "[1]")} ${ansi.color(ansi.gray, "1x")}` +
+      `  ${ansi.color(ansi.dim, "[2]")} ${ansi.color(ansi.gray, "2x")}` +
+      `  ${ansi.color(ansi.dim, "[4]")} ${ansi.color(ansi.gray, "4x")}` +
+      `  ${ansi.color(ansi.dim, "[Esc/Q]")} ${ansi.color(ansi.gray, "Quit")}`,
   );
 
   return ansi.cursorTo(0, 0) + lines.map((l) => l + ansi.clearToEol).join("\n");

@@ -12,15 +12,18 @@ export async function fetchPlayerScore(
   apiUrl: string,
 ): Promise<PlayerScoreInfo> {
   try {
-    const response = await fetch(`${apiUrl}/api/leaderboard/player/${address}`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const response = await fetch(
+      `${apiUrl}/api/leaderboard/player/${address}`,
+      {
+        signal: AbortSignal.timeout(5000),
+      },
+    );
 
     if (!response.ok) {
       return { bestScore: 0, totalRuns: 0 };
     }
 
-    const data = await response.json() as {
+    const data = (await response.json()) as {
       success: boolean;
       player?: {
         stats?: {

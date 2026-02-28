@@ -364,17 +364,13 @@ async function processClaimQueueMessage(
   const thisScore = job.tape.metadata.finalScore >>> 0;
   const thisSeedId = job.tape.metadata.seedId >>> 0;
   const canonicalClaimant = job.result.summary.journal.claimant;
-  const { jobs: claimantJobs } = await coordinator.listJobsForClaimant(
-    canonicalClaimant,
-    100,
-    0,
-  );
+  const { jobs: claimantJobs } = await coordinator.listJobsForClaimant(canonicalClaimant, 100, 0);
   const superseded = claimantJobs.some(
     (j) =>
       j.jobId !== job.jobId &&
-      (j.tape.metadata.seedId >>> 0) === thisSeedId && // same seed_id only
+      j.tape.metadata.seedId >>> 0 === thisSeedId && // same seed_id only
       j.claim.status === "succeeded" &&
-      (j.tape.metadata.finalScore >>> 0) >= thisScore,
+      j.tape.metadata.finalScore >>> 0 >= thisScore,
   );
   if (superseded) {
     console.log("[claim-queue] skipping — superseded by higher-scoring claim", {
@@ -427,7 +423,9 @@ async function processClaimQueueMessage(
     return;
   }
 
-  const computedDigestHex = await sha256Hex(hexToBytes(parsedArtifact.journal_raw_hex, "journal_raw_hex"));
+  const computedDigestHex = await sha256Hex(
+    hexToBytes(parsedArtifact.journal_raw_hex, "journal_raw_hex"),
+  );
   if (computedDigestHex !== parsedArtifact.journal_digest_hex) {
     await coordinator.markClaimFailed(
       payload.jobId,
@@ -447,7 +445,7 @@ async function processClaimQueueMessage(
     });
   } catch (error) {
     const reason = `claim submit error: ${safeErrorMessage(error)}`;
-    const crashDetail = error instanceof Error ? error.stack ?? error.message : String(error);
+    const crashDetail = error instanceof Error ? (error.stack ?? error.message) : String(error);
     if (message.attempts >= MAX_QUEUE_RETRIES) {
       await coordinator.markClaimFailed(
         payload.jobId,
@@ -621,7 +619,7 @@ export async function handleClaimQueueBatch(
       }
 
       const reason = `claim queue consumer crashed: ${safeErrorMessage(error)}`;
-      const crashDetail = error instanceof Error ? error.stack ?? error.message : String(error);
+      const crashDetail = error instanceof Error ? (error.stack ?? error.message) : String(error);
       const coordinator = coordinatorStub(env);
       if (message.attempts >= MAX_QUEUE_RETRIES) {
         await coordinator.markClaimFailed(
@@ -661,8 +659,9 @@ export async function handleClaimDlqBatch(
     const job = await coordinator.getJob(payload.jobId);
     const priorError = job?.claim.lastError?.trim() ?? "";
     const priorErrorDetail =
-      [...(job?.claimAttempts ?? [])].reverse().find((a) => a.errorDetail != null)
-        ?.errorDetail ?? "";
+      // eslint-disable-next-line unicorn/no-array-reverse -- toReversed unavailable in worker lib target
+      [...(job?.claimAttempts ?? [])].reverse().find((a) => a.errorDetail != null)?.errorDetail ??
+      "";
 
     // If the last error indicates the claim already landed on-chain via a
     // prior attempt, treat this as success rather than failure.

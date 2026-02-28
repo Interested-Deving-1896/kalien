@@ -68,7 +68,11 @@ function buildTape(options: {
 
   // Compute CRC32 over header + packed body
   const crc = crc32(buf, footerOffset);
-  view.setUint32(footerOffset + 4, corruptCrc ? (crc ^ 0xdeadbeef) >>> 0 : crc, true);
+  view.setUint32(
+    footerOffset + 4,
+    corruptCrc ? (crc ^ 0xdeadbeef) >>> 0 : crc,
+    true,
+  );
 
   return buf;
 }
@@ -93,7 +97,9 @@ function crc32(data: Uint8Array, end: number): number {
 
 describe("parseAndValidateTape", () => {
   it("throws on empty payload", () => {
-    expect(() => parseAndValidateTape(new Uint8Array(0), DEFAULT_MAX_TAPE_BYTES)).toThrow("empty");
+    expect(() =>
+      parseAndValidateTape(new Uint8Array(0), DEFAULT_MAX_TAPE_BYTES),
+    ).toThrow("empty");
   });
 
   it("throws on too large payload", () => {
@@ -104,12 +110,16 @@ describe("parseAndValidateTape", () => {
   it("throws on too short payload", () => {
     const tiny = new Uint8Array(TAPE_HEADER_SIZE + TAPE_FOOTER_SIZE - 1);
     tiny[0] = 1; // non-empty
-    expect(() => parseAndValidateTape(tiny, DEFAULT_MAX_TAPE_BYTES)).toThrow("too short");
+    expect(() => parseAndValidateTape(tiny, DEFAULT_MAX_TAPE_BYTES)).toThrow(
+      "too short",
+    );
   });
 
   it("throws on invalid tape magic", () => {
     const tape = buildTape({ magic: 0x12345678 });
-    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("invalid tape magic");
+    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow(
+      "invalid tape magic",
+    );
   });
 
   it("throws on unsupported tape version", () => {
@@ -121,17 +131,23 @@ describe("parseAndValidateTape", () => {
 
   it("throws on unknown rules tag", () => {
     const tape = buildTape({ rulesTag: 7 });
-    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("unknown rules tag");
+    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow(
+      "unknown rules tag",
+    );
   });
 
   it("throws on non-zero reserved bytes", () => {
     const tape = buildTape({ reserved: [1, 0] });
-    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("reserved bytes");
+    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow(
+      "reserved bytes",
+    );
   });
 
   it("throws on frame count vs actual length mismatch", () => {
     const tape = buildTape({ frameCount: 999 });
-    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("size mismatch");
+    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow(
+      "size mismatch",
+    );
   });
 
   it("throws on zero final score", () => {
@@ -143,7 +159,9 @@ describe("parseAndValidateTape", () => {
 
   it("throws on corrupted CRC", () => {
     const tape = buildTape({ corruptCrc: true });
-    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow("checksum mismatch");
+    expect(() => parseAndValidateTape(tape, DEFAULT_MAX_TAPE_BYTES)).toThrow(
+      "checksum mismatch",
+    );
   });
 
   it("returns correct TapeMetadata for valid tape", () => {
@@ -156,7 +174,10 @@ describe("parseAndValidateTape", () => {
   });
 
   it("validates the test-medium.tape fixture", () => {
-    const fixturePath = join(import.meta.dir, "../../test-fixtures/test-medium.tape");
+    const fixturePath = join(
+      import.meta.dir,
+      "../../test-fixtures/test-medium.tape",
+    );
     const data = new Uint8Array(readFileSync(fixturePath));
     const result = parseAndValidateTape(data, DEFAULT_MAX_TAPE_BYTES);
     expect(result.finalScore).toBeGreaterThan(0);

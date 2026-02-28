@@ -123,9 +123,7 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
                 >
                   {displayName(entry)}
                 </Link>
-                <code className="text-text-soft">
-                  {abbreviateAddress(entry.claimantAddress)}
-                </code>
+                <code className="text-text-soft">{abbreviateAddress(entry.claimantAddress)}</code>
                 {entry.profile?.linkUrl && isSafeUrl(entry.profile.linkUrl) ? (
                   <a
                     href={entry.profile.linkUrl}

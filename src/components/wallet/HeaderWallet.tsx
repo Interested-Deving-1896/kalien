@@ -21,6 +21,7 @@ export function HeaderWallet() {
       setCopied(true);
       clearTimeout(copyTimerRef.current);
       copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
+      return undefined;
     });
   }, [wallet.address]);
 

@@ -48,7 +48,7 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     let cancelled = false;
     listProofJobs(wallet.address, { limit: 1 })
       .then((response) => {
-        if (cancelled) return;
+        if (cancelled) return undefined;
         const latest = response.jobs[0];
         const claimPendingAfterProofSuccess =
           latest?.status === "succeeded" &&
@@ -57,6 +57,7 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
         if (latest && (!isTerminalProofStatus(latest.status) || claimPendingAfterProofSuccess)) {
           proof.setJobFromExternal(latest);
         }
+        return undefined;
       })
       .catch(() => {
         // Job list may be empty or unavailable — ignore.
@@ -65,7 +66,8 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     return () => {
       cancelled = true;
     };
-  }, [wallet.address, wallet.isConnected, proof.setJobFromExternal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- proof methods are stable refs from useProofJob
+  }, [wallet.address, wallet.isConnected, proof]);
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {
@@ -73,7 +75,7 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
       proof.clearError();
       proof.clearIfTerminal();
     },
-    [proof.clearError, proof.clearIfTerminal],
+    [proof],
   );
 
   const dismissOverlay = useCallback(() => {
@@ -114,14 +116,14 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
       })();
     });
     input.click();
-  }, [proof.clearError, proof.clearIfTerminal, proof.setError]);
+  }, [proof]);
 
   const submitForProof = useCallback(async () => {
     if (!latestRun) {
       return;
     }
     await proof.submitRun(latestRun, wallet.address);
-  }, [latestRun, proof.submitRun, wallet.address]);
+  }, [latestRun, proof, wallet.address]);
 
   const canSubmitForProof =
     Boolean(latestRun) &&

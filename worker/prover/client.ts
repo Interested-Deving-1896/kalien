@@ -104,10 +104,7 @@ function buildProverHealthUrl(env: WorkerEnv): URL {
   return buildProverUrl(env, "/health");
 }
 
-function buildProverHeaders(
-  env: WorkerEnv,
-  includeContentType: boolean,
-): Headers {
+function buildProverHeaders(env: WorkerEnv, includeContentType: boolean): Headers {
   const headers = new Headers();
 
   if (includeContentType) {
@@ -141,7 +138,10 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function describeProverHealthError(error: unknown): { retryable: boolean; message: string } {
+export function describeProverHealthError(error: unknown): {
+  retryable: boolean;
+  message: string;
+} {
   if (error instanceof ProverHealthCheckError) {
     return {
       retryable: error.retryable,
@@ -602,21 +602,24 @@ export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<P
   };
 }
 
+function readJournalU32(
+  value: unknown,
+  field: "seed_id" | "seed" | "frame_count" | "final_score",
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(`prover returned invalid ${field} in journal; expected u32`);
+  }
+  if (value < 0 || value > 0xffff_ffff) {
+    throw new Error(`prover returned out-of-range ${field} in journal; expected u32`);
+  }
+  return value >>> 0;
+}
+
 export function summarizeProof(response: ProverGetJobResponse): ProofResultSummary {
   const result = response.result;
   if (!result) {
     throw new Error("prover result payload missing");
   }
-
-  const readJournalU32 = (value: unknown, field: "seed_id" | "seed" | "frame_count" | "final_score"): number => {
-    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
-      throw new Error(`prover returned invalid ${field} in journal; expected u32`);
-    }
-    if (value < 0 || value > 0xffff_ffff) {
-      throw new Error(`prover returned out-of-range ${field} in journal; expected u32`);
-    }
-    return value >>> 0;
-  };
 
   const seedId = readJournalU32(result.proof.journal.seed_id, "seed_id");
   const seed = readJournalU32(result.proof.journal.seed, "seed");

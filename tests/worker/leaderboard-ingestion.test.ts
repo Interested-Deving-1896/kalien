@@ -23,7 +23,10 @@ describe("normalizeGalexieScoreEvents", () => {
       next_cursor: "cursor-2",
     };
 
-    const normalized = normalizeGalexieScoreEvents(payload, "2026-02-11T12:01:00.000Z");
+    const normalized = normalizeGalexieScoreEvents(
+      payload,
+      "2026-02-11T12:01:00.000Z",
+    );
     expect(normalized.fetchedCount).toBe(1);
     expect(normalized.events).toHaveLength(1);
     expect(normalized.nextCursor).toBe("cursor-2");
@@ -56,7 +59,10 @@ describe("normalizeGalexieScoreEvents", () => {
       ],
     };
 
-    const normalized = normalizeGalexieScoreEvents(payload, "2026-02-11T12:06:00.000Z");
+    const normalized = normalizeGalexieScoreEvents(
+      payload,
+      "2026-02-11T12:06:00.000Z",
+    );
     expect(normalized.fetchedCount).toBe(1);
     expect(normalized.events).toHaveLength(1);
     expect(normalized.events[0]?.newBest).toBe(2048);

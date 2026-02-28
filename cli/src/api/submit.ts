@@ -30,7 +30,7 @@ export async function submitTape(
     if (response.status === 429) {
       let error = "Rate limited";
       try {
-        const body = await response.json() as { error?: string };
+        const body = (await response.json()) as { error?: string };
         if (body.error) error = body.error;
       } catch {}
       return { success: false, error, rateLimited: true };
@@ -39,13 +39,13 @@ export async function submitTape(
     if (!response.ok) {
       let error = `HTTP ${response.status}`;
       try {
-        const body = await response.json() as { error?: string };
+        const body = (await response.json()) as { error?: string };
         if (body.error) error = body.error;
       } catch {}
       return { success: false, error };
     }
 
-    const data = await response.json() as {
+    const data = (await response.json()) as {
       success: boolean;
       status_url?: string;
       job?: { jobId: string };

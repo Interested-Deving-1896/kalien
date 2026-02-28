@@ -6,7 +6,8 @@ import {
   LEADERBOARD_PRIVATE_CACHE_CONTROL,
 } from "../../worker/cache-control";
 
-const VALID_CLAIMANT_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
+const VALID_CLAIMANT_CONTRACT =
+  "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
 const EXAMPLE_GENERATED_AT = "2026-02-14T00:00:00.000Z";
 
 mock.module("../../worker/queue/consumer", () => ({
@@ -90,7 +91,10 @@ mock.module("../../worker/leaderboard-store", () => ({
     totalEvents: 1,
     lastError: null,
   }),
-  getLeaderboardPage: async (env: WorkerEnv, options: { claimantAddress: string | null }) => ({
+  getLeaderboardPage: async (
+    env: WorkerEnv,
+    options: { claimantAddress: string | null },
+  ) => ({
     window: "all",
     generatedAt: EXAMPLE_GENERATED_AT,
     windowRange: {
@@ -180,7 +184,8 @@ mock.module("../../worker/leaderboard-store", () => ({
 
 mock.module("../../worker/durable/coordinator", () => ({
   coordinatorStub: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __coordinator: Record<string, unknown> }).__coordinator,
+    (env as WorkerEnv & { __coordinator: Record<string, unknown> })
+      .__coordinator,
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
@@ -281,7 +286,11 @@ const noopExecutionContext = {
   },
 } as unknown as ExecutionContext;
 
-async function requestWorker(path: string, init: RequestInit | undefined, env: WorkerEnv) {
+async function requestWorker(
+  path: string,
+  init: RequestInit | undefined,
+  env: WorkerEnv,
+) {
   const request = new Request(`https://worker.test${path}`, init);
   return handler.fetch(request, env, noopExecutionContext);
 }
@@ -294,9 +303,15 @@ describe("Worker live interface", () => {
   });
 
   it("preserves public leaderboard cache policy for public reads", async () => {
-    const response = await requestWorker("/api/leaderboard?window=all", undefined, makeEnv());
+    const response = await requestWorker(
+      "/api/leaderboard?window=all",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe(LEADERBOARD_CACHE_CONTROL);
+    expect(response.headers.get("cache-control")).toBe(
+      LEADERBOARD_CACHE_CONTROL,
+    );
     expect(response.headers.get("etag")).toBeTruthy();
   });
 
@@ -307,12 +322,18 @@ describe("Worker live interface", () => {
       makeEnv(),
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe(LEADERBOARD_PRIVATE_CACHE_CONTROL);
+    expect(response.headers.get("cache-control")).toBe(
+      LEADERBOARD_PRIVATE_CACHE_CONTROL,
+    );
   });
 
   it("supports conditional ETag revalidation on leaderboard route", async () => {
     const env = makeEnv();
-    const first = await requestWorker("/api/leaderboard?window=all", undefined, env);
+    const first = await requestWorker(
+      "/api/leaderboard?window=all",
+      undefined,
+      env,
+    );
     expect(first.status).toBe(200);
     const etag = first.headers.get("etag");
     expect(etag).toBeTruthy();
@@ -360,7 +381,11 @@ describe("Worker live interface", () => {
   });
 
   it("requires DEV_API_KEY and bearer auth for /dev/api/leaderboard/*", async () => {
-    const noKey = await requestWorker("/dev/api/leaderboard/sync", { method: "POST" }, makeEnv());
+    const noKey = await requestWorker(
+      "/dev/api/leaderboard/sync",
+      { method: "POST" },
+      makeEnv(),
+    );
     expect(noKey.status).toBe(404);
 
     const noAuth = await requestWorker(
@@ -384,11 +409,18 @@ describe("Worker live interface", () => {
   });
 
   it("returns API not-found payload for unknown /api route", async () => {
-    const response = await requestWorker("/api/does-not-exist", undefined, makeEnv());
+    const response = await requestWorker(
+      "/api/does-not-exist",
+      undefined,
+      makeEnv(),
+    );
     expect(response.status).toBe(404);
     expect(response.headers.get("cache-control")).toBe("no-store");
 
-    const payload = (await response.json()) as { success: boolean; error: string };
+    const payload = (await response.json()) as {
+      success: boolean;
+      error: string;
+    };
     expect(payload.success).toBe(false);
     expect(payload.error).toContain("unknown api route");
   });

@@ -10,7 +10,14 @@ interface PaginationProps {
   disabled?: boolean;
 }
 
-export function Pagination({ offset, limit, total, nextOffset, onOffsetChange, disabled }: PaginationProps) {
+export function Pagination({
+  offset,
+  limit,
+  total,
+  nextOffset,
+  onOffsetChange,
+  disabled,
+}: PaginationProps) {
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + limit, total);
   const hasPrev = offset > 0;

@@ -15,9 +15,7 @@ export function StatCard({ label, value, className }: StatCardProps) {
         className,
       )}
     >
-      <dt className="m-0 text-xs uppercase tracking-[0.06em] text-text-dim">
-        {label}
-      </dt>
+      <dt className="m-0 text-xs uppercase tracking-[0.06em] text-text-dim">{label}</dt>
       <dd className="m-0 mt-0.5 font-display text-sm text-card-foreground">{value}</dd>
     </div>
   );

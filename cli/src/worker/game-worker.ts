@@ -1,10 +1,18 @@
 /// <reference types="bun-types" />
 import { AsteroidsGame } from "@/game/AsteroidsGame";
 import { Autopilot, type AutopilotConfig } from "@/game/Autopilot";
-import type { MainToWorkerMessage, WorkerRole, WorkerToMainMessage } from "./messages";
+import type {
+  MainToWorkerMessage,
+  WorkerRole,
+  WorkerToMainMessage,
+} from "./messages";
 import { mutateConfig, randomConfig, warmRestartConfig } from "./mutate";
 import { fetchSeedFromContract } from "@/chain/seed";
-import { MAX_FRAMES, EXPLORER_RESTART_THRESHOLD, SEED_INTERVAL_SECONDS } from "../constants";
+import {
+  MAX_FRAMES,
+  EXPLORER_RESTART_THRESHOLD,
+  SEED_INTERVAL_SECONDS,
+} from "../constants";
 import { bumpSeedViaRelayer } from "../relayer";
 
 let workerId = 0;
@@ -77,6 +85,7 @@ async function ensureSeed(): Promise<void> {
 }
 
 function post(msg: WorkerToMainMessage, transfer?: Transferable[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Bun worker postMessage typing mismatch
   postMessage(msg, transfer as any);
 }
 
@@ -96,7 +105,12 @@ async function runOneGame(): Promise<void> {
   const config = mutateConfig(bestConfig, scale, role);
 
   const seedId = currentSeedId;
-  const game = new AsteroidsGame({ headless: true, seed, seedId, autopilotConfig: config });
+  const game = new AsteroidsGame({
+    headless: true,
+    seed,
+    seedId,
+    autopilotConfig: config,
+  });
   game.startNewGame(seed, seedId);
   (game as unknown as { autopilot: Autopilot }).autopilot.setEnabled(true);
 
@@ -117,7 +131,15 @@ async function runOneGame(): Promise<void> {
       gamesWithoutImprovement = 0;
       const copy = new Uint8Array(tape);
       post(
-        { type: "new-best", workerId, score, frames: frame, tape: copy, config, seedId },
+        {
+          type: "new-best",
+          workerId,
+          score,
+          frames: frame,
+          tape: copy,
+          config,
+          seedId,
+        },
         [copy.buffer],
       );
     }
@@ -126,14 +148,23 @@ async function runOneGame(): Promise<void> {
 
     // Explorers: warm restart when stuck — blend global best with random
     // to keep some learned structure while exploring new territory.
-    if (role === "explore" && gamesWithoutImprovement >= EXPLORER_RESTART_THRESHOLD) {
+    if (
+      role === "explore" &&
+      gamesWithoutImprovement >= EXPLORER_RESTART_THRESHOLD
+    ) {
       bestConfig = warmRestartConfig(globalBestConfig);
       bestScore = 0;
       gamesWithoutImprovement = 0;
     }
   }
 
-  post({ type: "game-complete", workerId, score, frames: frame, workerBest: bestScore });
+  post({
+    type: "game-complete",
+    workerId,
+    score,
+    frames: frame,
+    workerBest: bestScore,
+  });
 
   // Yield to event loop so messages (stop, reset-best, set-config) can be processed,
   // then start next game

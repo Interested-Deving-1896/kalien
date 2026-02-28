@@ -91,4 +91,3 @@ export interface BoundlessClientConfig {
   /** Pinata JWT for IPFS uploads (required if stdin > MAX_INLINE_STDIN_BYTES) */
   pinataJwt: string | null;
 }
-

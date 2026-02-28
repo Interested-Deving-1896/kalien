@@ -49,18 +49,27 @@ export function renderDashboard(stats: DashboardStats): void {
   } = stats;
 
   const elapsedSec = (Date.now() - startTime) / 1000;
-  const gamesPerMin = elapsedSec > 0 ? ((totalGamesPlayed / elapsedSec) * 60).toFixed(1) : "0.0";
+  const gamesPerMin =
+    elapsedSec > 0 ? ((totalGamesPlayed / elapsedSec) * 60).toFixed(1) : "0.0";
   const elapsedStr = formatDuration(elapsedSec);
   const epochStr = formatDuration(epochRemainingSec);
-  const shortAddr = address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+  const shortAddr =
+    address.length > 12
+      ? `${address.slice(0, 6)}...${address.slice(-4)}`
+      : address;
 
   const hasThreshold = lastSubmittedScore > 0;
   const scoreColor = hasThreshold ? ansi.green : ansi.brightGreen;
-  const scoreLabel = hasThreshold ? `${bestScore} (to beat: ${lastSubmittedScore})` : String(bestScore);
+  const scoreLabel = hasThreshold
+    ? `${bestScore} (to beat: ${lastSubmittedScore})`
+    : String(bestScore);
 
-  const budgetColor = epochSubmissions >= maxSubmissionsPerEpoch ? ansi.red
-    : epochSubmissions >= maxSubmissionsPerEpoch - 2 ? ansi.yellow
-    : ansi.green;
+  const budgetColor =
+    epochSubmissions >= maxSubmissionsPerEpoch
+      ? ansi.red
+      : epochSubmissions >= maxSubmissionsPerEpoch - 2
+        ? ansi.yellow
+        : ansi.green;
   const budgetLabel = `${maxSubmissionsPerEpoch - epochSubmissions}/${maxSubmissionsPerEpoch}`;
 
   // Build per-thread score chips.
@@ -93,15 +102,22 @@ export function renderDashboard(stats: DashboardStats): void {
   lines.push("");
 
   // Status
-  lines.push(`  ${ansi.color(ansi.gray, "Address:")}    ${ansi.color(ansi.white, shortAddr)}    ${ansi.color(ansi.gray, "Uptime:")} ${ansi.color(ansi.white, elapsedStr)}`);
+  lines.push(
+    `  ${ansi.color(ansi.gray, "Address:")}    ${ansi.color(ansi.white, shortAddr)}    ${ansi.color(ansi.gray, "Uptime:")} ${ansi.color(ansi.white, elapsedStr)}`,
+  );
   lines.push("");
 
   // Epoch info
-  const seedStr = currentSeed !== null
-    ? `0x${currentSeed.toString(16).padStart(8, "0").toUpperCase()}`
-    : ansi.color(ansi.dim, "fetching...");
-  lines.push(`  ${ansi.color(ansi.gray, "Seed:")}       ${ansi.color(ansi.brightWhite, seedStr)}    ${ansi.color(ansi.gray, "Next seed:")} ${ansi.color(ansi.cyan, epochStr)}`);
-  lines.push(`  ${ansi.color(ansi.gray, "Games:")}      ${ansi.color(ansi.brightWhite, String(epochGamesPlayed))} ${ansi.color(ansi.dim, `this epoch (${totalGamesPlayed} total)`)}    ${ansi.color(ansi.gray, "Rate:")} ${ansi.color(ansi.white, gamesPerMin + "/min")}`);
+  const seedStr =
+    currentSeed !== null
+      ? `0x${currentSeed.toString(16).padStart(8, "0").toUpperCase()}`
+      : ansi.color(ansi.dim, "fetching...");
+  lines.push(
+    `  ${ansi.color(ansi.gray, "Seed:")}       ${ansi.color(ansi.brightWhite, seedStr)}    ${ansi.color(ansi.gray, "Next seed:")} ${ansi.color(ansi.cyan, epochStr)}`,
+  );
+  lines.push(
+    `  ${ansi.color(ansi.gray, "Games:")}      ${ansi.color(ansi.brightWhite, String(epochGamesPlayed))} ${ansi.color(ansi.dim, `this epoch (${totalGamesPlayed} total)`)}    ${ansi.color(ansi.gray, "Rate:")} ${ansi.color(ansi.white, gamesPerMin + "/min")}`,
+  );
 
   // Per-thread scores (E = exploit, x = explore, ★ = global best holder)
   const threadLabel = `  ${ansi.color(ansi.gray, `Threads (${threads}):`)} `;
@@ -112,28 +128,39 @@ export function renderDashboard(stats: DashboardStats): void {
   lines.push("");
 
   // Score section
-  lines.push(`  ${ansi.color(ansi.gray, "Best:")}       ${ansi.color(scoreColor, scoreLabel)}`);
+  lines.push(
+    `  ${ansi.color(ansi.gray, "Best:")}       ${ansi.color(scoreColor, scoreLabel)}`,
+  );
 
   if (onChainBestScore > 0) {
-    lines.push(`  ${ansi.color(ansi.gray, "On-chain:")}   ${ansi.color(ansi.brightYellow, String(onChainBestScore))} ${ansi.color(ansi.dim, "(your best, all seeds)")}`);
+    lines.push(
+      `  ${ansi.color(ansi.gray, "On-chain:")}   ${ansi.color(ansi.brightYellow, String(onChainBestScore))} ${ansi.color(ansi.dim, "(your best, all seeds)")}`,
+    );
   }
 
   // Settle indicator
   if (settleRemainingSec > 0) {
-    lines.push(`  ${ansi.color(ansi.gray, "Settling:")}   ${ansi.color(ansi.cyan, `${settleRemainingSec}s`)} ${ansi.color(ansi.dim, "waiting for score to stabilize")}`);
+    lines.push(
+      `  ${ansi.color(ansi.gray, "Settling:")}   ${ansi.color(ansi.cyan, `${settleRemainingSec}s`)} ${ansi.color(ansi.dim, "waiting for score to stabilize")}`,
+    );
   }
   lines.push("");
 
   // Submission info
-  lines.push(`  ${ansi.color(ansi.gray, "Submissions:")} ${ansi.color(ansi.brightYellow, String(totalSubmissions))}    ${ansi.color(ansi.gray, "Budget:")} ${ansi.color(budgetColor, budgetLabel)} ${ansi.color(ansi.dim, "remaining this epoch")}`);
+  lines.push(
+    `  ${ansi.color(ansi.gray, "Submissions:")} ${ansi.color(ansi.brightYellow, String(totalSubmissions))}    ${ansi.color(ansi.gray, "Budget:")} ${ansi.color(budgetColor, budgetLabel)} ${ansi.color(ansi.dim, "remaining this epoch")}`,
+  );
   if (lastSubmitStatus) {
     lines.push(`  ${ansi.color(ansi.gray, "Status:")}     ${lastSubmitStatus}`);
   }
   lines.push("");
-  lines.push(`  ${ansi.color(ansi.dim, "E=exploit  x=explore  ★=global best    Ctrl+C to stop")}`);
+  lines.push(
+    `  ${ansi.color(ansi.dim, "E=exploit  x=explore  ★=global best    Ctrl+C to stop")}`,
+  );
 
   // Clear previous output, write new
-  const output = (lastLineCount > 0 ? ansi.cursorUp(lastLineCount) : "") +
+  const output =
+    (lastLineCount > 0 ? ansi.cursorUp(lastLineCount) : "") +
     lines.map((l) => ansi.clearLine + l).join("\n") +
     ansi.clearDown;
 

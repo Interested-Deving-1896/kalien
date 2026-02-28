@@ -132,7 +132,8 @@ fn make_journal(
             claimant_raw[1..].copy_from_slice(&payload);
         }
     }
-    buf[JOURNAL_CLAIMANT_OFFSET as usize..JOURNAL_CLAIMANT_OFFSET as usize + JOURNAL_CLAIMANT_ENCODED_LEN]
+    buf[JOURNAL_CLAIMANT_OFFSET as usize
+        ..JOURNAL_CLAIMANT_OFFSET as usize + JOURNAL_CLAIMANT_ENCODED_LEN]
         .copy_from_slice(&claimant_raw);
 
     Bytes::from_slice(env, &buf)

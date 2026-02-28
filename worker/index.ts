@@ -4,7 +4,10 @@ import { applyApiCacheControl } from "./cache-control";
 export { ProofCoordinatorDO } from "./durable/coordinator";
 import type { WorkerEnv } from "./env";
 import { createApiRouter } from "./api/routes";
-import { createLeaderboardDevRouter, createLeaderboardPublicRouter } from "./api/leaderboard-routes";
+import {
+  createLeaderboardDevRouter,
+  createLeaderboardPublicRouter,
+} from "./api/leaderboard-routes";
 import { coordinatorStub } from "./durable/coordinator";
 import { recordLeaderboardSyncFailure, runScheduledLeaderboardSync } from "./leaderboard-sync";
 import {

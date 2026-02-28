@@ -262,7 +262,12 @@ export class AsteroidsGame {
   private replayTape: Tape | null = null;
 
   // Current frame input (read at start of updateSimulation, used by updateShip)
-  private currentFrameInput: { left: boolean; right: boolean; thrust: boolean; fire: boolean } = {
+  private currentFrameInput: {
+    left: boolean;
+    right: boolean;
+    thrust: boolean;
+    fire: boolean;
+  } = {
     left: false,
     right: false,
     thrust: false,
@@ -563,8 +568,8 @@ export class AsteroidsGame {
 
   startNewGame(seed?: number, seedId?: number): void {
     // Use provided seed, or fall back to the externally-set pending seed.
-    const resolvedSeed = seed !== undefined ? (seed >>> 0) : this.pendingSeed;
-    const resolvedSeedId = seedId !== undefined ? (seedId >>> 0) : this.pendingSeedId;
+    const resolvedSeed = seed !== undefined ? seed >>> 0 : this.pendingSeed;
+    const resolvedSeedId = seedId !== undefined ? seedId >>> 0 : this.pendingSeedId;
     if (resolvedSeed === null || resolvedSeedId === null) {
       // Avoid starting runs before a chain seed + seed_id are available.
       this.waitingForSeed = true;
@@ -1094,7 +1099,10 @@ export class AsteroidsGame {
     return Math.min(100, wavePressure + Math.trunc((lurkPressure * 50) / 100));
   }
 
-  private saucerFireCooldownRange(small: boolean): { min: number; max: number } {
+  private saucerFireCooldownRange(small: boolean): {
+    min: number;
+    max: number;
+  } {
     const pressure = this.saucerPressurePct();
     const [baseMin, baseMax, floorMin, floorMax] = small ? [42, 68, 22, 40] : [66, 96, 36, 56];
     const min = baseMin - Math.trunc(((baseMin - floorMin) * pressure) / 100);
@@ -1414,9 +1422,12 @@ export class AsteroidsGame {
       );
       this.audio.playExplosion(asteroid.size);
       if (awardScore) {
-        const pts = asteroid.size === "large" ? SCORE_LARGE_ASTEROID
-          : asteroid.size === "medium" ? SCORE_MEDIUM_ASTEROID
-          : SCORE_SMALL_ASTEROID;
+        const pts =
+          asteroid.size === "large"
+            ? SCORE_LARGE_ASTEROID
+            : asteroid.size === "medium"
+              ? SCORE_MEDIUM_ASTEROID
+              : SCORE_SMALL_ASTEROID;
         this.renderer.onScorePopup(px, py - asteroid.radius, pts);
       }
     }
@@ -1634,7 +1645,9 @@ export class AsteroidsGame {
     const seedHex = this.gameSeed.toString(16).padStart(8, "0");
     const filename = `asteroids-${seedHex}-${this.score}.tape`;
 
-    const blob = new Blob([tape.buffer as ArrayBuffer], { type: "application/octet-stream" });
+    const blob = new Blob([tape.buffer as ArrayBuffer], {
+      type: "application/octet-stream",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

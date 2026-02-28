@@ -30,7 +30,9 @@ export function encodeClaimantForJournal(claimant: string): Uint8Array {
 
   const encoded = new Uint8Array(JOURNAL_CLAIMANT_ENCODED_LEN);
   encoded[0] =
-    parsed.type === "account" ? JOURNAL_CLAIMANT_KIND_ACCOUNT : JOURNAL_CLAIMANT_KIND_CONTRACT;
+    parsed.type === "account"
+      ? JOURNAL_CLAIMANT_KIND_ACCOUNT
+      : JOURNAL_CLAIMANT_KIND_CONTRACT;
   encoded.set(body, 1);
   return encoded;
 }
@@ -61,13 +63,18 @@ export function packJournalRaw(journal: JournalFields): Uint8Array {
   view.setUint32(JOURNAL_SEED_OFFSET, journal.seed >>> 0, true);
   view.setUint32(JOURNAL_FRAME_COUNT_OFFSET, journal.frame_count >>> 0, true);
   view.setUint32(JOURNAL_FINAL_SCORE_OFFSET, journal.final_score >>> 0, true);
-  bytes.set(encodeClaimantForJournal(journal.claimant), JOURNAL_CLAIMANT_OFFSET);
+  bytes.set(
+    encodeClaimantForJournal(journal.claimant),
+    JOURNAL_CLAIMANT_OFFSET,
+  );
   return bytes;
 }
 
 export function unpackJournalRaw(bytes: Uint8Array): JournalFields {
   if (bytes.length !== JOURNAL_LEN) {
-    throw new Error(`journal must be exactly ${JOURNAL_LEN} bytes (got ${bytes.length})`);
+    throw new Error(
+      `journal must be exactly ${JOURNAL_LEN} bytes (got ${bytes.length})`,
+    );
   }
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -77,7 +84,10 @@ export function unpackJournalRaw(bytes: Uint8Array): JournalFields {
     frame_count: view.getUint32(JOURNAL_FRAME_COUNT_OFFSET, true),
     final_score: view.getUint32(JOURNAL_FINAL_SCORE_OFFSET, true),
     claimant: decodeClaimantFromJournal(
-      bytes.slice(JOURNAL_CLAIMANT_OFFSET, JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN),
+      bytes.slice(
+        JOURNAL_CLAIMANT_OFFSET,
+        JOURNAL_CLAIMANT_OFFSET + JOURNAL_CLAIMANT_ENCODED_LEN,
+      ),
     ),
   };
 }
