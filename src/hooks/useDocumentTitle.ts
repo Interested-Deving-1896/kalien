@@ -3,7 +3,7 @@ import { useEffect } from "react";
 const BASE_TITLE = "Kalien";
 const DEFAULT_DESCRIPTION =
   "Play deterministic Asteroids, prove your runs, and climb a verifiable on-chain leaderboard with Kalien.";
-const DEFAULT_IMAGE = "https://pub-b2eaaee2bbe74d70820bacb7298958f5.r2.dev/kalien-meta-2.png";
+const DEFAULT_IMAGE = "https://kalien.xyz/kalien-meta-2.jpg";
 const DEFAULT_TYPE = "website";
 const FALLBACK_SITE_URL = "https://kalien.xyz";
 
