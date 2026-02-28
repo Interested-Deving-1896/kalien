@@ -45,6 +45,7 @@ export interface WorkerEnv {
   GALEXIE_RPC_BASE_URL?: string;
   GALEXIE_REQUEST_TIMEOUT_MS?: string;
   GALEXIE_SCORE_EVENTS_PATH?: string;
+  GALEXIE_DATALAKE_MAX_MISSING_FILES?: string;
   CLAIM_NETWORK_PASSPHRASE?: string;
   // Boundless proving (alternative to PROVER_BASE_URL)
   BOUNDLESS_RPC_URL?: string;

@@ -151,6 +151,11 @@ export async function runLeaderboardSync(
   ) {
     const cursorLedger = extractLedgerFromOpaqueCursor(effectiveCursor);
     if (cursorLedger !== null && cursorLedger <= existingState.highestLedger) {
+      console.log(
+        `[leaderboard-sync] discarding stale cursor` +
+          ` (cursorLedger=${cursorLedger}, highestLedger=${existingState.highestLedger})` +
+          ` — resuming from ledger ${existingState.highestLedger + 1}`,
+      );
       effectiveCursor = null;
       effectiveFromLedger = existingState.highestLedger + 1;
     }
@@ -201,6 +206,10 @@ export async function runLeaderboardSync(
       if (lastFetched.latestLedger === null) break;
       const scanEndLedger = extractLedgerFromOpaqueCursor(lastFetched.nextCursor);
       if (scanEndLedger === null || scanEndLedger >= lastFetched.latestLedger) break;
+      console.log(
+        `[leaderboard-sync] bridging ledger gap` +
+          ` (scanEnd=${scanEndLedger}, latest=${lastFetched.latestLedger}, page=${pageCount + 1})`,
+      );
     }
 
     // eslint-disable-next-line no-await-in-loop

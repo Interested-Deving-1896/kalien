@@ -45,6 +45,7 @@ export interface GalexieFetchResult {
   provider: LeaderboardProvider;
   sourceMode: LeaderboardResolvedSourceMode;
   latestLedger: number | null;
+  oldestLedger: number | null;
 }
 
 interface GalexieDatastoreConfig {
@@ -360,21 +361,6 @@ function toHexString(value: unknown): string | null {
   }
 
   return null;
-}
-
-function hasCanonicalScoreInvariants(values: {
-  finalScore: number;
-  previousBest: number;
-  newBest: number;
-  mintedDelta: number;
-}): boolean {
-  if (values.finalScore !== values.newBest) {
-    return false;
-  }
-  if (values.previousBest > values.newBest) {
-    return false;
-  }
-  return values.mintedDelta === values.newBest - values.previousBest;
 }
 
 function normalizeScoreSubmittedFromNative(nativeData: unknown): {
@@ -1334,6 +1320,8 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
 
   const latestLedgerRaw = root ? toInteger(root.latestLedger) : null;
   const latestLedger = latestLedgerRaw !== null && latestLedgerRaw >= 0 ? latestLedgerRaw : null;
+  const oldestLedgerRaw = root ? toInteger(root.oldestLedger) : null;
+  const oldestLedger = oldestLedgerRaw !== null && oldestLedgerRaw >= 0 ? oldestLedgerRaw : null;
 
   return {
     events,
@@ -1342,6 +1330,7 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
     provider: "rpc",
     sourceMode: "rpc",
     latestLedger,
+    oldestLedger,
   };
 }
 
@@ -1439,8 +1428,11 @@ async function fetchLeaderboardEventsFromRpcEvents(
           }
           requestParams.endLedger = Math.max(2, nextEnd);
         }
-      } catch {
-        // Ignore health clamp errors and continue with caller-provided bounds.
+      } catch (healthError) {
+        // Log but continue with caller-provided bounds.
+        console.warn(
+          `[leaderboard-ingestion] health clamp failed for ${rpcBase.origin}: ${safeErrorMessage(healthError)}`,
+        );
       }
     }
 
@@ -1541,6 +1533,77 @@ async function fetchLeaderboardEventsFromRpcEvents(
         const message =
           typeof errorPayload.message === "string" ? errorPayload.message.trim() : null;
         const details = typeof errorPayload.data === "string" ? errorPayload.data.trim() : null;
+
+        // Detect cursor expiry: the RPC returns an error when the cursor (or
+        // startLedger derived from it) references a ledger older than the
+        // retention window. Common patterns:
+        //   "start is before oldest ledger"
+        //   "startLedger must be within the ledger range: [oldest, latest]"
+        const errorText = `${message ?? ""} ${details ?? ""}`.toLowerCase();
+        const isCursorExpiry =
+          errorText.includes("oldest ledger") || errorText.includes("ledger range");
+        const hasCursor = Object.prototype.hasOwnProperty.call(
+          variantParams.pagination as JsonRecord,
+          "cursor",
+        );
+
+        if (isCursorExpiry && hasCursor) {
+          console.warn(
+            `[leaderboard-ingestion] cursor expiry detected (${rpcBase.origin}): ${message}` +
+              ` — attempting recovery with oldestLedger`,
+          );
+          // Attempt recovery: drop the expired cursor and retry with startLedger = oldestLedger
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const bounds = await ensureRpcBounds();
+            if (bounds.oldestLedger !== null) {
+              const recoveryPagination: JsonRecord = { limit };
+              const recoveryParams: JsonRecord = {
+                filters: [filter],
+                pagination: recoveryPagination,
+                startLedger: bounds.oldestLedger,
+              };
+              // eslint-disable-next-line no-await-in-loop
+              const recoveryResponse = await fetchWithTimeout(
+                rpcBase,
+                {
+                  method: "POST",
+                  headers: {
+                    ...getRpcAuthHeaders(env, rpcBase),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 1,
+                    method: "getEvents",
+                    params: recoveryParams,
+                  }),
+                },
+                timeoutMs,
+              );
+              if (recoveryResponse.ok) {
+                // eslint-disable-next-line no-await-in-loop
+                const recoveryPayload = await recoveryResponse.json();
+                const recoveryRoot = asRecord(recoveryPayload);
+                if (!asRecord(recoveryRoot?.error)) {
+                  const recoveryResult = asRecord(recoveryRoot?.result);
+                  if (recoveryResult) {
+                    console.log(
+                      `[leaderboard-ingestion] cursor expiry recovery succeeded` +
+                        ` (${rpcBase.origin}, oldestLedger=${bounds.oldestLedger})`,
+                    );
+                    const fetchResult = normalizeRpcGetEventsPayload(recoveryResult);
+                    fetchResult.oldestLedger = bounds.oldestLedger;
+                    return fetchResult;
+                  }
+                }
+              }
+            }
+          } catch {
+            // Recovery failed — fall through to normal error handling
+          }
+        }
+
         const pieces = [
           "rpc getEvents returned an error",
           code !== null ? `code=${code}` : null,
@@ -1557,7 +1620,12 @@ async function fetchLeaderboardEventsFromRpcEvents(
         continue;
       }
 
-      return normalizeRpcGetEventsPayload(result);
+      const fetchResult = normalizeRpcGetEventsPayload(result);
+      // Propagate retention bounds if we fetched them during health clamping
+      if (rpcBounds?.oldestLedger !== null && rpcBounds?.oldestLedger !== undefined) {
+        fetchResult.oldestLedger = rpcBounds.oldestLedger;
+      }
+      return fetchResult;
     }
   }
 
@@ -1590,6 +1658,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
   const extensions = resolveGalexieDatastoreObjectExtensions(env, datastoreConfig);
   const rootPath = getGalexieRootPath(env);
 
+  const maxMissingFiles = parseInteger(env.GALEXIE_DATALAKE_MAX_MISSING_FILES, 4, 1);
   const events: LeaderboardEventRecord[] = [];
   let inspectedEventCount = 0;
   let cursorLedger = ledgerRange.fromLedger;
@@ -1634,7 +1703,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
       fileStartLedger += ledgersPerFile;
       cursorLedger = fileStartLedger;
       if (options.toLedger === null || options.toLedger === undefined) {
-        if (consecutiveMissingFiles >= 2) {
+        if (consecutiveMissingFiles >= maxMissingFiles) {
           break;
         }
       }
@@ -1666,6 +1735,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
     provider: "galexie",
     sourceMode: "datalake",
     latestLedger,
+    oldestLedger: null,
   };
 }
 
@@ -1703,6 +1773,9 @@ export function normalizeGalexieScoreEvents(
       continue;
     }
 
+    // Best-effort extraction with defaults — same approach as RPC/datalake paths.
+    // Never skip an event from the Events API, as cursor advancement would lose
+    // the data permanently.
     const seed = toInteger(pickValue(nested, ["seed"]));
     const frameCount = toInteger(pickValue(nested, ["frame_count"]));
     const finalScore = toInteger(pickValue(nested, ["final_score"]));
@@ -1711,33 +1784,13 @@ export function normalizeGalexieScoreEvents(
     const mintedDelta = toInteger(pickValue(nested, ["minted_delta"]));
     const closedAt = toIsoTimestamp(pickValue(nested, ["closed_at"]));
 
-    if (
-      seed === null ||
-      seed < 0 ||
-      frameCount === null ||
-      frameCount < 0 ||
-      finalScore === null ||
-      finalScore <= 0 ||
-      newBest === null ||
-      newBest <= 0 ||
-      previousBest === null ||
-      previousBest < 0 ||
-      mintedDelta === null ||
-      mintedDelta < 0 ||
-      !closedAt
-    ) {
-      continue;
-    }
-    if (
-      !hasCanonicalScoreInvariants({
-        finalScore,
-        previousBest,
-        newBest,
-        mintedDelta,
-      })
-    ) {
-      continue;
-    }
+    const resolvedScore = (finalScore ?? newBest ?? 0) >>> 0;
+    const resolvedNewBest = (newBest ?? finalScore ?? 0) >>> 0;
+    const resolvedPreviousBest = (previousBest ?? 0) >>> 0;
+    const resolvedMintedDelta =
+      mintedDelta !== null
+        ? mintedDelta >>> 0
+        : Math.max(0, resolvedNewBest - resolvedPreviousBest) >>> 0;
 
     const txHashRaw = pickValue(nested, ["tx_hash"]);
     const txHash =
@@ -1761,22 +1814,22 @@ export function normalizeGalexieScoreEvents(
       eventId = `${ledger}:${eventIndex ?? 0}`;
     }
     if (!eventId) {
-      continue;
+      eventId = `synthetic:${ingestedAt}:${events.length}`;
     }
 
     events.push({
       eventId,
       claimantAddress,
-      seed: seed >>> 0,
-      frameCount: frameCount >>> 0,
-      finalScore: finalScore >>> 0,
-      previousBest: previousBest >>> 0,
-      newBest: newBest >>> 0,
-      mintedDelta: mintedDelta >>> 0,
+      seed: seed !== null && seed >= 0 ? seed >>> 0 : 0,
+      frameCount: frameCount !== null && frameCount >= 0 ? frameCount >>> 0 : null,
+      finalScore: resolvedScore,
+      previousBest: resolvedPreviousBest,
+      newBest: resolvedNewBest,
+      mintedDelta: resolvedMintedDelta,
       txHash,
       eventIndex,
       ledger,
-      closedAt,
+      closedAt: closedAt ?? ingestedAt,
       source: "galexie",
       ingestedAt,
     });
@@ -1789,6 +1842,7 @@ export function normalizeGalexieScoreEvents(
     provider: "galexie",
     sourceMode: "events_api",
     latestLedger: null,
+    oldestLedger: null,
   };
 }
 
