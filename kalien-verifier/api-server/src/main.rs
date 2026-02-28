@@ -171,6 +171,7 @@ mod tests {
         header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION},
         StatusCode,
     };
+    use actix_web::{test::TestRequest, Responder};
     use tempfile::TempDir;
     use uuid::Uuid;
 
@@ -362,6 +363,61 @@ mod tests {
         // Also verify the HTTP handler rejects.
         let response = enqueue_proof_job(state, vec![1_u8], sample_options()).await;
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[actix_web::test]
+    async fn delete_job_rejects_when_api_key_not_configured() {
+        let (app_state, _dir) = test_state();
+        let state = web::Data::new(app_state);
+        let job_id = Uuid::new_v4();
+        let job = ProofJob {
+            job_id,
+            status: JobStatus::Failed,
+            created_at_unix_s: now_unix_s(),
+            started_at_unix_s: Some(now_unix_s()),
+            finished_at_unix_s: Some(now_unix_s()),
+            tape_size_bytes: 1,
+            options: options_summary(&sample_options()),
+            result: None,
+            error: Some("boom".to_string()),
+            error_code: Some("proof_error".to_string()),
+        };
+        state.jobs.insert(&job).unwrap();
+
+        let request = TestRequest::default().to_http_request();
+        let response = delete_job(state.clone(), web::Path::from(job_id))
+            .await
+            .respond_to(&request);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(state.jobs.get(job_id).unwrap().is_some());
+    }
+
+    #[actix_web::test]
+    async fn delete_job_allows_when_api_key_is_configured() {
+        let (mut app_state, _dir) = test_state();
+        app_state.auth_required = true;
+        let state = web::Data::new(app_state);
+        let job_id = Uuid::new_v4();
+        let job = ProofJob {
+            job_id,
+            status: JobStatus::Failed,
+            created_at_unix_s: now_unix_s(),
+            started_at_unix_s: Some(now_unix_s()),
+            finished_at_unix_s: Some(now_unix_s()),
+            tape_size_bytes: 1,
+            options: options_summary(&sample_options()),
+            result: None,
+            error: Some("boom".to_string()),
+            error_code: Some("proof_error".to_string()),
+        };
+        state.jobs.insert(&job).unwrap();
+
+        let request = TestRequest::default().to_http_request();
+        let response = delete_job(state.clone(), web::Path::from(job_id))
+            .await
+            .respond_to(&request);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(state.jobs.get(job_id).unwrap().is_none());
     }
 
     #[test]

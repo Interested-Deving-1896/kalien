@@ -159,6 +159,14 @@ pub(crate) async fn get_job(state: Data<AppState>, path: Path<Uuid>) -> impl Res
 }
 
 pub(crate) async fn delete_job(state: Data<AppState>, path: Path<Uuid>) -> impl Responder {
+    if !state.auth_required {
+        return json_error_with_code(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            Some("unauthorized"),
+        );
+    }
+
     let job_id = path.into_inner();
     match state.jobs.get(job_id) {
         Ok(Some(job)) => {
