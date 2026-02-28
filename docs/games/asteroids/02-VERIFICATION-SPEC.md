@@ -15,7 +15,7 @@ A tape is valid only if all conditions hold:
 - `rules_tag == 4` (`AST4`)
 - header reserved bytes `[6..7] == 0`
 - `frameCount > 0`
-- `frameCount <= configured max` (default 18,000)
+- `frameCount <= configured max` (default 36,000)
 
 ### Body (nibble-packed)
 - `ceil(frameCount / 2)` bytes.

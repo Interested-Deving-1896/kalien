@@ -2,6 +2,15 @@
 
 Comprehensive inventory of every timeout, timing gate, and retry setting across the prover API server and Cloudflare Worker proof gateway. Recommended settings target **~5 minute typical proofs** while accepting up to **10 minutes** end-to-end in production.
 
+## Verifier Job DB Policy
+
+`kalien-verifier/api-server` uses a local SQLite file (`DATA_DIR/jobs.db`) for async job state.
+
+- Treat it as ephemeral operational state.
+- On incompatible schema changes, wipe/recreate the DB rather than migrate.
+- Use `kalien-verifier/deploy/reset-prover-state.sh` for destructive reset.
+- Wrangler/D1 migrations do not apply to this DB.
+
 ---
 
 ## Table of Contents
@@ -25,22 +34,22 @@ Comprehensive inventory of every timeout, timing gate, and retry setting across 
 
 | Setting | Current Value | Env Var | File | Purpose |
 |---------|--------------|---------|------|---------|
-| Running job timeout | **10 min** (600 s) | `RUNNING_JOB_TIMEOUT_SECS` | `api-server/src/main.rs:33` | `tokio::select!` deadline around `prove_tape()`. When exceeded, the proof task is detached and the job is marked failed with `error_code=proof_timeout`. |
-| Timed-out proof kill | **60 s** | `TIMED_OUT_PROOF_KILL_SECS` | `api-server/src/main.rs:38` | After a timeout, a background task waits this long for the detached proof to finish. If it doesn't, calls `std::process::abort()` so the supervisor (supervisord) restarts the process. Set to `0` to wait forever (not recommended). |
-| Job TTL | **24 h** (86400 s) | `JOB_TTL_SECS` | `api-server/src/main.rs:30` | Completed/failed jobs are swept from SQLite after this duration. |
-| Job sweep interval | **60 s** | `JOB_SWEEP_SECS` | `api-server/src/main.rs:31` | How often the background cleanup task runs `store.sweep()`. |
-| Max jobs | **64** | `MAX_JOBS` | `api-server/src/main.rs:32` | Maximum stored jobs before oldest is evicted on new submission. |
-| Prover concurrency | **1** (hardcoded) | — | `api-server/src/main.rs:29` | Tokio semaphore permits. Only one proof runs at a time. |
-| HTTP keep-alive | **75 s** | `HTTP_KEEP_ALIVE_SECS` | `api-server/src/main.rs:37` | Actix-web keep-alive timeout for idle connections. |
-| HTTP max connections | **25,000** | `HTTP_MAX_CONNECTIONS` | `api-server/src/main.rs:36` | Actix-web connection limit. |
-| Max tape bytes | **2 MiB** | `MAX_TAPE_BYTES` | `api-server/src/main.rs:28` | Request body size limit for tape uploads. |
-| Max frames | **18,000** | `MAX_FRAMES` | `api-server/.env.example:20` | Capped at game-engine constant `MAX_FRAMES_DEFAULT`. Passed to guest prover. |
-| Segment limit po2 | **21** (range 16–21) | `MIN/MAX_SEGMENT_LIMIT_PO2` | `api-server/src/main.rs:34-35` | RISC Zero segment size. Higher = fewer segments but more memory. |
+| Running job timeout | **10 min** (600 s) | `RUNNING_JOB_TIMEOUT_SECS` | `kalien-verifier/api-server/src/main.rs:33` | `tokio::select!` deadline around `prove_tape()`. When exceeded, the proof task is detached and the job is marked failed with `error_code=proof_timeout`. |
+| Timed-out proof kill | **60 s** | `TIMED_OUT_PROOF_KILL_SECS` | `kalien-verifier/api-server/src/main.rs:38` | After a timeout, a background task waits this long for the detached proof to finish. If it doesn't, calls `std::process::abort()` so the supervisor (supervisord) restarts the process. Set to `0` to wait forever (not recommended). |
+| Job TTL | **24 h** (86400 s) | `JOB_TTL_SECS` | `kalien-verifier/api-server/src/main.rs:30` | Completed/failed jobs are swept from SQLite after this duration. |
+| Job sweep interval | **60 s** | `JOB_SWEEP_SECS` | `kalien-verifier/api-server/src/main.rs:31` | How often the background cleanup task runs `store.sweep()`. |
+| Max jobs | **64** | `MAX_JOBS` | `kalien-verifier/api-server/src/main.rs:32` | Maximum stored jobs before oldest is evicted on new submission. |
+| Prover concurrency | **1** (hardcoded) | — | `kalien-verifier/api-server/src/main.rs:29` | Tokio semaphore permits. Only one proof runs at a time. |
+| HTTP keep-alive | **75 s** | `HTTP_KEEP_ALIVE_SECS` | `kalien-verifier/api-server/src/main.rs:37` | Actix-web keep-alive timeout for idle connections. |
+| HTTP max connections | **25,000** | `HTTP_MAX_CONNECTIONS` | `kalien-verifier/api-server/src/main.rs:36` | Actix-web connection limit. |
+| Max tape bytes | **2 MiB** | `MAX_TAPE_BYTES` | `kalien-verifier/api-server/src/main.rs:28` | Request body size limit for tape uploads. |
+| Max frames | **36,000** | `MAX_FRAMES` | `kalien-verifier/api-server/.env.example:20` | Capped at game-engine constant `MAX_FRAMES_DEFAULT`. Passed to guest prover. |
+| Segment limit po2 | **21** (range 16–21) | `MIN/MAX_SEGMENT_LIMIT_PO2` | `kalien-verifier/api-server/src/main.rs:34-35` | RISC Zero segment size. Higher = fewer segments but more memory. |
 
 **Relevant code paths:**
-- Timeout + detach + abort: `api-server/src/main.rs:348-467` (`run_proof_job`)
-- Sweep task: `api-server/src/main.rs:469-484` (`spawn_job_cleanup_task`)
-- Sweep SQL: `api-server/src/store.rs:521-572` (deletes running jobs older than `running_timeout_secs`, completed jobs older than `ttl_secs`)
+- Timeout + detach + abort: `kalien-verifier/api-server/src/main.rs:348-467` (`run_proof_job`)
+- Sweep task: `kalien-verifier/api-server/src/main.rs:469-484` (`spawn_job_cleanup_task`)
+- Sweep SQL: `kalien-verifier/api-server/src/store/mod.rs:521-572` (deletes running jobs older than `running_timeout_secs`, completed jobs older than `ttl_secs`)
 
 ### Cloudflare Worker Gateway (`worker/`)
 
@@ -92,7 +101,7 @@ Configuration changes to tighten the pipeline around a 10-minute acceptance wind
 
 | | |
 |---|---|
-| **File** | `api-server/.env.example:23` (and deployed `.env`) |
+| **File** | `kalien-verifier/api-server/.env.example:23` (and deployed `.env`) |
 | **Old** | `1800` (30 min) |
 | **New** | `600` (10 min) |
 | **Rationale** | Typical Groth16 proofs are ~5 minutes on CUDA. A 10-minute timeout provides ~2x headroom for variance while keeping single-flight capacity from being blocked indefinitely. If a proof can't complete in 10 minutes on your production GPU, treat it as stuck and fail fast. |
@@ -101,7 +110,7 @@ Configuration changes to tighten the pipeline around a 10-minute acceptance wind
 
 | | |
 |---|---|
-| **File** | `api-server/.env.example:26` (and deployed `.env`) |
+| **File** | `kalien-verifier/api-server/.env.example:26` (and deployed `.env`) |
 | **Old** | `120` (2 min) |
 | **New** | `60` (1 min) |
 | **Rationale** | Grace period for the detached proof to finish after timeout. With a 10-minute timeout, an additional 2-minute wait before `abort()` is excessive. 60 s is enough for orderly cleanup. Total time from proof start to forced restart: 10 min + 1 min = 11 min. |

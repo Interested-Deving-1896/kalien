@@ -85,6 +85,8 @@ Fixed length: `49` bytes.
 
 - `is_claimed(journal_digest) -> bool`
 - `best_score(claimant, seed_id) -> u32`
+- `current_seed() -> CurrentSeed`
+- `verify_score(seal, journal_raw) -> Result<u32, ScoreError>`
 - `image_id() -> BytesN<32>`
 - `router_id() -> Address`
 - `token_id() -> Address`

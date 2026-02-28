@@ -1,9 +1,11 @@
 # Asteroids Docs Parity Checklist (AST4)
 
-Date: 2026-02-11
+Date: 2026-02-28
 
 ## Purpose
 Code-backed checklist confirming that Asteroids docs match the current TS/Rust/Worker/Contract implementation.
+
+This is a point-in-time snapshot. Keep canonical docs updated directly; refresh this checklist after major architecture changes.
 
 ## Verified Against Code
 - Tape format and constants:
@@ -61,8 +63,9 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 - `docs/games/asteroids/02-VERIFICATION-SPEC.md`
 - `docs/games/asteroids/04-INTEGER-MATH-SPEC.md`
 - `docs/games/asteroids/06-IMPLEMENTATION-STATUS.md`
-- `docs/games/asteroids/13-ORIGINAL-RULESET-VARIANCE-AUDIT.md`
-- `docs/games/asteroids/14-VARIANCE-RESOLUTION-PLAN.md`
+- `docs/archive/games/asteroids/13-ORIGINAL-RULESET-VARIANCE-AUDIT.md`
+- `docs/archive/games/asteroids/14-VARIANCE-RESOLUTION-PLAN.md`
 
 ## Notes
-- `13-ORIGINAL-RULESET-VARIANCE-AUDIT.md` and `14-VARIANCE-RESOLUTION-PLAN.md` include historical planning context. When values conflict, treat `01-GAME-SPEC.md` plus implementation code as canonical.
+- `13-ORIGINAL-RULESET-VARIANCE-AUDIT.md` and `14-VARIANCE-RESOLUTION-PLAN.md` are archived historical planning context under `docs/archive/games/asteroids/`.
+- When values conflict, treat `01-GAME-SPEC.md` plus implementation code as canonical.

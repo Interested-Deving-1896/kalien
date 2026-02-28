@@ -44,7 +44,7 @@ Based on prompt intent, the effective delivery order should be:
 
 ## Source References
 Detailed prompt excerpts are in:
-- `docs/LEADERBOARD-WORK-PROMPT-INDEX-2026-02.md`
+- `docs/archive/leaderboard/reconstruction/2026-02/LEADERBOARD-WORK-PROMPT-INDEX-2026-02.md`
 
 Narrative reconstruction and commit mapping are in:
-- `docs/LEADERBOARD-WORK-RECONSTRUCTION-2026-02.md`
+- `docs/archive/leaderboard/reconstruction/2026-02/LEADERBOARD-WORK-RECONSTRUCTION-2026-02.md`

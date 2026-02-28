@@ -17,15 +17,20 @@ ZK/Stellar integration.
 | `08-SOURCES.md` | Curated source list used to derive this spec |
 | `09-SCORE-TOKEN-CONTRACT.md` | Soroban score-submission and KALIEN token minting contract spec |
 | `10-PROOF-GATEWAY-SPEC.md` | Cloudflare Worker + prover gateway behavior and API contract |
-| `11-CLIENT-INTEGRATION-SPEC.md` | Frontend wallet/proof/claim integration contract |
 | `12-GUEST-OPTIMIZATION.md` | RISC0 guest and proving optimization notes |
-| `13-ORIGINAL-RULESET-VARIANCE-AUDIT.md` | Current-vs-original gameplay variance audit |
-| `14-VARIANCE-RESOLUTION-PLAN.md` | Resolution strategy for selected variance items |
 | `15-DOCS-PARITY-CHECKLIST.md` | Latest docs parity checklist (dated; refresh when implementation changes) |
+
+## Legacy Context (Archived)
+
+The following docs are preserved for historical context and are not canonical:
+
+- [11-CLIENT-INTEGRATION-SPEC.md](../../archive/games/asteroids/11-CLIENT-INTEGRATION-SPEC.md)
+- [13-ORIGINAL-RULESET-VARIANCE-AUDIT.md](../../archive/games/asteroids/13-ORIGINAL-RULESET-VARIANCE-AUDIT.md)
+- [14-VARIANCE-RESOLUTION-PLAN.md](../../archive/games/asteroids/14-VARIANCE-RESOLUTION-PLAN.md)
 
 ## Scope
 
-- These files are source-of-truth specs.
+- Files listed in Canonical Sequence are source-of-truth specs.
 - If a decision changes, update the corresponding canonical file directly.
 
 See [docs/README.md](../../README.md) for global docs policy.

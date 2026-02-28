@@ -11,7 +11,8 @@
 Public claim should include at minimum:
 - tape hash / commitment
 - final score
-- final RNG state
+- `seed_id` / seed binding
+- claimant binding
 - verifier image/program identity
 
 ## Settlement Model

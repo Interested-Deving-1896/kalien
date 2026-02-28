@@ -6,7 +6,8 @@ HTTP server for generating Asteroids replay proofs from raw `.tape` bytes.
 
 - Single-flight proving (`concurrency = 1`).
 - Async job API with polling.
-- Optional API key auth on `/api/*`.
+- Optional API key auth on `/api/*` for submit/read paths.
+- Destructive API action (`DELETE /api/jobs/{job_id}`) is disabled unless `API_KEY` is configured.
 
 ## Endpoints
 
@@ -23,6 +24,11 @@ If `API_KEY` is set, `/api/*` requires either:
 - `Authorization: Bearer <API_KEY>`
 
 `/health` is always open.
+
+If `API_KEY` is not set:
+
+- `POST /api/jobs/prove-tape/raw` and `GET /api/jobs/{job_id}` remain accessible.
+- `DELETE /api/jobs/{job_id}` returns `401 unauthorized`.
 
 ## Submit a Job
 
@@ -49,7 +55,7 @@ curl -sS -H 'x-api-key: YOUR_API_KEY' "http://127.0.0.1:8080/api/jobs/${JOB_ID}"
 See `.env.example` for the full list.
 
 - `API_BIND_ADDR`: listen address (default `0.0.0.0:8080`)
-- `API_KEY`: optional shared secret for `/api/*`
+- `API_KEY`: shared secret for `/api/*` auth (required to enable DELETE)
 - `RISC0_DEV_MODE`: `1` for local dev receipts, `0` for secure proving
 - `DATA_DIR`: persistent job DB/log root (`./data` if unset)
 - `MAX_TAPE_BYTES`, `MAX_JOBS`, `JOB_TTL_SECS`, `JOB_SWEEP_SECS`
@@ -62,8 +68,17 @@ See `.env.example` for the full list.
 ## Security Defaults
 
 - Keep `RISC0_DEV_MODE=0` in production.
+- Set `API_KEY` in production.
 - Keep `verify_mode=policy` unless you explicitly need prover-side verification.
 - Run under a supervisor (supervisord/systemd/container restart policy) to recover
   from intentional abort-on-timeout behavior.
+
+## Job Store Lifecycle (`jobs.db`)
+
+`DATA_DIR/jobs.db` is operational state for async jobs and is treated as ephemeral.
+
+- Schema evolution policy: on incompatible schema changes, wipe and recreate `jobs.db`.
+- Use `kalien-verifier/deploy/reset-prover-state.sh` for destructive resets.
+- Cloudflare Wrangler/D1 migrations do not manage this DB; it is local SQLite owned by `api-server`.
 
 For host-level deployment/runbook details, see [../README.md](../README.md).

@@ -1,11 +1,13 @@
 # Verifier Perf: Next Exploration Notes (AST4)
 
+Last reviewed: 2026-02-28
+
 This doc captures the next performance/determinism investigations to run later, without weakening strict fairness guarantees.
 
 ## Constraints (Non-Negotiable)
 
 - Proof verification must continue to use strict replay (`verify_tape -> replay_strict`) and enforce all game rules deterministically.
-- No backwards compatibility: AST4 tapes are the only supported format (v3 header, nibble-packed body, claimant not embedded in tape; old tapes rejected).
+- No backwards compatibility: AST4 tapes are the only supported format (v4 16-byte header, nibble-packed body, claimant not embedded in tape; old tapes rejected).
 - Any gameplay-semantic change in Rust must be mirrored to TypeScript (sim + tape serializer) for 1:1 parity.
 - Determinism: no floats, no nondeterministic iteration, no dependence on host timing, and no data-structure reordering that changes collision resolution order.
 

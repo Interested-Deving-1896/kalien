@@ -46,4 +46,4 @@ Generated during forensic pass:
 - `/tmp/stellar_zk_user_prompts.leaderboard.highsignal.tsv`
 
 These files were transient helpers; the permanent recovery narrative is in:
-- `docs/LEADERBOARD-WORK-RECONSTRUCTION-2026-02.md`
+- `docs/archive/leaderboard/reconstruction/2026-02/LEADERBOARD-WORK-RECONSTRUCTION-2026-02.md`

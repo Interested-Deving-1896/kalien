@@ -51,7 +51,7 @@ RISC Zero provides precompile circuits for cryptographic operations that run far
 - Use `opt-level = "s"` and `codegen-units = 1` — smaller guest binary means fewer page faults (1,094-5,130 cycles each).
 - Avoid floats (60-140 cycles emulated), HashMap (SipHash overhead), unnecessary serde.
 - Keep guest `no_std` and single-threaded.
-- See `kalien-verifier/OPTIMIZATION.md` for full experiment matrix.
+- See `docs/games/asteroids/12-GUEST-OPTIMIZATION.md` for the current optimization notes.
 
 ## Noir / UltraHonk Path
 ### Core tools

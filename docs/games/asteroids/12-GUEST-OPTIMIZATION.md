@@ -1,5 +1,11 @@
 # Guest Optimization Guide
 
+Last reviewed: 2026-02-28
+
+This document contains optimization experiments and operating notes. Treat
+`kalien-verifier/benchmarks/thresholds.env` and live runtime config as the
+authoritative source for current threshold values.
+
 References:
 - https://dev.risczero.com/api/zkvm/optimization
 - https://dev.risczero.com/api/zkvm/profiling

@@ -5,6 +5,7 @@ Game-specific documentation lives in this directory.
 ## Domains
 
 - `asteroids/`: canonical docs for gameplay, deterministic verification, ZK integration, and Stellar settlement.
+- Legacy Asteroids planning/context docs are archived under `docs/archive/games/asteroids/`.
 
 ## Start Here
 

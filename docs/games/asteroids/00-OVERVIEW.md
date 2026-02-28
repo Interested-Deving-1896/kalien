@@ -9,7 +9,7 @@ replayed deterministically, proven, and settled on Stellar.
 - Authoritative math: **integer/fixed-point only** in consensus-critical logic.
 - Primary proving path: **RISC Zero**.
 - Secondary R&D path: Noir/UltraHonk only if product constraints require it.
-- Integrity anchors: final score and final gameplay RNG state.
+- Integrity anchors: final score, seed epoch binding (`seed_id`), and claimant-bound journal bytes.
 
 ## Canonical Tape Shape
 - Header: magic/version/seed/frameCount

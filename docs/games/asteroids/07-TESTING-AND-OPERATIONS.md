@@ -2,7 +2,7 @@
 
 ## Test Matrix
 ### Determinism
-- Same seed + same input bytes -> same final score and RNG state.
+- Same seed + same input bytes -> same final score and checksum.
 - Cross-implementation parity (TS replay vs Rust replay).
 
 ### Format and tamper rejection
@@ -25,7 +25,7 @@
 - Add adversarial fixture corpus for regressions.
 
 ## Operational Defaults
-- `maxFrames = 18_000`
+- `maxFrames = 36_000`
 - Headless replay for authoritative verification.
 - Early exit on first violation for diagnostics/perf.
 - Strict mode enabled by default.

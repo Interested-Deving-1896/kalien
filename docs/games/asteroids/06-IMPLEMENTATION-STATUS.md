@@ -5,7 +5,7 @@
 - RISC0 workspace exists with host/guest/core split.
 - Strict verification model and rule groups are defined.
 - AST4 tape contract is active (`version=4`, `rules_tag=4`, nibble-packed body, reserved bytes enforced).
-- Proof gateway requires claimant query param (`POST /api/proofs/jobs?claimant=...`) and drives claim relay after proof success.
+- Proof gateway requires `seed_id` + `claimant` query params (`POST /api/proofs/jobs?seed_id=<u32>&claimant=<G...|C...>`) and drives claim relay after proof success.
 - Score contract enforces AST4 rules digest and claimant-scoped best-score minting with seed_id binding.
 
 ### RISC0 workspace shape

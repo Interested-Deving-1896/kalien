@@ -25,7 +25,7 @@ Primary session IDs and files (high signal):
 - `019c4849-8879-7a73-b9a8-1cce8026e6ef`
 - `019c4979-c384-73e0-8d40-1cc285038891`
 
-See appendix file `docs/LEADERBOARD-WORK-PROMPT-INDEX-2026-02.md` for timestamped prompt excerpts.
+See appendix file `docs/archive/leaderboard/reconstruction/2026-02/LEADERBOARD-WORK-PROMPT-INDEX-2026-02.md` for timestamped prompt excerpts.
 
 ## What You Asked For (Reconstructed Intent)
 From your prompts, the target system was:
@@ -142,7 +142,7 @@ Representative files from high-signal commits:
 - `src/proof/api.ts`
 - `src/components/AsteroidsCanvas.tsx`
 - `docs/games/asteroids/10-PROOF-GATEWAY-SPEC.md`
-- `docs/games/asteroids/11-CLIENT-INTEGRATION-SPEC.md`
+- `docs/archive/games/asteroids/11-CLIENT-INTEGRATION-SPEC.md`
 - `kalien-verifier/api-server/src/store/mod.rs`
 
 ## Notes
