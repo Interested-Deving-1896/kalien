@@ -1,4 +1,4 @@
-![Kalien](https://pub-b2eaaee2bbe74d70820bacb7298958f5.r2.dev/kalien-meta-2.png)
+<img width="2816" height="1536" alt="kalien-meta-2" src="https://github.com/user-attachments/assets/0137c097-faa9-4e31-83d6-da108b214357" />
 
 # Kalien
 
