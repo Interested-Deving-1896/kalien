@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { SiteFooter } from "./components/SiteFooter";
 import { SiteHeader } from "./components/SiteHeader";
 import { useLocation } from "./hooks/useLocation";
 import { ErrorBoundary } from "./components/shared/ErrorBoundary";
@@ -48,6 +49,7 @@ function App() {
           </Suspense>
         </ErrorBoundary>
       )}
+      <SiteFooter />
     </WalletProvider>
   );
 }
