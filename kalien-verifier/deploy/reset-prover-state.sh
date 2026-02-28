@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Reset all persisted prover state.
 # This is destructive by design: jobs DB, result artifacts, and logs are removed.
+# Use this when intentionally rotating ephemeral job state, including schema changes.
 #
 # Defaults:
 #   DATA_DIR=/var/lib/kalien/prover
