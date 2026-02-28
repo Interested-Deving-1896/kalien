@@ -30,7 +30,10 @@ function isSmartAccountContractAddress(address: string): boolean {
 }
 
 export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewProps) {
-  useDocumentTitle(`Player ${abbreviateAddress(playerAddress)}`);
+  useDocumentTitle(`Player ${abbreviateAddress(playerAddress)}`, {
+    description: `View player profile, ranking history, and recent proved runs for ${abbreviateAddress(playerAddress)} on Kalien.`,
+    path: `/leaderboard/${playerAddress}`,
+  });
   const { wallet } = useWalletContext();
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
@@ -107,8 +110,7 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
     setProfileSavedAt(null);
 
     try {
-      const walletSession =
-        await resolveSmartWalletSessionForClaimant(claimantAddress);
+      const walletSession = await resolveSmartWalletSessionForClaimant(claimantAddress);
       const updated = await updateLeaderboardProfile(
         claimantAddress,
         {

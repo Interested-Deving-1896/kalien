@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { formatFramesAsTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { HIGH_SCORE_THRESHOLD } from "@/consts";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const FLOW_STEPS: Step[] = [
   { key: "play", label: "Play" },
@@ -174,6 +175,12 @@ function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
 }
 
 export function GamePageWrapper() {
+  useDocumentTitle("Play & Prove", {
+    description:
+      "Play deterministic Asteroids and prove your score with cryptographic verification in Kalien.",
+    path: "/",
+  });
+
   const { wallet, balance } = useWalletContext();
   const flow = useGameFlow({ wallet, balance });
 
@@ -189,6 +196,7 @@ export function GamePageWrapper() {
 
   return (
     <PageShell className="grid-rows-[auto_1fr] content-start">
+      <h1 className="sr-only">Kalien: Play and prove your Asteroids score</h1>
       <GamePanel onGameOver={flow.handleGameOver} overlay={overlay} replayJobId={replayJobId} />
     </PageShell>
   );

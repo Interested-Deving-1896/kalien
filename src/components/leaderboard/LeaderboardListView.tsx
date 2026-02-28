@@ -23,7 +23,11 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { AUTO_REFRESH_LEADERBOARD_MS } from "@/consts";
 
 export function LeaderboardListView() {
-  useDocumentTitle("Leaderboard");
+  useDocumentTitle("Leaderboard", {
+    description:
+      "Explore rolling and all-time Kalien leaderboard rankings from proved, on-chain verified runs.",
+    path: "/leaderboard",
+  });
   const { wallet } = useWalletContext();
   const [windowKey, setWindowKey] = useState<LeaderboardWindow>("all");
   const [offset, setOffset] = useState(0);
@@ -217,9 +221,7 @@ export function LeaderboardListView() {
         ) : isEmptyAllTime ? (
           <div className="grid justify-items-center gap-2 rounded-lg border border-dashed border-[rgba(120,181,248,0.35)] bg-[rgba(8,19,34,0.62)] p-6 text-center">
             <p className="m-0 text-text-soft">No proved runs yet.</p>
-            <p className="m-0 text-text-soft">
-              Play the game and prove your score to appear here.
-            </p>
+            <p className="m-0 text-text-soft">Play the game and prove your score to appear here.</p>
             <Button variant="active" asChild>
               <Link href="/" className="no-underline">
                 Play Now

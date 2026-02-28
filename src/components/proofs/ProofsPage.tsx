@@ -25,7 +25,11 @@ function hasActiveJobs(jobs: ProofJobPublic[]): boolean {
 }
 
 export function ProofsPage() {
-  useDocumentTitle("Proofs");
+  useDocumentTitle("Proofs", {
+    description:
+      "Track your Kalien proof jobs, verification states, and claim status in one place.",
+    path: "/proofs",
+  });
   const { wallet, balance } = useWalletContext();
 
   const [jobs, setJobs] = useState<ProofJobPublic[]>([]);
@@ -101,11 +105,14 @@ export function ProofsPage() {
   useEffect(() => {
     if (!wallet.address) return;
 
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchJobsRef.current?.(true);
-      }
-    }, activeJobs ? AUTO_REFRESH_PROOFS_MS : 60_000);
+    const interval = setInterval(
+      () => {
+        if (document.visibilityState === "visible") {
+          fetchJobsRef.current?.(true);
+        }
+      },
+      activeJobs ? AUTO_REFRESH_PROOFS_MS : 60_000,
+    );
 
     return () => clearInterval(interval);
   }, [wallet.address, activeJobs]);
@@ -219,11 +226,7 @@ export function ProofsPage() {
           {jobs.length > 0 && (
             <div className="grid gap-3">
               {jobs.map((job) => (
-                <ProofJobCard
-                  key={job.jobId}
-                  job={job}
-                  onJobUpdate={() => fetchJobs(true)}
-                />
+                <ProofJobCard key={job.jobId} job={job} onJobUpdate={() => fetchJobs(true)} />
               ))}
             </div>
           )}
