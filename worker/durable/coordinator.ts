@@ -1432,13 +1432,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
       // Boundless fallback: two-tier timeout based on lock status.
       //
-      // Tier 1 — Poll timeout (BOUNDLESS_POLL_TIMEOUT_MS, default 10 min):
+      // Tier 1 — Lock window (flat + lockTimeout, default 30 min):
       //   If no prover has locked the order, bail to Vast.ai. No point waiting
-      //   for the full lock window if nobody is interested.
+      //   once the lock window closes — no new provers will lock after that.
       //
-      // Tier 2 — Lock deadline (flat period + lock timeout, default 30 min):
-      //   If a prover HAS locked the order, give them until the lock deadline
-      //   to deliver. Only bail if they fail to deliver by then.
+      // Tier 2 — Full timeout (flat + timeout, default 60 min):
+      //   If a prover HAS locked the order, give them until the order expires
+      //   on-chain. A locked prover can still deliver after lockTimeout (their
+      //   collateral is slashed but they can still submit the proof).
       //
       // If lock status is unknown (RPC error → undefined), treat as unlocked
       // and use the poll timeout (tier 1).
@@ -1455,9 +1456,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           }
 
           // If locked, extend wait up to the full lock deadline; otherwise use poll timeout
+          const lockWindowMs = (boundlessConfig.flatPeriodSec + boundlessConfig.lockTimeoutSec) * 1000;
+          const fullTimeoutMs = (boundlessConfig.flatPeriodSec + boundlessConfig.timeoutSec) * 1000;
           const deadlineMs = isLocked
-            ? (boundlessConfig.flatPeriodSec + boundlessConfig.lockTimeoutSec) * 1000
-            : boundlessConfig.pollTimeoutMs;
+            ? fullTimeoutMs
+            : Math.max(boundlessConfig.pollTimeoutMs, lockWindowMs);
 
           if (attemptAgeMs > deadlineMs) {
             const elapsedSec = Math.round(attemptAgeMs / 1000);

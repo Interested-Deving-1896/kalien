@@ -56,6 +56,6 @@ export const JOB_KEY_PREFIX = "job:";
 
 // Boundless proving defaults
 export const DEFAULT_BOUNDLESS_POLL_INTERVAL_MS = 5_000;
-export const DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS = 30 * 60_000; // Full lock window: flat (1m) + lockTimeout (29m from rampUpStart)
 export const DEFAULT_BOUNDLESS_MAX_FRAMES = 36_000;
 export const DEFAULT_BOUNDLESS_POLL_BUDGET_MS = 45_000;
