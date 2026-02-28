@@ -26,8 +26,10 @@ function isAlreadyClaimedOnChain(message: string, errorDetail?: string): boolean
   const combined = (message + " " + (errorDetail ?? "")).toLowerCase();
   return (
     combined.includes("already claimed") ||
+    combined.includes("journalalreadyclaimed") ||
     combined.includes("score not improved") ||
-    combined.includes("contract, #5") // ScoreNotImproved — error code from Stellar contract
+    combined.includes("scorenotimproved") ||
+    /contract,\s*#(?:3|5)\b/.test(combined) // #3 JournalAlreadyClaimed, #5 ScoreNotImproved
   );
 }
 
@@ -232,14 +234,55 @@ async function processVastMessage(
   // Enforce 1-at-a-time: if a VastAI job is already running, re-queue.
   const slotBusy = await coordinator.hasActiveVastJob();
   if (slotBusy) {
-    if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
+    const job = await coordinator.getJob(payload.jobId);
+    if (!job || isTerminalProofStatus(job.status)) {
+      message.ack();
+      return;
+    }
+
+    const maxWallTimeMs = parseInteger(
+      env.MAX_JOB_WALL_TIME_MS,
+      DEFAULT_MAX_JOB_WALL_TIME_MS,
+      60_000,
+    );
+    const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+    if (jobAgeMs > maxWallTimeMs) {
+      const ageMin = Math.round(jobAgeMs / 60_000);
       await coordinator.markFailed(
         payload.jobId,
-        `vast slot busy for too long (exhausted ${message.attempts} delivery attempts)`,
+        `proof job timed out after ${ageMin} minutes while waiting for vast slot`,
       );
       message.ack();
       return;
     }
+
+    const reason = "vast slot busy; waiting for active prover job to finish";
+    const nextRetryAt = new Date(
+      Date.now() + VAST_SLOT_BUSY_RETRY_DELAY_SECONDS * 1000,
+    ).toISOString();
+    await coordinator.markRetry(payload.jobId, reason, nextRetryAt);
+
+    if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
+      // Reset queue delivery attempts while keeping the same job state.
+      try {
+        await env.VAST_QUEUE.send(
+          { jobId: payload.jobId },
+          {
+            contentType: "json",
+            delaySeconds: VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
+          },
+        );
+        message.ack();
+      } catch (error) {
+        await coordinator.markFailed(
+          payload.jobId,
+          `failed re-enqueueing vast slot wait: ${safeErrorMessage(error)}`,
+        );
+        message.ack();
+      }
+      return;
+    }
+
     message.retry({ delaySeconds: VAST_SLOT_BUSY_RETRY_DELAY_SECONDS });
     return;
   }

@@ -26,6 +26,7 @@ mock.module("../../worker/boundless/sdk/client", () => ({
       return (globalThis as Record<string, unknown>).__boundlessSubmitResult;
     }
   },
+  fetchBoundlessCycles: async () => ({ programCycles: null, totalCycles: null }),
 }));
 
 mock.module("../../worker/prover/client", () => ({
@@ -34,6 +35,13 @@ mock.module("../../worker/prover/client", () => ({
     _tape: Uint8Array,
     _opts: unknown,
   ) => (env as WorkerEnv & { __submitResult: unknown }).__submitResult,
+  getValidatedProverHealth: async () => {
+    throw new Error("health check not mocked in queue consumer tests");
+  },
+  describeProverHealthError: (error: unknown) => ({
+    retryable: false,
+    message: error instanceof Error ? error.message : String(error),
+  }),
 }));
 
 mock.module("../../worker/claim/submit", () => ({
@@ -341,23 +349,78 @@ describe("handleVastQueueBatch (VastAI)", () => {
   it("retries when vast slot is busy", async () => {
     const coordinator = makeCoordinator({
       hasActiveVastJob: async () => true,
+      getJob: async () => ({
+        jobId: "job-1",
+        status: "queued",
+        createdAt: new Date().toISOString(),
+      }),
     });
     const msg = makeMessage({ jobId: "job-1" }, 1);
     await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
-  });
-
-  it("marks failed when vast slot busy and retries exhausted", async () => {
-    const coordinator = makeCoordinator({
-      hasActiveVastJob: async () => true,
-    });
-    const msg = makeMessage({ jobId: "job-1" }, 30); // MAX_VAST_QUEUE_RETRIES = 30
-    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
-    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
     }>;
-    expect(calls.some((c) => c.method === "markFailed")).toBe(true);
+    expect(calls.some((c) => c.method === "markRetry")).toBe(true);
+  });
+
+  it("re-enqueues a fresh queue message when vast slot busy retries are exhausted", async () => {
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => true,
+      getJob: async () => ({
+        jobId: "job-1",
+        status: "queued",
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    let requeued = 0;
+    const msg = makeMessage({ jobId: "job-1" }, 30); // MAX_VAST_QUEUE_RETRIES = 30
+    await handleVastQueueBatch(
+      makeBatch([msg]),
+      makeEnv({
+        __coordinator: coordinator,
+        VAST_QUEUE: {
+          send: async () => {
+            requeued += 1;
+          },
+        },
+      }),
+    );
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    expect(requeued).toBe(1);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markRetry")).toBe(true);
+    expect(calls.some((c) => c.method === "markFailed")).toBe(false);
+  });
+
+  it("marks failed when vast slot busy wait exceeds wall timeout", async () => {
+    const createdAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => true,
+      getJob: async () => ({
+        jobId: "job-1",
+        status: "queued",
+        createdAt,
+      }),
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    await handleVastQueueBatch(
+      makeBatch([msg]),
+      makeEnv({
+        __coordinator: coordinator,
+        MAX_JOB_WALL_TIME_MS: "60000",
+      }),
+    );
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+      args: unknown[];
+    }>;
+    const failCall = calls.find((c) => c.method === "markFailed");
+    expect(failCall).toBeDefined();
+    expect(String(failCall!.args[1])).toContain("timed out");
   });
 
   it("submits to vast when slot is free", async () => {
@@ -610,6 +673,100 @@ describe("handleClaimQueueBatch", () => {
       method: string;
     }>;
     expect(calls.some((c) => c.method === "markClaimFailed")).toBe(true);
+  });
+
+  it("treats fatal contract #3 as prior on-chain success", async () => {
+    const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
+    const coordinator = makeCoordinator({
+      beginClaimAttempt: async () => ({
+        jobId: "job-1",
+        status: "succeeded",
+        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
+        result: {
+          summary: {
+            journal: {
+              seed_id: 1,
+              seed: 1,
+              frame_count: 10,
+              final_score: 100,
+              claimant: TEST_CLAIMANT,
+            },
+          },
+          artifactKey: "results/job-1.json",
+        },
+      }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    });
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      __claimResult: {
+        type: "fatal",
+        message: "claim rejected",
+        errorDetail:
+          "errorDetails: { details: { error: \"escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #3)\" } }",
+      },
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          json: async () => proofArtifact,
+        }),
+      },
+    });
+    await handleClaimQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markClaimSucceeded")).toBe(true);
+    expect(calls.some((c) => c.method === "markClaimFailed")).toBe(false);
+  });
+
+  it("treats fatal contract #5 as prior on-chain success", async () => {
+    const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
+    const coordinator = makeCoordinator({
+      beginClaimAttempt: async () => ({
+        jobId: "job-1",
+        status: "succeeded",
+        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
+        result: {
+          summary: {
+            journal: {
+              seed_id: 1,
+              seed: 1,
+              frame_count: 10,
+              final_score: 100,
+              claimant: TEST_CLAIMANT,
+            },
+          },
+          artifactKey: "results/job-1.json",
+        },
+      }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    });
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      __claimResult: {
+        type: "fatal",
+        message: "claim rejected",
+        errorDetail:
+          "errorDetails: { details: { error: \"escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #5)\" } }",
+      },
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          json: async () => proofArtifact,
+        }),
+      },
+    });
+    await handleClaimQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markClaimSucceeded")).toBe(true);
+    expect(calls.some((c) => c.method === "markClaimFailed")).toBe(false);
   });
 });
 

@@ -238,6 +238,28 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
   }
 
+  /**
+   * If there are no active or retained jobs left, clear all DO storage so the
+   * object can be fully deallocated.
+   */
+  private async flushStorageIfEmpty(): Promise<boolean> {
+    const activeJobIds = await this.getActiveJobIds();
+    if (activeJobIds.length > 0) {
+      return false;
+    }
+
+    const remainingJobs = await this.ctx.storage.list<ProofJobRecord>({
+      prefix: JOB_KEY_PREFIX,
+      limit: 1,
+    });
+    if (remainingJobs.size > 0) {
+      return false;
+    }
+
+    await this.ctx.storage.deleteAll();
+    return true;
+  }
+
   private isBoundlessJob(job: ProofJobRecord): boolean {
     return job.prover.statusUrl?.startsWith("boundless:") === true;
   }
@@ -292,6 +314,43 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BOUNDLESS_CHAIN_ID;
     return String(parsed);
+  }
+
+  private normalizeCycleMetric(value: number | null | undefined): number | null {
+    if (value == null || !Number.isFinite(value)) {
+      return null;
+    }
+    return Math.max(0, Math.floor(value));
+  }
+
+  private syncResultCycleStats(
+    job: ProofJobRecord,
+    programCycles: number | null | undefined,
+    totalCycles: number | null | undefined,
+  ): boolean {
+    const stats = job.result?.summary?.stats;
+    if (!stats) {
+      return false;
+    }
+
+    const normalizedTotal = this.normalizeCycleMetric(totalCycles);
+    if (normalizedTotal == null || normalizedTotal <= 0) {
+      return false;
+    }
+
+    let changed = false;
+    if (stats.total_cycles !== normalizedTotal) {
+      stats.total_cycles = normalizedTotal;
+      changed = true;
+    }
+
+    const normalizedProgram = this.normalizeCycleMetric(programCycles);
+    if (normalizedProgram != null && stats.user_cycles !== normalizedProgram) {
+      stats.user_cycles = normalizedProgram;
+      changed = true;
+    }
+
+    return changed;
   }
 
   async createJob(
@@ -356,6 +415,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   /**
+   * Lightweight periodic maintenance:
+   * - prune completed jobs by retention/count policy
+   * - fully clear storage when the coordinator is empty
+   */
+  async runMaintenance(): Promise<void> {
+    const activeJobIds = await this.getActiveJobIds();
+    if (activeJobIds.length > 0) {
+      return;
+    }
+
+    await this.pruneCompletedJobs();
+    await this.flushStorageIfEmpty();
+  }
+
+  /**
    * Lazy backfill: if a succeeded Boundless job has null cycle counts,
    * re-check the indexer (Bento processes cycles asynchronously) and
    * persist the result so subsequent reads are free.
@@ -366,11 +440,33 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const job = await this.loadJob(jobId);
     if (!job) return null;
 
-    // Only enrich succeeded Boundless jobs missing cycle data
+    // Only enrich succeeded Boundless jobs
     if (job.status !== "succeeded") return job;
     const attempt = this.getLatestSuccessfulAttempt(job);
-    if (!attempt || attempt.totalCycles != null) return job;
+    if (!attempt) return job;
     if (!this.isBoundlessSuccessAttempt(job, attempt)) return job;
+
+    const hasAttemptCycles = attempt.totalCycles != null;
+    const summaryTotal = job.result?.summary?.stats.total_cycles ?? null;
+    const summaryMissingCycles = !Number.isFinite(summaryTotal) || summaryTotal <= 0;
+
+    if (!summaryMissingCycles && !hasAttemptCycles) {
+      return job;
+    }
+
+    // Fast path: cycles already exist on the attempt but canonical summary stats
+    // were never updated (legacy records). Persist canonical stats on read.
+    if (hasAttemptCycles && summaryMissingCycles) {
+      if (this.syncResultCycleStats(job, attempt.programCycles, attempt.totalCycles)) {
+        await this.saveJob(job);
+      }
+      return job;
+    }
+
+    // Nothing missing to enrich.
+    if (hasAttemptCycles) {
+      return job;
+    }
 
     const requestIdHex = this.getBoundlessRequestId(job, attempt);
     if (!requestIdHex) return job;
@@ -382,9 +478,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         requestIdHex,
       );
       if (totalCycles != null) {
-        attempt.programCycles = programCycles;
-        attempt.totalCycles = totalCycles;
-        await this.saveJob(job);
+        let changed = false;
+        if (attempt.programCycles !== programCycles) {
+          attempt.programCycles = programCycles;
+          changed = true;
+        }
+        if (attempt.totalCycles !== totalCycles) {
+          attempt.totalCycles = totalCycles;
+          changed = true;
+        }
+        if (this.syncResultCycleStats(job, programCycles, totalCycles)) {
+          changed = true;
+        }
+        if (changed) {
+          await this.saveJob(job);
+        }
       }
     } catch (error) {
       // Non-fatal — indexer may be down; next read will retry.
@@ -393,6 +501,94 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       );
     }
     return job;
+  }
+
+  async getActiveJobsSummary(): Promise<{
+    total: number;
+    boundless: number;
+    vast: number;
+    waitingDispatch: number;
+    oldestActiveAgeSec: number | null;
+    oldestWaitingDispatchAgeSec: number | null;
+    statusCounts: {
+      queued: number;
+      dispatching: number;
+      proverRunning: number;
+      retrying: number;
+    };
+    firstJobId: string | null;
+  }> {
+    const activeJobIds = await this.getActiveJobIds();
+    let total = 0;
+    let boundless = 0;
+    let vast = 0;
+    let waitingDispatch = 0;
+    let oldestActiveCreatedAtMs: number | null = null;
+    let oldestWaitingDispatchCreatedAtMs: number | null = null;
+    const statusCounts = {
+      queued: 0,
+      dispatching: 0,
+      proverRunning: 0,
+      retrying: 0,
+    };
+    let firstJobId: string | null = null;
+
+    for (const jobId of activeJobIds) {
+      const job = await this.loadJob(jobId);
+      if (!job || isTerminalProofStatus(job.status)) {
+        continue;
+      }
+
+      if (firstJobId == null) {
+        firstJobId = jobId;
+      }
+      total += 1;
+      const createdAtMs = this.timestampMs(job.createdAt);
+      if (createdAtMs > 0) {
+        oldestActiveCreatedAtMs =
+          oldestActiveCreatedAtMs == null
+            ? createdAtMs
+            : Math.min(oldestActiveCreatedAtMs, createdAtMs);
+      }
+      if (job.status === "queued") statusCounts.queued += 1;
+      if (job.status === "dispatching") statusCounts.dispatching += 1;
+      if (job.status === "prover_running") statusCounts.proverRunning += 1;
+      if (job.status === "retrying") statusCounts.retrying += 1;
+
+      if (!job.prover.jobId) {
+        waitingDispatch += 1;
+        if (createdAtMs > 0) {
+          oldestWaitingDispatchCreatedAtMs =
+            oldestWaitingDispatchCreatedAtMs == null
+              ? createdAtMs
+              : Math.min(oldestWaitingDispatchCreatedAtMs, createdAtMs);
+        }
+        continue;
+      }
+
+      if (this.isBoundlessJob(job)) {
+        boundless += 1;
+      } else {
+        vast += 1;
+      }
+    }
+
+    return {
+      total,
+      boundless,
+      vast,
+      waitingDispatch,
+      oldestActiveAgeSec:
+        oldestActiveCreatedAtMs == null
+          ? null
+          : Math.max(0, Math.floor((Date.now() - oldestActiveCreatedAtMs) / 1000)),
+      oldestWaitingDispatchAgeSec:
+        oldestWaitingDispatchCreatedAtMs == null
+          ? null
+          : Math.max(0, Math.floor((Date.now() - oldestWaitingDispatchCreatedAtMs) / 1000)),
+      statusCounts,
+      firstJobId,
+    };
   }
 
   async getActiveJob(): Promise<ProofJobRecord | null> {
@@ -638,6 +834,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     await this.enqueueClaimJob(jobId);
     try {
       await this.pruneCompletedJobs();
+      await this.flushStorageIfEmpty();
     } catch (error) {
       console.warn(`[proof-worker] prune after success failed: ${safeErrorMessage(error)}`);
     }
@@ -691,6 +888,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     await this.unpinIpfsInput(job);
     try {
       await this.pruneCompletedJobs();
+      await this.flushStorageIfEmpty();
     } catch (error) {
       console.warn(`[proof-worker] prune after failure failed: ${safeErrorMessage(error)}`);
     }

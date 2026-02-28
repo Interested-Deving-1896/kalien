@@ -121,7 +121,7 @@ function safeLinkUrl(url: string | null | undefined): string | null {
   return trimmed;
 }
 
-export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
+export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
   const router = new Hono<{ Bindings: WorkerEnv }>();
 
   // GET /api/leaderboard
@@ -390,7 +390,8 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
         expiresAt,
       });
 
-      c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
+      // This response includes a one-time challenge and should never be cached.
+      c.header("Cache-Control", "no-store");
       return c.json({
         success: true,
         challenge_id: challengeId,
@@ -554,24 +555,25 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // Dev endpoints — gated by DEV_API_KEY (must be set and >= 16 chars).
-  // If no key is configured, these routes return 404.
-  // If a key is configured, requests must include "Authorization: Bearer <key>".
-  // ---------------------------------------------------------------------------
-  const MIN_DEV_KEY_LENGTH = 16;
+  return router;
+}
 
-  router.use("/dev/*", async (c, next) => {
+// ---------------------------------------------------------------------------
+// Dev endpoints — gated by DEV_API_KEY (must be set and >= 16 chars).
+// Requests must include "Authorization: Bearer <key>".
+// If key is missing/weak, endpoints return 404 to appear absent.
+// ---------------------------------------------------------------------------
+export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
+  const router = new Hono<{ Bindings: WorkerEnv }>();
+
+  router.use("/*", async (c, next) => {
     const key = c.env.DEV_API_KEY?.trim();
-
-    // No key or insufficient entropy → endpoints don't exist
-    if (!key || key.length < MIN_DEV_KEY_LENGTH) {
+    if (!key || key.length < 16) {
       return jsonError(c, 404, `unknown api route: ${c.req.path}`);
     }
 
     const authHeader = c.req.header("authorization") ?? "";
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
-
     if (!match || match[1] !== key) {
       return jsonError(c, 401, "valid authorization required for dev endpoints");
     }
@@ -582,7 +584,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
   // DEV-ONLY: Trigger leaderboard sync (same as cron handler)
   // Pass ?reset_cursor=1 to clear stale RPC cursor.
   // Pass ?from_ledger=N to override the start ledger (skips gaps).
-  router.post("/dev/sync", async (c) => {
+  router.post("/sync", async (c) => {
     const { runLeaderboardSync, runScheduledLeaderboardSync } = await import("../leaderboard-sync");
     const { setLeaderboardIngestionState, getLeaderboardIngestionState: getIngestionState } =
       await import("../leaderboard-store");
@@ -617,7 +619,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
   });
 
   // DEV-ONLY: Reset all leaderboard data
-  router.post("/dev/reset", async (c) => {
+  router.post("/reset", async (c) => {
     const db = c.env.LEADERBOARD_DB;
     await db.batch([
       db.prepare("DELETE FROM leaderboard_events"),
@@ -631,7 +633,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
   });
 
   // DEV-ONLY: Seed test data into the leaderboard
-  router.post("/dev/seed", async (c) => {
+  router.post("/seed", async (c) => {
     let body: { events: unknown[]; profiles?: unknown[] };
     try {
       body = (await c.req.json()) as typeof body;
@@ -695,27 +697,6 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       updated: result.updated,
       profiles: profileCount,
     });
-  });
-
-  // DEV-ONLY: Backfill proof_tape_index from coordinator's succeeded jobs
-  router.post("/dev/backfill-tape-index", async (c) => {
-    const { coordinatorStub } = await import("../durable/coordinator");
-    const { writeProofTapeMapping } = await import("../leaderboard-store");
-    try {
-      const coordinator = coordinatorStub(c.env);
-      const jobs = await coordinator.listSucceededJobs();
-      let count = 0;
-      for (const job of jobs) {
-        if (job.claim.txHash && job.claim.txHash !== "prior-attempt") {
-          await writeProofTapeMapping(c.env, job.claim.txHash, job.jobId);
-          count++;
-        }
-      }
-      return c.json({ success: true, mappings_written: count, total_jobs: jobs.length });
-    } catch (error) {
-      console.error(`[leaderboard] backfill-tape-index error: ${safeErrorMessage(error)}`);
-      return jsonError(c, 500, safeErrorMessage(error));
-    }
   });
 
   return router;

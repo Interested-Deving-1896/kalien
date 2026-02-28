@@ -51,7 +51,7 @@ const params = new URLSearchParams();
 if (resetCursor) params.set("reset_cursor", "1");
 if (fromLedger) params.set("from_ledger", fromLedger);
 
-const url = `${BASE_URL}/api/leaderboard/dev/sync${params.size > 0 ? `?${params}` : ""}`;
+const url = `${BASE_URL}/dev/api/leaderboard/sync${params.size > 0 ? `?${params}` : ""}`;
 console.log(`POST ${url}`);
 
 const res = await fetch(url, {

@@ -61,7 +61,7 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
 
   const tapeData = game.getTape();
   if (!tapeData) {
-    throw new Error(`Failed to get tape data for seed 0x${seed.toString(16)}`);
+    throw new Error(`Failed to get tape data for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
   }
   writeFileSync(outputPath, tapeData);
 
@@ -81,7 +81,7 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
   const vScore = verifyGame.getScore();
 
   if (vScore !== tape.footer.finalScore) {
-    throw new Error(`Tape verification failed for seed 0x${seed.toString(16)}`);
+    throw new Error(`Tape verification failed for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
   }
 
   return {
@@ -230,7 +230,7 @@ async function main() {
     const tape = generateTape(seed, MAX_FRAMES, path);
     tapes.push(tape);
     console.log(
-      `  [${i + 1}/${NUM_RUNS}] seed=0x${seed.toString(16).padStart(8, "0")} ` +
+      `  [${i + 1}/${NUM_RUNS}] seed=0x${seed.toString(16).toUpperCase().padStart(8, "0")} ` +
         `score=${tape.score} frames=${tape.frames} size=${tape.bytes.length}B`,
     );
   }
@@ -269,7 +269,7 @@ async function main() {
 
     try {
       console.log(
-        `  ${label} Submitting seed=0x${tape.seed.toString(16).padStart(8, "0")} score=${tape.score}...`,
+        `  ${label} Submitting seed=0x${tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${tape.score}...`,
       );
 
       const jobId = await submitTape(tape);
@@ -449,7 +449,7 @@ async function main() {
 
     // Seed them into the local leaderboard via the dev endpoint
     if (fetchResult.events.length > 0) {
-      const seedResp = await fetch(`${BASE_URL}/api/leaderboard/dev/seed`, {
+      const seedResp = await fetch(`${BASE_URL}/dev/api/leaderboard/seed`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...devAuthHeaders },
         body: JSON.stringify({
@@ -553,13 +553,13 @@ function printSummary(
   for (const r of results) {
     const status = r.claimTxHash ? "CLAIMED" : "NO_CLAIM";
     console.log(
-      `    seed=0x${r.tape.seed.toString(16).padStart(8, "0")} score=${String(r.tape.score).padStart(6)} ` +
+      `    seed=0x${r.tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${String(r.tape.score).padStart(6)} ` +
         `${(r.durationMs / 1000).toFixed(1).padStart(6)}s ${status} ${r.claimTxHash?.slice(0, 16) ?? ""}`,
     );
   }
   for (const e of errors) {
     console.log(
-      `    seed=0x${e.tape.seed.toString(16).padStart(8, "0")} score=${String(e.tape.score).padStart(6)} FAILED: ${e.error.slice(0, 60)}`,
+      `    seed=0x${e.tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${String(e.tape.score).padStart(6)} FAILED: ${e.error.slice(0, 60)}`,
     );
   }
 

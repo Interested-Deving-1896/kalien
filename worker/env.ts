@@ -67,6 +67,6 @@ export interface WorkerEnv {
   BOUNDLESS_DEPLOYMENT_BLOCK?: string;
   // IPFS (Pinata) — used by Boundless for stdin upload when inline exceeds order stream limits
   PINATA_JWT?: string;
-  // Dev endpoint access — if set (and >= 16 chars), unlocks /api/leaderboard/dev/* behind Bearer auth
+  // Dev endpoint access — if set (and >= 16 chars), unlocks /dev/api/leaderboard/* behind Bearer auth
   DEV_API_KEY?: string;
 }

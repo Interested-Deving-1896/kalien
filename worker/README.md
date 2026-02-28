@@ -26,7 +26,7 @@ Gateway/API layer for proof jobs, claim submission, and leaderboard services.
 - `/api/relay`
 - `/api/leaderboard/*` (public and profile routes)
 
-Dev leaderboard endpoints are under `/api/leaderboard/dev/*` and should be
+Dev leaderboard endpoints are under `/dev/api/leaderboard/*` and should be
 protected with `DEV_API_KEY`.
 
 ## Configuration

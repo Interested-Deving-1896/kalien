@@ -56,7 +56,7 @@ function step(n: number, msg: string) {
 /** Generate a fresh tape with a unique seed so we never hit "already claimed". */
 function generateFreshTape(): { path: string; seed: number; score: number; frames: number } {
   const seed = Date.now();
-  log(`Generating tape (seed=0x${seed.toString(16)}, max_frames=${MAX_TAPE_FRAMES})...`);
+  log(`Generating tape (seed=0x${seed.toString(16).toUpperCase().padStart(8, "0")}, max_frames=${MAX_TAPE_FRAMES})...`);
   const game = new AsteroidsGame({ headless: true, seed });
   game.startNewGame(seed);
   (game as unknown as { autopilot: Autopilot }).autopilot.setEnabled(true);
@@ -118,7 +118,7 @@ async function waitForProofJob(
 async function triggerLeaderboardSync(): Promise<boolean> {
   log("Triggering leaderboard sync...");
   try {
-    const res = await fetch(`${BASE_URL}/api/leaderboard/dev/sync?reset_cursor=1`, {
+    const res = await fetch(`${BASE_URL}/dev/api/leaderboard/sync?reset_cursor=1`, {
       method: "POST",
       headers: devAuthHeaders,
     });
@@ -137,7 +137,7 @@ async function main() {
     const tape = generateFreshTape();
     tapePath = tape.path;
     log(
-      `Fresh tape: seed=0x${tape.seed.toString(16)} score=${tape.score} frames=${tape.frames} (${readFileSync(tapePath).length} bytes)`,
+      `Fresh tape: seed=0x${tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${tape.score} frames=${tape.frames} (${readFileSync(tapePath).length} bytes)`,
     );
   } else {
     if (!existsSync(tapePath)) {

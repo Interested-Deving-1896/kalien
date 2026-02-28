@@ -28,7 +28,7 @@ function makeEnv(): WorkerEnv {
 async function main() {
   // 1. Reset all leaderboard data
   console.log("Resetting leaderboard data...");
-  const resetResponse = await fetch(`${BASE_URL}/api/leaderboard/dev/reset`, {
+  const resetResponse = await fetch(`${BASE_URL}/dev/api/leaderboard/reset`, {
     method: "POST",
     headers: devAuthHeaders,
   });
@@ -94,7 +94,7 @@ async function main() {
 
   // 4. Seed real events into the leaderboard
   console.log("Seeding real events into leaderboard...");
-  const seedResponse = await fetch(`${BASE_URL}/api/leaderboard/dev/seed`, {
+  const seedResponse = await fetch(`${BASE_URL}/dev/api/leaderboard/seed`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...devAuthHeaders },
     body: JSON.stringify({ events: uniqueEvents }),

@@ -293,7 +293,7 @@ async function main() {
       `${events.filter((e) => Date.now() - new Date(e.closedAt).getTime() >= 24 * 60 * 60 * 1000).length} older`,
   );
 
-  const response = await fetch(`${BASE_URL}/api/leaderboard/dev/seed`, {
+  const response = await fetch(`${BASE_URL}/dev/api/leaderboard/seed`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...devAuthHeaders },
     body: JSON.stringify({ events, profiles }),
