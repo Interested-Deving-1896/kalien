@@ -656,7 +656,7 @@ export class AsteroidsGame {
     this.frameCount++;
 
     // 10-minute hard cap (36000 frames at 60fps)
-    if (this.frameCount >= MAX_GAME_FRAMES && this.mode !== "replay") {
+    if (this.frameCount > MAX_GAME_FRAMES && this.mode !== "replay") {
       this.mode = "game-over";
       this.ship.canControl = false;
       this.ship.respawnTimer = 99999;
