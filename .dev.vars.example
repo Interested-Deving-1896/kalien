@@ -37,6 +37,10 @@ PROVER_ACCESS_CLIENT_SECRET=
 # stream limits (~3.4 KB). Also used for one-time ELF uploads.
 # PINATA_JWT=
 
+# ── Dev API ────────────────────────────────────────────────────────────────
+# Guards dev-only leaderboard endpoints (reset, trigger-sync, seed).
+# DEV_API_KEY=
+
 # ── Local-dev overrides ───────────────────────────────────────────────────
 # Uncomment to override wrangler.jsonc defaults for local development.
 
