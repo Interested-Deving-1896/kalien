@@ -145,6 +145,23 @@ set_journal_seed_hex() {
   echo "${seed_id_le}${seed_le}${journal_hex:16}"
 }
 
+# Patch the claimant field in a 49-byte AST4 journal hex string.
+# Layout: ... [16] kind(1 byte) [17..48] id(32 bytes)
+# Args: $1 = journal_hex, $2 = Stellar G-address
+set_journal_claimant_hex() {
+  local journal_hex="$1"
+  local g_address="$2"
+  local raw_pubkey
+  raw_pubkey=$(python3 -c "
+import base64
+addr = '$g_address'
+raw = base64.b32decode(addr)
+print(raw[1:33].hex())
+")
+  # kind=00 (Account) + 32-byte raw public key
+  echo "${journal_hex:0:32}00${raw_pubkey}${journal_hex:98}"
+}
+
 materialize_current_seed() {
   local contract_id="$1"
   local current_seed_json seed seed_id
@@ -224,7 +241,7 @@ deploy() {
     --network "$NETWORK" \
     -- \
     --admin "$DEPLOYER_ADDR" \
-    --router_id "$RISC0_ROUTER" \
+    --verifier_id "$RISC0_VERIFIER" \
     --image_id "${IMAGE_ID_HEX}" \
     --token_id "$TOKEN_ID" \
     2>&1)
@@ -256,7 +273,7 @@ deploy() {
   info "Deployment summary:"
   echo "  Score contract: $SCORE_CONTRACT_ID"
   echo "  Token:          $TOKEN_ID"
-  echo "  Router:         $RISC0_ROUTER"
+  echo "  Verifier:         $RISC0_VERIFIER"
   echo "  Image ID:       $IMAGE_ID_HEX"
   echo "  Deployer:       $DEPLOYER_ADDR"
   echo "  Player:         $PLAYER_ADDR"
@@ -286,9 +303,9 @@ test_read_functions() {
     --source "$DEPLOYER_NAME" \
     --network "$NETWORK" \
     -- \
-    router_id 2>&1) || true
+    verifier_id 2>&1) || true
   router_result=$(echo "$router_result" | tr -d '"')
-  assert_eq "router_id matches" "$RISC0_ROUTER" "$router_result"
+  assert_eq "verifier_id matches" "$RISC0_VERIFIER" "$router_result"
 
   local token_result
   token_result=$(stellar contract invoke -q \
@@ -346,6 +363,7 @@ test_submit_fixture() {
   journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(set_journal_claimant_hex "$journal_hex" "$PLAYER_ADDR")
 
   # Compute journal digest and generate mock seal
   local journal_digest_hex
@@ -440,6 +458,7 @@ test_reject_fixture() {
   journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
+  journal_hex=$(set_journal_claimant_hex "$journal_hex" "$PLAYER_ADDR")
 
   local journal_digest_hex
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
@@ -589,7 +608,7 @@ deploy_groth16() {
     --network "$NETWORK" \
     -- \
     --admin "$DEPLOYER_ADDR" \
-    --router_id "$RISC0_ROUTER" \
+    --verifier_id "$RISC0_VERIFIER" \
     --image_id "${IMAGE_ID_HEX}" \
     --token_id "$GRF1_TOKEN_ID" \
     2>&1)
@@ -777,20 +796,21 @@ echo ""
 test_reject_zero_score
 echo ""
 
-# 4. Submit positive-score fixtures via mock verifier
-# medium first (score 90, seed 0xDEADBEEF), then short (score 1030, same seed — mints delta 940)
-test_submit_fixture "medium tape"    "proof-medium-groth16"    90
+# 4. Submit positive-score fixtures via mock verifier (ascending score order).
+# short (1480), then medium (11190), then real game (14870).
+# Each successive submission must improve on the previous best.
+test_submit_fixture "short tape"     "proof-short-groth16"     1480
 echo ""
-test_submit_fixture "short tape"     "proof-short-groth16"     1030
+test_submit_fixture "medium tape"    "proof-medium-groth16"    11190
 echo ""
-test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
+test_submit_fixture "real game tape" "proof-real-game-groth16" 14870
 
 echo ""
 
 # 5. Check cumulative token balance.
 # All mock submissions are rewritten to the same live seed, so minting is:
-# 90 + (1030-90) + (32860-1030) = 32860, scaled by 10^7.
-test_cumulative_balance "328600000000"
+# 1480 + (11190-1480) + (14870-11190) = 14870, scaled by 10^7.
+test_cumulative_balance "148700000000"
 
 # 6. Groth16 tests (if proof-mode=all)
 if [[ "$PROOF_MODE" == "all" ]]; then
@@ -802,12 +822,12 @@ if [[ "$PROOF_MODE" == "all" ]]; then
 
   deploy_groth16
 
-  # medium first (same seed as short, lower score — must come first)
-  test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
+  # Ascending score order: short (1480), medium (11190), real game (14870).
+  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     1480
   echo ""
-  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     1030
+  test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    11190
   echo ""
-  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 32860
+  test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 14870
 
   echo ""
 

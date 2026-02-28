@@ -15,26 +15,26 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env,
 };
 
-mod mock_router_ok {
+mod mock_verifier_ok {
     use soroban_sdk::{contract, contractimpl, Bytes, BytesN, Env};
 
     #[contract]
-    pub struct MockRouter;
+    pub struct MockVerifier;
 
     #[contractimpl]
-    impl MockRouter {
+    impl MockVerifier {
         pub fn verify(_env: Env, _seal: Bytes, _image_id: BytesN<32>, _journal: BytesN<32>) {}
     }
 }
 
-mod mock_router_fail {
+mod mock_verifier_fail {
     use soroban_sdk::{contract, contractimpl, Bytes, BytesN, Env};
 
     #[contract]
-    pub struct MockRouterFail;
+    pub struct MockVerifierReject;
 
     #[contractimpl]
-    impl MockRouterFail {
+    impl MockVerifierReject {
         pub fn verify(_env: Env, _seal: Bytes, _image_id: BytesN<32>, _journal: BytesN<32>) {
             panic!("proof verification failed");
         }
@@ -54,12 +54,12 @@ fn setup(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address, Address) {
 
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let token_addr = sac.address();
-    let router_addr = env.register(mock_router_ok::MockRouter, ());
+    let verifier_addr = env.register(mock_verifier_ok::MockVerifier, ());
     let image_id = dummy_image_id(env);
 
     let contract_id = env.register(
         AsteroidsScoreContract,
-        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+        AsteroidsScoreContractArgs::__constructor(&admin, &verifier_addr, &image_id, &token_addr),
     );
 
     let sac_admin = StellarAssetClient::new(env, &token_addr);
@@ -69,17 +69,17 @@ fn setup(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address, Address) {
     (client, admin, token_addr)
 }
 
-fn setup_with_failing_router(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address) {
+fn setup_with_failing_verifier(env: &Env) -> (AsteroidsScoreContractClient<'_>, Address) {
     let admin = Address::generate(env);
 
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let token_addr = sac.address();
-    let router_addr = env.register(mock_router_fail::MockRouterFail, ());
+    let verifier_addr = env.register(mock_verifier_fail::MockVerifierReject, ());
     let image_id = dummy_image_id(env);
 
     let contract_id = env.register(
         AsteroidsScoreContract,
-        AsteroidsScoreContractArgs::__constructor(&admin, &router_addr, &image_id, &token_addr),
+        AsteroidsScoreContractArgs::__constructor(&admin, &verifier_addr, &image_id, &token_addr),
     );
 
     let sac_admin = StellarAssetClient::new(env, &token_addr);
@@ -149,7 +149,7 @@ fn test_initialize() {
     assert_eq!(client.image_id(), dummy_image_id(&env));
     assert_eq!(client.token_id(), token_addr);
     assert_eq!(client.rules_digest(), RULES_DIGEST);
-    let _ = client.router_id();
+    let _ = client.verifier_id();
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn test_submit_score_verification_failure_rolls_back_claimed() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _token_addr) = setup_with_failing_router(&env);
+    let (client, _token_addr) = setup_with_failing_verifier(&env);
     let claimant = Address::generate(&env);
     let seal = dummy_seal(&env);
 

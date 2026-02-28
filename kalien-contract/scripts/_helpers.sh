@@ -4,7 +4,7 @@
 # Provides:
 #   - Logging:     info, ok, err, warn
 #   - Paths:       SCRIPT_DIR, CONTRACT_DIR, ROOT_DIR, FIXTURES_DIR, WASM
-#   - Constants:   RISC0_ROUTER, RISC0_MOCK, NETWORK, HORIZON_URL
+#   - Constants:   RISC0_VERIFIER, RISC0_MOCK, NETWORK, HORIZON_URL
 #   - Crypto:      sha256_of_hex
 #   - Keys:        ensure_funded_key
 #   - Env/state:   load_env_chain, load_state, save_state_vars
@@ -27,7 +27,7 @@ CONTRACT_ENV_FILE="$CONTRACT_DIR/.env"
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-RISC0_ROUTER="CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD"
+RISC0_VERIFIER="CCYKHXM3LO5CC6X26GFOLZGPXWI3P2LWXY3EGG7JTTM5BQ3ISETDQ3DD"
 RISC0_MOCK="CCKXGODVBNCGZZIKTU2DIPTXPVSLIG5Z67VYPAL4X5HVSED7VI4OD6A3"
 NETWORK="${NETWORK:-testnet}"
 HORIZON_URL="https://horizon-testnet.stellar.org"
@@ -55,6 +55,11 @@ load_env_chain() {
 }
 
 load_env_chain
+
+# .dev.vars may export STELLAR_RPC_URL (for the Cloudflare Worker) without a
+# matching passphrase, which confuses the Stellar CLI.  Clear it so the CLI
+# falls back to the --network preset.
+unset STELLAR_RPC_URL 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Logging — all output goes to stderr so callers can capture stdout for data

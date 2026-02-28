@@ -5,14 +5,14 @@ use soroban_sdk::{
     contracttype, token, Address, Bytes, BytesN, Env,
 };
 
-mod risc0_router {
-    soroban_sdk::contractimport!(file = "risc0_router.wasm");
+mod risc0_verifier {
+    soroban_sdk::contractimport!(file = "risc0_verifier.wasm");
 }
 
 #[contracttype]
 enum DataKey {
     Admin,
-    RouterId,
+    VerifierId,
     ImageId,
     TokenId,
     Paused,
@@ -87,18 +87,18 @@ impl AsteroidsScoreContract {
     /// Arguments:
     /// - `env`: Soroban execution environment.
     /// - `admin`: Address authorized for admin-only methods.
-    /// - `router_id`: RISC Zero router contract address used for proof verification.
+    /// - `verifier_id`: RISC Zero Groth16 verifier contract address.
     /// - `image_id`: Expected RISC Zero image ID for valid receipts.
     /// - `token_id`: Stellar asset contract used for reward minting.
     pub fn __constructor(
         env: Env,
         admin: Address,
-        router_id: Address,
+        verifier_id: Address,
         image_id: BytesN<32>,
         token_id: Address,
     ) {
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::RouterId, &router_id);
+        env.storage().instance().set(&DataKey::VerifierId, &verifier_id);
         env.storage().instance().set(&DataKey::ImageId, &image_id);
         env.storage().instance().set(&DataKey::TokenId, &token_id);
         extend_instance_ttl(&env);
@@ -157,7 +157,7 @@ impl AsteroidsScoreContract {
         }
         let minted_delta = parsed.final_score - previous_best;
 
-        let router_id: Address = env.storage().instance().get(&DataKey::RouterId).unwrap();
+        let verifier_id: Address = env.storage().instance().get(&DataKey::VerifierId).unwrap();
         let image_id: BytesN<32> = env.storage().instance().get(&DataKey::ImageId).unwrap();
         let token_id: Address = env.storage().instance().get(&DataKey::TokenId).unwrap();
 
@@ -167,8 +167,8 @@ impl AsteroidsScoreContract {
             .temporary()
             .set(&best_key, &parsed.final_score);
 
-        let router_client = risc0_router::Client::new(&env, &router_id);
-        router_client.verify(&seal, &image_id, &journal_digest);
+        let verifier_client = risc0_verifier::Client::new(&env, &verifier_id);
+        verifier_client.verify(&seal, &image_id, &journal_digest);
 
         let token_client = token::StellarAssetClient::new(&env, &token_id);
         token_client.mint(&claimant, &(minted_delta as i128 * TOKEN_DECIMALS_SCALE));
@@ -243,13 +243,13 @@ impl AsteroidsScoreContract {
         extend_instance_ttl(&env);
     }
 
-    /// Admin: update the RISC Zero router address.
-    pub fn set_router_id(env: Env, new_router_id: Address) {
+    /// Admin: update the RISC Zero verifier address.
+    pub fn set_verifier_id(env: Env, new_verifier_id: Address) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage()
             .instance()
-            .set(&DataKey::RouterId, &new_router_id);
+            .set(&DataKey::VerifierId, &new_verifier_id);
         extend_instance_ttl(&env);
     }
 
@@ -268,9 +268,9 @@ impl AsteroidsScoreContract {
         env.storage().instance().get(&DataKey::ImageId).unwrap()
     }
 
-    /// Read the configured RISC Zero router contract address.
-    pub fn router_id(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::RouterId).unwrap()
+    /// Read the configured RISC Zero verifier contract address.
+    pub fn verifier_id(env: Env) -> Address {
+        env.storage().instance().get(&DataKey::VerifierId).unwrap()
     }
 
     /// Read the configured reward token contract address.
@@ -299,11 +299,11 @@ impl AsteroidsScoreContract {
         let parsed = parse_journal_fields(&journal);
 
         let journal_digest: BytesN<32> = env.crypto().sha256(&journal_raw).into();
-        let router_id: Address = env.storage().instance().get(&DataKey::RouterId).unwrap();
+        let verifier_id: Address = env.storage().instance().get(&DataKey::VerifierId).unwrap();
         let image_id: BytesN<32> = env.storage().instance().get(&DataKey::ImageId).unwrap();
 
-        let router_client = risc0_router::Client::new(&env, &router_id);
-        router_client.verify(&seal, &image_id, &journal_digest);
+        let verifier_client = risc0_verifier::Client::new(&env, &verifier_id);
+        verifier_client.verify(&seal, &image_id, &journal_digest);
 
         Ok(parsed.final_score)
     }

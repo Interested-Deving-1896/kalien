@@ -66,7 +66,7 @@ verify_fixture() {
   local result
   result=$(stellar contract invoke \
     --send=no -q \
-    --id "$RISC0_ROUTER" \
+    --id "$RISC0_VERIFIER" \
     --source "$CALLER_NAME" \
     --network "$NETWORK" \
     -- \

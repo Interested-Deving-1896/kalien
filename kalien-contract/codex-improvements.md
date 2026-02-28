@@ -83,7 +83,7 @@ What failed or needs hardening:
 5. Add controlled emergency mechanisms.
 - Add:
   - pause flag (`set_paused`) checked in `submit_score`,
-  - optional `set_router_id` admin method (if operationally required).
+  - optional `set_verifier_id` admin method (if operationally required).
 - Acceptance:
   - Can halt claims during incident response.
   - Router migration is possible without redeploying everything.

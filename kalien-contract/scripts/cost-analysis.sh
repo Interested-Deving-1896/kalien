@@ -219,7 +219,7 @@ deploy_cost_instance() {
     --network "$NETWORK" \
     -- \
     --admin "$DEPLOYER_ADDR" \
-    --router_id "$RISC0_ROUTER" \
+    --verifier_id "$RISC0_VERIFIER" \
     --image_id "${IMAGE_ID_HEX}" \
     --token_id "$TOKEN_ID" \
     2>&1)
@@ -383,13 +383,13 @@ measure_image_id() {
     image_id
 }
 
-measure_router_id() {
-  measure_operation "router_id (read-only)" \
+measure_verifier_id() {
+  measure_operation "verifier_id (read-only)" \
     --id "$SCORE_CONTRACT_ID" \
     --source "$DEPLOYER_NAME" \
     --network "$NETWORK" \
     -- \
-    router_id
+    verifier_id
 }
 
 # ---------------------------------------------------------------------------
@@ -514,7 +514,7 @@ measure_submit_score_mock
 measure_set_image_id
 measure_is_claimed
 measure_image_id
-measure_router_id
+measure_verifier_id
 
 # Print formatted results
 print_results_table
