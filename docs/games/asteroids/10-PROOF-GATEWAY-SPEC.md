@@ -15,7 +15,7 @@ implemented today.
 ```
 Browser (Vite/React)
   │
-  │ POST /api/proofs/jobs (binary .tape + x-claimant-address)
+  │ POST /api/proofs/jobs?seed_id=<u32>&claimant=<G...|C...> (binary .tape)
   ▼
 Cloudflare Worker (Hono API)
   ├── Durable Object: ProofCoordinatorDO
@@ -66,7 +66,7 @@ Claim queue path:
 - Returns service metadata, compatibility expectations, prover compatibility
   status, and the active job (if any).
 - Response includes:
-  - `expected.ruleset` and `expected.rules_digest_hex` (AST3 target)
+  - `expected.ruleset` and `expected.rules_digest_hex` (AST4 target)
   - optional `expected.image_id` (if pinning is enabled)
   - `prover.status` (`"compatible"` or `"degraded"`)
   - on compatible: `prover.ruleset`, `prover.rules_digest_hex`, `prover.image_id`
@@ -74,7 +74,9 @@ Claim queue path:
 
 **`POST /api/proofs/jobs`**
 - Request body: raw tape bytes (`application/octet-stream`).
-- Required header: `x-claimant-address` (validated Stellar strkey).
+- Required query params:
+  - `seed_id` (u32)
+  - `claimant` (validated Stellar `G...` or `C...` address)
 - Validates tape format before accepting.
 - Rejects zero-score tapes (`final_score == 0`) with `400`.
 - On accept (`202`):
@@ -96,13 +98,13 @@ Claim queue path:
 
 `worker/tape.ts` enforces:
 - Non-empty payload, `<= MAX_TAPE_BYTES` (default 2 MiB)
-- Magic = `0x5A4B5450`, version = `2`
-- Rules tag = `AST3` and header reserved bytes are zero
-- Exact byte length = header (16) + frameCount + footer (12)
+- Magic = `0x5A4B5450`, version = `4`
+- Rules tag = `AST4` and header reserved bytes are zero
+- Exact byte length = header (16) + ceil(frameCount/2) + footer (8)
 - CRC-32 checksum match
 
 Metadata extracted from the tape and stored with the job record:
-- `seed`, `frameCount`, `finalScore`, `finalRngState`, `checksum`
+- `seed`, `frameCount`, `finalScore`, `checksum`
 
 ### Job state model
 
@@ -142,7 +144,7 @@ interface ProofJobRecord {
   tape: {
     sizeBytes: number;
     key: string;               // R2 key
-    metadata: TapeMetadata;    // seed, frameCount, finalScore, finalRngState, checksum
+    metadata: TapeMetadata;    // seed, frameCount, finalScore, checksum
   };
   queue: {
     attempts: number;
@@ -186,25 +188,31 @@ Storage keys:
 - `active_job_id` — current active job ID (or absent)
 - `job:{jobId}` — full `ProofJobRecord`
 
-### Queue consumers (proof + claim)
+### Queue consumers (proof + vast + claim)
 
-The worker has two queue consumers:
+The worker currently has three primary queue consumers:
 
-1. **Proof queue (`kalien-proof-jobs`)**
-   - Submits the stored tape to prover API.
+1. **Boundless proof queue (`kalien-proof-jobs`)**
+   - Submits the stored tape to Boundless.
    - Retries transient errors with bounded exponential backoff.
    - Marks terminal failures in DO state.
+   - Configured for parallelism (`max_concurrency=5`).
 
-2. **Claim queue (`kalien-claim-jobs`)**
+2. **Vast proof queue (`kalien-vast-jobs`)**
+   - Submits the stored tape to the Vast prover API.
+   - Uses serialized processing (`max_concurrency=1`) to match single-flight GPU flow.
+
+3. **Claim queue (`kalien-claim-jobs`)**
    - Runs only after proof success.
-   - Builds `journal_raw_hex` from the proved 24-byte journal.
-   - Computes `journal_digest_hex = sha256(journal_raw_hex)`.
-   - Submits `{ claimant_address, journal_raw_hex, journal_digest_hex, prover_response }`
-     to `RELAYER_URL`.
+   - Loads canonical `ProofArtifactV4` from R2 (`seal_hex`, `journal_raw_hex`, `journal_digest_hex`).
+   - Validates `journal_raw_hex` against the coordinator summary and digest.
+   - Submits `{ seal_hex, journal_raw_hex, journal_digest_hex }` to `RELAYER_URL`.
    - Tracks claim retry/failure/success state in DO.
 
-Both queues use `max_batch_size=1`, `max_concurrency=1`, `max_retries=10`,
-and dedicated DLQs (`kalien-proof-jobs-dlq`, `kalien-claim-jobs-dlq`).
+All queues use `max_batch_size=1` and dedicated DLQs:
+- `kalien-proof-jobs-dlq`
+- `kalien-vast-jobs-dlq`
+- `kalien-claim-jobs-dlq`
 
 ### DO alarm polling loop
 
@@ -212,10 +220,10 @@ After `markProverAccepted()` schedules the first alarm, the DO's `alarm()`
 method drives all subsequent prover polling:
 
 1. Load active job. If terminal or missing, stop.
-2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`, default 11 minutes). Fail if exceeded.
+2. Check wall-clock timeout (`MAX_JOB_WALL_TIME_MS`). With current `wrangler.jsonc` this is set to 2,100,000 ms (~35 minutes).
 3. Call `pollProver()` (budget-limited polling loop within a single alarm invocation).
 4. **Running**: save updated prover status, schedule next alarm at `PROVER_POLL_INTERVAL_MS`.
-5. **Success**: call `summarizeProof()`, store full prover response in R2 as `result.json`,
+5. **Success**: persist canonical `ProofArtifactV4` to R2 as `result.json`,
    call `markSucceeded()` which also enqueues a claim job.
 6. **Retry with `clearProverJob`** (prover lost the job, e.g. restart):
    re-read tape from R2, re-submit to prover. If re-submit succeeds,
@@ -235,7 +243,7 @@ backs off and tries again rather than failing the job.
 
 **Submission:**
 - `POST {PROVER_BASE_URL}/api/jobs/prove-tape/raw`
-- Query params currently sent by worker: `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`
+- Query params sent by worker: `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`, `seed_id`, `claimant`
 - Auth headers: `x-api-key` and/or `CF-Access-Client-Id` + `CF-Access-Client-Secret`
 - Response: `{ success, job_id, status, status_url }`
 
@@ -254,14 +262,13 @@ backs off and tries again rather than failing the job.
 interface ProofResultSummary {
   elapsedMs: number;
   requestedReceiptKind: string;
-  producedReceiptKind: string | null;
+  producedReceiptKind: string;
   journal: {
     seed: number;
+    seed_id: number;
     frame_count: number;
     final_score: number;
-    final_rng_state: number;
-    tape_checksum: number;
-    rules_digest: number;
+    claimant: string;
   };
   stats: {
     segments: number;
@@ -277,26 +284,16 @@ interface ProofResultSummary {
 
 ```json
 {
+  "version": "v4",
   "stored_at": "ISO8601",
-  "prover_response": {
-    "success": true,
-    "status": "succeeded",
-    "result": {
-      "proof": {
-        "journal": { ... },
-        "requested_receipt_kind": "groth16",
-        "produced_receipt_kind": "groth16",
-        "stats": { ... },
-        "receipt": { ... }
-      },
-      "elapsed_ms": 123456
-    }
-  }
+  "backend": "boundless|vast",
+  "seal_hex": "<260-byte hex>",
+  "journal_raw_hex": "<49-byte hex>",
+  "journal_digest_hex": "<sha256 hex>",
+  "requested_receipt_kind": "groth16",
+  "produced_receipt_kind": "groth16"
 }
 ```
-
-The `receipt` field contains the full RISC Zero receipt including the `seal`
-bytes needed for on-chain verification.
 
 ### Worker configuration (`wrangler.jsonc`)
 
@@ -350,22 +347,23 @@ Bindings:
 
 ```rust
 struct VerificationJournal {
+    seed_id: u32,
     seed: u32,
     frame_count: u32,
     final_score: u32,
-    final_rng_state: u32,
-    tape_checksum: u32,
-    rules_digest: u32,  // RULES_DIGEST = 0x41535433 ("AST3")
+    claimant: String,   // decoded from fixed claimant bytes (kind + 32-byte id)
 }
 ```
 
-Serialized as 24 bytes (6 × u32 LE).
+Serialized as 49 bytes:
+- 4 x u32 LE (`seed_id`, `seed`, `frame_count`, `final_score`)
+- claimant bytes (`kind + 32-byte id`)
 
 ### Host prover behavior
 
 `prove_tape` in `host/src/lib.rs`:
 1. Validates dev-mode policy (`RISC0_DEV_MODE` + `proof_mode`).
-2. Builds executor env with `max_frames`, original `tape_len`, padded tape, `segment_limit_po2`.
+2. Builds executor env with `max_frames`, `seed_id`, fixed claimant bytes (`kind + 32-byte id`), original `tape_len`, padded tape, and `segment_limit_po2`.
 3. Proves using the requested receipt kind (`composite`, `succinct`, or `groth16`).
 4. Detects produced receipt kind from receipt internals.
 5. In non-dev mode, requires produced kind == requested kind.
@@ -380,14 +378,14 @@ Endpoints:
 - `GET /api/jobs/{job_id}`
 - `DELETE /api/jobs/{job_id}`
 
-Auth: `API_KEY` is required by default; `/api/*` requires `x-api-key` or `Authorization: Bearer` header.
-For local-only development, set `ALLOW_MISSING_API_KEY=1` together with `RISC0_DEV_MODE=1`.
+Auth: when `API_KEY` is configured, `/api/*` requires `x-api-key` or `Authorization: Bearer`.
+For local-only development, leave `API_KEY` unset and run with `RISC0_DEV_MODE=1`.
 
 Job states: `queued` → `running` → `succeeded` | `failed`.
 Single-flight enforced by global semaphore (concurrency 1) + active-job check.
 
 Query param policy gates: `max_frames`, `receipt_kind`, `segment_limit_po2`,
-`verify_mode`.
+`verify_mode`, `seed_id`, `claimant`.
 
 `proof_mode` is forced from `RISC0_DEV_MODE` at prover startup (not a query param).
 

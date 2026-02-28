@@ -1,24 +1,24 @@
 import { useEffect, useRef } from "react";
-import type { GameRunRecord } from "../game/AsteroidsGame";
 import { AsteroidsGame } from "../game/AsteroidsGame";
-
-export interface CompletedGameRun {
-  record: GameRunRecord;
-  frameCount: number;
-  endedAtMs: number;
-}
+import type { CompletedGameRun } from "../game/types";
 
 interface AsteroidsCanvasProps {
   onGameOver?: (run: CompletedGameRun) => void;
+  onGameReady?: (game: AsteroidsGame) => void;
 }
 
-export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
+export function AsteroidsCanvas({ onGameOver, onGameReady }: AsteroidsCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const onGameOverRef = useRef(onGameOver);
+  const onGameReadyRef = useRef(onGameReady);
 
   useEffect(() => {
     onGameOverRef.current = onGameOver;
   }, [onGameOver]);
+
+  useEffect(() => {
+    onGameReadyRef.current = onGameReady;
+  }, [onGameReady]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -28,6 +28,8 @@ export function AsteroidsCanvas({ onGameOver }: AsteroidsCanvasProps) {
     }
 
     const game = new AsteroidsGame({ canvas });
+    onGameReadyRef.current?.(game);
+
     let modeBefore = game.getMode();
     let watcherFrame: number | null = null;
     let disposed = false;

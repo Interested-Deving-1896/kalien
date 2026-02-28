@@ -1,10 +1,13 @@
-# claude-autopilot
+# claude-autopilot (ARCHIVED)
+
+> **ARCHIVED** — This code targets the retired AST3 ruleset (`rules_digest = 0x41535433`).
+> The active ruleset is AST4 (`0x41535434`). See `autopilot/` for the current autopilot.
 
 Action-search autopilot tuned against the shared `asteroids-verifier-core` game + verifier.
 
-## Current parity assumptions
+## Parity assumptions (at time of archival)
 
-- Ruleset: `AST3` (`rules_digest = 0x41535433`)
+- Ruleset: `AST3` (`rules_digest = 0x41535433`) — **retired**
 - Default run horizon: `108000` frames (30 minutes)
 - Tape generation is strict-legal and verified before reporting results
 

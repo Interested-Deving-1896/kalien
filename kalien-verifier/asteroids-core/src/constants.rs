@@ -1,7 +1,7 @@
 pub const TAPE_MAGIC: u32 = 0x5A4B5450;
-pub const TAPE_VERSION: u8 = 2;
+pub const TAPE_VERSION: u8 = 4;
 pub const TAPE_HEADER_SIZE: usize = 16;
-pub const TAPE_FOOTER_SIZE: usize = 12;
+pub const TAPE_FOOTER_SIZE: usize = 8;
 
 pub const MAX_FRAMES_DEFAULT: u32 = 18_000;
 
@@ -50,6 +50,11 @@ pub const SCORE_SMALL_SAUCER: u32 = 990;
 pub const LURK_TIME_THRESHOLD_FRAMES: i32 = 360;
 pub const LURK_SAUCER_SPAWN_FAST_FRAMES: i32 = 180;
 
-pub const RULES_TAG: u8 = 3; // "AST3"
-pub const RULES_DIGEST: u32 = 0x4153_5433; // "AST3"
-pub const RULESET_NAME: &str = "AST3";
+pub const RULES_TAG: u8 = 4; // "AST4"
+pub const RULES_DIGEST: u32 = 0x4153_5434; // "AST4"
+pub const RULESET_NAME: &str = "AST4";
+
+pub const JOURNAL_LEN: usize = 49;
+pub const JOURNAL_CLAIMANT_KIND_ACCOUNT: u8 = 0;
+pub const JOURNAL_CLAIMANT_KIND_CONTRACT: u8 = 1;
+pub const JOURNAL_CLAIMANT_ENCODED_LEN: usize = 33; // kind(1) + id(32)

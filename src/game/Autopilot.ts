@@ -26,44 +26,34 @@ import type { Asteroid, Bullet, Saucer, Ship, Vec2 } from "./types";
 // TUNABLE PARAMETERS - Modify these to change AI behavior
 // ============================================================================
 
-/** How far ahead to predict collisions (seconds) */
-const COLLISION_LOOKAHEAD = 1.5;
-
-/** Distance at which threats become critical and require evasion */
-const DANGER_RADIUS = 120;
-
-/** Distance at which we start being cautious */
-const CAUTION_RADIUS = 200;
-
-/** How accurately the ship must aim before firing (radians) */
-const AIM_TOLERANCE = 0.12;
-
-/** Minimum distance to maintain from threats when not attacking */
-const SAFE_DISTANCE = 180;
-
-/** How much to lead targets (multiplier for prediction) */
-const LEAD_FACTOR = 1.0;
-
-/** Prefer shooting small asteroids first (they're worth more points) */
-const PREFER_SMALL_ASTEROIDS = false;
-
-/** Maximum angle difference to consider a shot viable */
-const MAX_SHOT_ANGLE = Math.PI / 6; // 30 degrees
-
-/** How aggressively to pursue targets vs play defensively (0-1) */
-const AGGRESSION = 0.7;
-
-/** Cooldown between shots to avoid wasting bullets */
-const SHOT_PATIENCE = 0.05;
-
-/** Danger radius multiplier when on last life */
-const LOW_LIVES_DANGER_MULT = 1.4;
-
-/** Aggression bonus per wave (additive, capped at 1.0) */
-const WAVE_AGGRESSION_BONUS = 0.03;
-
-/** Frame count after which lurk-kill incentive kicks in */
-const LURK_KILL_FRAMES = 240;
+export interface AutopilotConfig {
+  /** How far ahead to predict collisions (seconds) */
+  collisionLookahead: number;
+  /** Distance at which threats become critical and require evasion */
+  dangerRadius: number;
+  /** Distance at which we start being cautious */
+  cautionRadius: number;
+  /** How accurately the ship must aim before firing (radians) */
+  aimTolerance: number;
+  /** Minimum distance to maintain from threats when not attacking */
+  safeDistance: number;
+  /** How much to lead targets (multiplier for prediction) */
+  leadFactor: number;
+  /** Prefer shooting small asteroids first (they're worth more points) */
+  preferSmallAsteroids: boolean;
+  /** Maximum angle difference to consider a shot viable */
+  maxShotAngle: number;
+  /** How aggressively to pursue targets vs play defensively (0-1) */
+  aggression: number;
+  /** Cooldown between shots to avoid wasting bullets */
+  shotPatience: number;
+  /** Danger radius multiplier when on last life */
+  lowLivesDangerMult: number;
+  /** Aggression bonus per wave (additive, capped at 1.0) */
+  waveAggressionBonus: number;
+  /** Frame count after which lurk-kill incentive kicks in */
+  lurkKillFrames: number;
+}
 
 // ============================================================================
 // AUTOPILOT CLASS
@@ -112,6 +102,8 @@ interface Target {
 }
 
 export class Autopilot {
+  readonly config: AutopilotConfig;
+
   private enabled = false;
   private lastShotTime = 0;
 
@@ -120,10 +112,35 @@ export class Autopilot {
   private debugTarget: Target | null = null;
 
   // Per-frame effective parameters (adjusted by wave/lives/lurk)
-  private effectiveDangerRadius = DANGER_RADIUS;
-  private effectiveCautionRadius = CAUTION_RADIUS;
-  private effectiveAggression = AGGRESSION;
+  private effectiveDangerRadius: number;
+  private effectiveCautionRadius: number;
+  private effectiveAggression: number;
   private lurkPressure = false;
+
+  static defaults(): AutopilotConfig {
+    return {
+      collisionLookahead: 1.5,
+      dangerRadius: 120,
+      cautionRadius: 200,
+      aimTolerance: 0.12,
+      safeDistance: 180,
+      leadFactor: 1.0,
+      preferSmallAsteroids: false,
+      maxShotAngle: Math.PI / 6,
+      aggression: 0.7,
+      shotPatience: 0.05,
+      lowLivesDangerMult: 1.4,
+      waveAggressionBonus: 0.03,
+      lurkKillFrames: 240,
+    };
+  }
+
+  constructor(config?: Partial<AutopilotConfig>) {
+    this.config = { ...Autopilot.defaults(), ...config };
+    this.effectiveDangerRadius = this.config.dangerRadius;
+    this.effectiveCautionRadius = this.config.cautionRadius;
+    this.effectiveAggression = this.config.aggression;
+  }
 
   /** Enable or disable the autopilot */
   setEnabled(enabled: boolean): void {
@@ -170,11 +187,12 @@ export class Autopilot {
     const ship = state.ship;
 
     // Adjust effective parameters based on wave / lives / lurk state
-    const dangerMult = state.lives <= 1 ? LOW_LIVES_DANGER_MULT : 1.0;
-    this.effectiveDangerRadius = DANGER_RADIUS * dangerMult;
-    this.effectiveCautionRadius = CAUTION_RADIUS * dangerMult;
-    this.effectiveAggression = Math.min(1.0, AGGRESSION + state.wave * WAVE_AGGRESSION_BONUS);
-    this.lurkPressure = state.timeSinceLastKill >= LURK_KILL_FRAMES;
+    const c = this.config;
+    const dangerMult = state.lives <= 1 ? c.lowLivesDangerMult : 1.0;
+    this.effectiveDangerRadius = c.dangerRadius * dangerMult;
+    this.effectiveCautionRadius = c.cautionRadius * dangerMult;
+    this.effectiveAggression = Math.min(1.0, c.aggression + state.wave * c.waveAggressionBonus);
+    this.lurkPressure = state.timeSinceLastKill >= c.lurkKillFrames;
 
     // 1. Analyze all threats
     const threats = this.analyzeThreats(ship, state);
@@ -268,7 +286,7 @@ export class Autopilot {
     const timeToImpact = this.timeToClosestApproach(0, 0, relVx, relVy, delta.x, delta.y);
 
     // Only care about future threats
-    if (timeToImpact < 0 || timeToImpact > COLLISION_LOOKAHEAD) {
+    if (timeToImpact < 0 || timeToImpact > this.config.collisionLookahead) {
       // Still track nearby entities as low-level threats
       if (distance < cautionR) {
         return {
@@ -381,14 +399,14 @@ export class Autopilot {
     let priority = 1 / (distance + 50);
 
     // Bonus for targets we're already aimed at
-    if (Math.abs(angleDiff) < MAX_SHOT_ANGLE) {
+    if (Math.abs(angleDiff) < this.config.maxShotAngle) {
       priority *= 1.5;
     }
 
     // Asteroid size priority
     if ("size" in entity) {
       const asteroid = entity as Asteroid;
-      if (PREFER_SMALL_ASTEROIDS) {
+      if (this.config.preferSmallAsteroids) {
         if (asteroid.size === "small") priority *= 1.5;
         else if (asteroid.size === "medium") priority *= 1.2;
       } else {
@@ -398,7 +416,7 @@ export class Autopilot {
     }
 
     // Penalize targets that are too close (dangerous to engage)
-    if (distance < SAFE_DISTANCE * 0.5) {
+    if (distance < this.config.safeDistance * 0.5) {
       priority *= 0.5;
     }
 
@@ -429,8 +447,8 @@ export class Autopilot {
     const travelTime = distance / bulletSpeed;
 
     // Lead the target
-    const leadX = entity.x + entity.vx * travelTime * LEAD_FACTOR;
-    const leadY = entity.y + entity.vy * travelTime * LEAD_FACTOR;
+    const leadX = entity.x + entity.vx * travelTime * this.config.leadFactor;
+    const leadY = entity.y + entity.vy * travelTime * this.config.leadFactor;
 
     return { x: leadX, y: leadY };
   }
@@ -491,7 +509,7 @@ export class Autopilot {
       const aimAngle = Math.atan2(leadDelta.y, leadDelta.x);
       const aimDiff = Math.abs(this.normalizeAngle(aimAngle - ship.angle));
 
-      if (aimDiff < AIM_TOLERANCE * 2) {
+      if (aimDiff < this.config.aimTolerance * 2) {
         input.fire = true;
       }
     }
@@ -516,7 +534,7 @@ export class Autopilot {
     const angleDiff = this.normalizeAngle(target.angle - ship.angle);
 
     // Turn toward target
-    if (Math.abs(angleDiff) > AIM_TOLERANCE / 2) {
+    if (Math.abs(angleDiff) > this.config.aimTolerance / 2) {
       if (angleDiff > 0) {
         input.right = true;
       } else {
@@ -526,14 +544,14 @@ export class Autopilot {
 
     // Fire if aimed
     // Lurk pressure: relax aim tolerance to kill faster
-    const aimTol = this.lurkPressure ? AIM_TOLERANCE * 1.5 : AIM_TOLERANCE;
+    const aimTol = this.lurkPressure ? this.config.aimTolerance * 1.5 : this.config.aimTolerance;
 
     if (Math.abs(angleDiff) < aimTol) {
       // Check bullet will reach target
       const bulletRange = SHIP_BULLET_RANGE;
       if (target.distance < bulletRange * 0.9) {
         // Rate limit shots (faster when lurk pressure)
-        const patience = this.lurkPressure ? SHOT_PATIENCE * 0.5 : SHOT_PATIENCE;
+        const patience = this.lurkPressure ? this.config.shotPatience * 0.5 : this.config.shotPatience;
         if (gameTime - this.lastShotTime > patience) {
           input.fire = true;
           this.lastShotTime = gameTime;
@@ -563,13 +581,13 @@ export class Autopilot {
     } else {
       // No immediate threats
       // Approach target if far, maintain distance if close
-      const approachDist = this.lurkPressure ? SAFE_DISTANCE : SAFE_DISTANCE * 1.5;
+      const approachDist = this.lurkPressure ? this.config.safeDistance : this.config.safeDistance * 1.5;
       if (target.distance > approachDist) {
         // Move toward target if aimed roughly at it
         if (Math.abs(angleDiff) < Math.PI / 3) {
           input.thrust = speed < SHIP_MAX_SPEED * aggression;
         }
-      } else if (target.distance < SAFE_DISTANCE * 0.8) {
+      } else if (target.distance < this.config.safeDistance * 0.8) {
         // Too close - thrust away
         const awayAngle = this.normalizeAngle(target.angle + Math.PI - ship.angle);
         if (Math.abs(awayAngle) < Math.PI / 3) {

@@ -1,10 +1,10 @@
 import {
-  API_TIMEOUT_CANCEL_PROOF_MS,
   API_TIMEOUT_GET_ARTIFACT_MS,
-  API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
   API_TIMEOUT_GET_PROOF_MS,
+  API_TIMEOUT_LIST_JOBS_MS,
   API_TIMEOUT_SUBMIT_PROOF_MS,
 } from "../consts";
+import { fetchWithTimeout as baseFetchWithTimeout, parseJson } from "../lib/api";
 
 export type ProofJobStatus =
   | "queued"
@@ -16,9 +16,9 @@ export type ProofJobStatus =
 
 export interface TapeMetadata {
   seed: number;
+  seedId: number;
   frameCount: number;
   finalScore: number;
-  finalRngState: number;
   checksum: number;
 }
 
@@ -34,13 +34,44 @@ export interface QueueTracking {
   nextRetryAt: string | null;
 }
 
+export type ProverBackend = "boundless" | "vast";
+
+export interface ProverAttempt {
+  index: number;
+  backend: ProverBackend;
+  startedAt: string;
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  errorDetail: string | null;
+  errorCode: string | null;
+  proverJobId: string | null;
+  statusUrl: string | null;
+  maxPriceUsd?: number | null;
+  actualCostUsd: number | null;
+  proverAddress: string | null;
+  fulfillmentTxHash: string | null;
+  programCycles?: number | null;
+  totalCycles?: number | null;
+}
+
+export interface ClaimAttempt {
+  index: number;
+  startedAt: string;
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  errorDetail: string | null;
+  txHash: string | null;
+}
+
 export interface ProverTracking {
   jobId: string | null;
   status: "queued" | "running" | "succeeded" | "failed" | null;
   statusUrl: string | null;
   lastPolledAt: string | null;
   pollingErrors: number;
-  recoveryAttempts: number;
+  ipfsCid: string | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -57,12 +88,11 @@ export interface ClaimTracking {
 }
 
 export interface ProofJournal {
+  seed_id: number;
   seed: number;
   frame_count: number;
   final_score: number;
-  final_rng_state: number;
-  tape_checksum: number;
-  rules_digest: number;
+  claimant: string;
 }
 
 export interface ProofStats {
@@ -76,7 +106,7 @@ export interface ProofStats {
 export interface ProofResultSummary {
   elapsedMs: number;
   requestedReceiptKind: string;
-  producedReceiptKind: string | null;
+  producedReceiptKind: string;
   journal: ProofJournal;
   stats: ProofStats;
 }
@@ -98,6 +128,8 @@ export interface ProofJobPublic {
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
+  proverAttempts: ProverAttempt[];
+  claimAttempts: ClaimAttempt[];
 }
 
 export interface SubmitProofJobResponse {
@@ -111,37 +143,15 @@ export interface GetProofJobResponse {
   job: ProofJobPublic;
 }
 
-export interface StoredProofArtifactResponse {
-  stored_at?: string;
-  prover_response?: unknown;
-}
-
-export interface GatewayProverCompatibleHealth {
-  status: "compatible";
-  image_id: string;
-  rules_digest_hex: string;
-  ruleset: string;
-}
-
-export interface GatewayProverDegradedHealth {
-  status: "degraded";
-  error: string;
-}
-
-export type GatewayProverHealth = GatewayProverCompatibleHealth | GatewayProverDegradedHealth;
-
-export interface GatewayHealthResponse {
-  success: true;
-  service: string;
-  mode: string;
-  expected: {
-    rules_digest_hex: string;
-    ruleset: string;
-    image_id: string | null;
-  };
-  checked_at: string;
-  prover: GatewayProverHealth;
-  active_job: ProofJobPublic | null;
+export interface ProofArtifactV4Response {
+  version: "v4";
+  stored_at: string;
+  backend: ProverBackend;
+  seal_hex: string;
+  journal_raw_hex: string;
+  journal_digest_hex: string;
+  requested_receipt_kind: "groth16";
+  produced_receipt_kind: "groth16";
 }
 
 interface ApiErrorResponse {
@@ -171,17 +181,13 @@ async function fetchWithTimeout(
   init: RequestInit | undefined,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await baseFetchWithTimeout(input, init, timeoutMs);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new ProofApiError("request timed out", 0);
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -205,22 +211,22 @@ async function parseError(response: Response): Promise<ProofApiError> {
   return new ProofApiError(message, response.status, activeJob);
 }
 
-async function parseJson<T>(response: Response): Promise<T> {
-  return (await response.json()) as T;
-}
-
 export async function submitProofJob(
   tapeBytes: Uint8Array,
   claimantAddress: string,
+  seedId: number,
 ): Promise<SubmitProofJobResponse> {
   const body = new Uint8Array(tapeBytes).buffer;
+  const params = new URLSearchParams({
+    claimant: claimantAddress,
+    seed_id: String(seedId >>> 0),
+  });
   const headers: Record<string, string> = {
     "content-type": "application/octet-stream",
-    "x-claimant-address": claimantAddress,
   };
 
   const response = await fetchWithTimeout(
-    "/api/proofs/jobs",
+    `/api/proofs/jobs?${params.toString()}`,
     {
       method: "POST",
       headers,
@@ -252,23 +258,7 @@ export async function getProofJob(jobId: string): Promise<GetProofJobResponse> {
   return parseJson<GetProofJobResponse>(response);
 }
 
-export async function cancelProofJob(jobId: string): Promise<GetProofJobResponse> {
-  const response = await fetchWithTimeout(
-    `/api/proofs/jobs/${jobId}`,
-    {
-      method: "DELETE",
-    },
-    API_TIMEOUT_CANCEL_PROOF_MS,
-  );
-
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-
-  return parseJson<GetProofJobResponse>(response);
-}
-
-export async function getProofArtifact(jobId: string): Promise<StoredProofArtifactResponse> {
+export async function getProofArtifact(jobId: string): Promise<ProofArtifactV4Response> {
   const response = await fetchWithTimeout(
     `/api/proofs/jobs/${jobId}/result`,
     {
@@ -281,21 +271,45 @@ export async function getProofArtifact(jobId: string): Promise<StoredProofArtifa
     throw await parseError(response);
   }
 
-  return parseJson<StoredProofArtifactResponse>(response);
+  return parseJson<ProofArtifactV4Response>(response);
 }
 
-export async function getGatewayHealth(): Promise<GatewayHealthResponse> {
+export interface ListProofJobsResponse {
+  success: true;
+  jobs: ProofJobPublic[];
+  total: number;
+  offset: number;
+  limit: number;
+  next_offset: number | null;
+}
+
+export async function listProofJobs(
+  claimantAddress: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ListProofJobsResponse> {
+  const params = new URLSearchParams({ address: claimantAddress });
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.offset != null) params.set("offset", String(options.offset));
+
   const response = await fetchWithTimeout(
-    "/api/health",
-    {
-      method: "GET",
-    },
-    API_TIMEOUT_GET_GATEWAY_HEALTH_MS,
+    `/api/proofs/jobs?${params}`,
+    { method: "GET" },
+    API_TIMEOUT_LIST_JOBS_MS,
   );
+  if (!response.ok) throw await parseError(response);
+  return parseJson<ListProofJobsResponse>(response);
+}
 
-  if (!response.ok) {
-    throw await parseError(response);
-  }
+export async function retryFailedClaim(jobId: string): Promise<GetProofJobResponse> {
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs/${jobId}/retry-claim`,
+    { method: "POST" },
+    API_TIMEOUT_GET_PROOF_MS,
+  );
+  if (!response.ok) throw await parseError(response);
+  return parseJson<GetProofJobResponse>(response);
+}
 
-  return parseJson<GatewayHealthResponse>(response);
+export function getTapeDownloadUrl(jobId: string): string {
+  return `/api/proofs/jobs/${jobId}/tape`;
 }

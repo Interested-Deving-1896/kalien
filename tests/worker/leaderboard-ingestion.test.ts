@@ -11,13 +11,9 @@ describe("normalizeGalexieScoreEvents", () => {
           seed: "42",
           frame_count: 2048,
           final_score: 1337,
-          final_rng_state: 987654321,
-          tape_checksum: 123456,
-          rules_digest: 1095980083,
           previous_best: 1000,
           new_best: 1337,
           minted_delta: 337,
-          journal_digest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
           tx_hash: "tx-1",
           event_index: 2,
           ledger: 777,
@@ -36,11 +32,35 @@ describe("normalizeGalexieScoreEvents", () => {
     );
     expect(normalized.events[0]?.frameCount).toBe(2048);
     expect(normalized.events[0]?.finalScore).toBe(1337);
-    expect(normalized.events[0]?.finalRngState).toBe(987654321);
-    expect(normalized.events[0]?.tapeChecksum).toBe(123456);
-    expect(normalized.events[0]?.rulesDigest).toBe(1095980083);
     expect(normalized.events[0]?.newBest).toBe(1337);
     expect(normalized.events[0]?.source).toBe("galexie");
+  });
+
+  it("accepts minimal event payloads", () => {
+    const payload = {
+      events: [
+        {
+          id: "evt-minimal",
+          claimant: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+          seed: 99,
+          frame_count: 512,
+          final_score: 2048,
+          previous_best: 1024,
+          new_best: 2048,
+          minted_delta: 1024,
+          tx_hash: "tx-minimal",
+          event_index: 3,
+          ledger: 778,
+          closed_at: "2026-02-11T12:05:00.000Z",
+        },
+      ],
+    };
+
+    const normalized = normalizeGalexieScoreEvents(payload, "2026-02-11T12:06:00.000Z");
+    expect(normalized.fetchedCount).toBe(1);
+    expect(normalized.events).toHaveLength(1);
+    expect(normalized.events[0]?.newBest).toBe(2048);
+    expect(normalized.events[0]?.mintedDelta).toBe(1024);
   });
 
   it("skips malformed events", () => {

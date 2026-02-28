@@ -28,9 +28,7 @@ pub(crate) use config::{
     DEFAULT_RUNNING_JOB_TIMEOUT_SECS, DEFAULT_TIMED_OUT_PROOF_KILL_SECS, FIXED_PROVER_CONCURRENCY,
 };
 #[cfg(test)]
-pub(crate) use config::{
-    DEFAULT_MAX_SEGMENT_LIMIT_PO2, DEFAULT_MIN_SEGMENT_LIMIT_PO2,
-};
+pub(crate) use config::{DEFAULT_MAX_SEGMENT_LIMIT_PO2, DEFAULT_MIN_SEGMENT_LIMIT_PO2};
 pub(crate) use handlers::{create_prove_job_raw, delete_job, get_job, health, unauthorized};
 #[cfg(test)]
 pub(crate) use handlers::{validate_non_zero_score_tape, validate_tape_size};
@@ -208,6 +206,8 @@ mod tests {
     fn sample_options() -> ProveOptions {
         ProveOptions {
             max_frames: MAX_FRAMES_DEFAULT,
+            seed_id: 0,
+            claimant: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".to_string(),
             segment_limit_po2: SEGMENT_LIMIT_PO2_DEFAULT,
             receipt_kind: ReceiptKind::default(),
             proof_mode: ProofMode::Secure,
@@ -229,12 +229,7 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_rejects_zero_score() {
         let zero_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(
-                0xDEAD_BEEF,
-                &[0x00],
-                0,
-                0xAABB_CCDD,
-            );
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 0);
         let (_, code) = validate_non_zero_score_tape(&zero_score_tape, MAX_FRAMES_DEFAULT)
             .expect_err("zero score should be rejected");
         assert_eq!(code, "zero_score_not_allowed");
@@ -243,12 +238,7 @@ mod tests {
     #[test]
     fn validate_non_zero_score_tape_accepts_positive_score() {
         let positive_score_tape =
-            asteroids_verifier_core::tape::serialize_tape(
-                0xDEAD_BEEF,
-                &[0x00],
-                10,
-                0xAABB_CCDD,
-            );
+            asteroids_verifier_core::tape::serialize_tape(0xDEAD_BEEF, &[0x00], 10);
         assert!(validate_non_zero_score_tape(&positive_score_tape, MAX_FRAMES_DEFAULT).is_ok());
     }
 

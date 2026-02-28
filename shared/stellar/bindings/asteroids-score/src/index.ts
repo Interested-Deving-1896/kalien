@@ -31,38 +31,46 @@ if (typeof window !== "undefined") {
 }
 
 
-export const networks = {
-  testnet: {
-    networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
-  }
-} as const
+
 
 export const ScoreError = {
-  1: {message:"InvalidJournalLength"},
-  2: {message:"InvalidRulesDigest"},
+  1: {message:"InvalidJournalFormat"},
   3: {message:"JournalAlreadyClaimed"},
   4: {message:"ZeroScoreNotAllowed"},
-  5: {message:"ScoreNotImproved"}
+  5: {message:"ScoreNotImproved"},
+  6: {message:"ContractPaused"},
+  7: {message:"SeedNotActive"}
+}
+
+
+export interface CurrentSeed {
+  seed: u32;
+  seed_id: u32;
 }
 
 
 export interface Client {
   /**
+   * Construct and simulate a upgrade transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin: upgrade this contract to a new wasm hash.
+   */
+  upgrade: ({new_wasm_hash}: {new_wasm_hash: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
+
+  /**
    * Construct and simulate a image_id transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Read the current image ID.
+   * Read the currently configured image ID used for receipt verification.
    */
   image_id: (options?: MethodOptions) => Promise<AssembledTransaction<Buffer>>
 
   /**
    * Construct and simulate a token_id transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Read the token address.
+   * Read the configured reward token contract address.
    */
   token_id: (options?: MethodOptions) => Promise<AssembledTransaction<string>>
 
   /**
    * Construct and simulate a router_id transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Read the router address.
+   * Read the configured RISC Zero router contract address.
    */
   router_id: (options?: MethodOptions) => Promise<AssembledTransaction<string>>
 
@@ -74,19 +82,40 @@ export interface Client {
 
   /**
    * Construct and simulate a best_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Read a claimant's best score for a seed.
+   * Read a claimant's best score for a specific `seed_id`.
+   * 
+   * Returns `0` when no prior score exists.
    */
-  best_score: ({claimant, seed}: {claimant: string, seed: u32}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
+  best_score: ({claimant, seed_id}: {claimant: string, seed_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
 
   /**
    * Construct and simulate a is_claimed transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Check whether a journal digest has already been claimed.
+   * 
+   * Arguments:
+   * - `env`: Soroban execution environment.
+   * - `journal_digest`: SHA-256 digest of the raw journal bytes.
    */
   is_claimed: ({journal_digest}: {journal_digest: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
 
   /**
+   * Construct and simulate a set_paused transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin: pause or unpause score submissions.
+   */
+  set_paused: ({paused}: {paused: boolean}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
+
+  /**
+   * Construct and simulate a current_seed transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Return the current window's seed, materializing it on first call per window.
+   * 
+   * This method writes only one deterministic key:
+   * `SeedById(seed_id) -> seed`.
+   */
+  current_seed: (options?: MethodOptions) => Promise<AssembledTransaction<CurrentSeed>>
+
+  /**
    * Construct and simulate a rules_digest transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Read the expected rules digest.
+   * Read the hard-coded rules digest for AST4 verifier policy.
    */
   rules_digest: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>
 
@@ -97,16 +126,44 @@ export interface Client {
   set_image_id: ({new_image_id}: {new_image_id: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
   /**
+   * Construct and simulate a set_token_id transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin: update the token address.
+   */
+  set_token_id: ({new_token_id}: {new_token_id: string}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
+
+  /**
    * Construct and simulate a submit_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Verify a RISC Zero proof and mint score tokens to the claimant address.
+   * Verify a RISC Zero proof and mint KALIEN tokens.
    * 
    * - `seal`: variable-length proof seal bytes
-   * - `journal_raw`: raw 24-byte journal bytes (6 × u32 LE)
-   * - `claimant`: recipient address for token minting and best-score tracking
+   * - `journal_raw`: raw 49-byte journal bytes:
+   * - 4 x u32 LE fields (`seed_id`, `seed`, `frame_count`, `final_score`)
+   * - claimant payload (kind + 32-byte id)
    * 
-   * Returns the claimant's new best score for this seed.
+   * Returns the claimant's new best score for this `seed_id`.
+   * 
+   * Errors:
+   * - `ContractPaused` if submissions are disabled.
+   * - `InvalidJournalFormat` for malformed journal data.
+   * - `SeedNotActive` if the `(seed_id, seed)` pair is not active.
+   * - `JournalAlreadyClaimed` on replay.
+   * - `ZeroScoreNotAllowed` or `ScoreNotImproved` for policy violations.
    */
-  submit_score: ({seal, journal_raw, claimant}: {seal: Buffer, journal_raw: Buffer, claimant: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+  submit_score: ({seal, journal_raw}: {seal: Buffer, journal_raw: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+
+  /**
+   * Construct and simulate a verify_score transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Verify a RISC Zero proof without minting rewards or mutating claim state.
+   * 
+   * Returns the `final_score` carried by the verified journal.
+   */
+  verify_score: ({seal, journal_raw}: {seal: Buffer, journal_raw: Buffer}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u32>>>
+
+  /**
+   * Construct and simulate a set_router_id transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Admin: update the RISC Zero router address.
+   */
+  set_router_id: ({new_router_id}: {new_router_id: string}, options?: MethodOptions) => Promise<AssembledTransaction<null>>
 
 }
 export class Client extends ContractClient {
@@ -128,30 +185,43 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAABAAAAAAAAAAAAAAAClNjb3JlRXJyb3IAAAAAAAUAAAAAAAAAFEludmFsaWRKb3VybmFsTGVuZ3RoAAAAAQAAAAAAAAASSW52YWxpZFJ1bGVzRGlnZXN0AAAAAAACAAAAAAAAABVKb3VybmFsQWxyZWFkeUNsYWltZWQAAAAAAAADAAAAAAAAABNaZXJvU2NvcmVOb3RBbGxvd2VkAAAAAAQAAAAAAAAAEFNjb3JlTm90SW1wcm92ZWQAAAAF",
-        "AAAABQAAAAAAAAAAAAAADlNjb3JlU3VibWl0dGVkAAAAAAABAAAAD3Njb3JlX3N1Ym1pdHRlZAAAAAAGAAAAAAAAAAhjbGFpbWFudAAAABMAAAAAAAAAAAAAAARzZWVkAAAABAAAAAAAAAAAAAAADXByZXZpb3VzX2Jlc3QAAAAAAAAEAAAAAAAAAAAAAAAIbmV3X2Jlc3QAAAAEAAAAAAAAAAAAAAAMbWludGVkX2RlbHRhAAAABAAAAAAAAAAAAAAADmpvdXJuYWxfZGlnZXN0AAAAAAPuAAAAIAAAAAAAAAAC",
-        "AAAAAAAAABpSZWFkIHRoZSBjdXJyZW50IGltYWdlIElELgAAAAAACGltYWdlX2lkAAAAAAAAAAEAAAPuAAAAIA==",
-        "AAAAAAAAABdSZWFkIHRoZSB0b2tlbiBhZGRyZXNzLgAAAAAIdG9rZW5faWQAAAAAAAAAAQAAABM=",
-        "AAAAAAAAABhSZWFkIHRoZSByb3V0ZXIgYWRkcmVzcy4AAAAJcm91dGVyX2lkAAAAAAAAAAAAAAEAAAAT",
+      new ContractSpec([ "AAAABAAAAAAAAAAAAAAAClNjb3JlRXJyb3IAAAAAAAYAAAAAAAAAFEludmFsaWRKb3VybmFsRm9ybWF0AAAAAQAAAAAAAAAVSm91cm5hbEFscmVhZHlDbGFpbWVkAAAAAAAAAwAAAAAAAAATWmVyb1Njb3JlTm90QWxsb3dlZAAAAAAEAAAAAAAAABBTY29yZU5vdEltcHJvdmVkAAAABQAAAAAAAAAOQ29udHJhY3RQYXVzZWQAAAAAAAYAAAAAAAAADVNlZWROb3RBY3RpdmUAAAAAAAAH",
+        "AAAAAQAAAAAAAAAAAAAAC0N1cnJlbnRTZWVkAAAAAAIAAAAAAAAABHNlZWQAAAAEAAAAAAAAAAdzZWVkX2lkAAAAAAQ=",
+        "AAAABQAAAAAAAAAAAAAADlNjb3JlU3VibWl0dGVkAAAAAAABAAAAD3Njb3JlX3N1Ym1pdHRlZAAAAAAIAAAAAAAAAAdzZWVkX2lkAAAAAAQAAAAAAAAAAAAAAARzZWVkAAAABAAAAAAAAAAAAAAAC2ZyYW1lX2NvdW50AAAAAAQAAAAAAAAAAAAAAAtmaW5hbF9zY29yZQAAAAAEAAAAAAAAAAAAAAAIY2xhaW1hbnQAAAATAAAAAAAAAAAAAAANcHJldmlvdXNfYmVzdAAAAAAAAAQAAAAAAAAAAAAAAAhuZXdfYmVzdAAAAAQAAAAAAAAAAAAAAAxtaW50ZWRfZGVsdGEAAAAEAAAAAAAAAAI=",
+        "AAAAAAAAADBBZG1pbjogdXBncmFkZSB0aGlzIGNvbnRyYWN0IHRvIGEgbmV3IHdhc20gaGFzaC4AAAAHdXBncmFkZQAAAAABAAAAAAAAAA1uZXdfd2FzbV9oYXNoAAAAAAAD7gAAACAAAAAA",
+        "AAAAAAAAAEVSZWFkIHRoZSBjdXJyZW50bHkgY29uZmlndXJlZCBpbWFnZSBJRCB1c2VkIGZvciByZWNlaXB0IHZlcmlmaWNhdGlvbi4AAAAAAAAIaW1hZ2VfaWQAAAAAAAAAAQAAA+4AAAAg",
+        "AAAAAAAAADJSZWFkIHRoZSBjb25maWd1cmVkIHJld2FyZCB0b2tlbiBjb250cmFjdCBhZGRyZXNzLgAAAAAACHRva2VuX2lkAAAAAAAAAAEAAAAT",
+        "AAAAAAAAADZSZWFkIHRoZSBjb25maWd1cmVkIFJJU0MgWmVybyByb3V0ZXIgY29udHJhY3QgYWRkcmVzcy4AAAAAAAlyb3V0ZXJfaWQAAAAAAAAAAAAAAQAAABM=",
         "AAAAAAAAABtBZG1pbjogdHJhbnNmZXIgYWRtaW4gcm9sZS4AAAAACXNldF9hZG1pbgAAAAAAAAEAAAAAAAAACW5ld19hZG1pbgAAAAAAABMAAAAA",
-        "AAAAAAAAAChSZWFkIGEgY2xhaW1hbnQncyBiZXN0IHNjb3JlIGZvciBhIHNlZWQuAAAACmJlc3Rfc2NvcmUAAAAAAAIAAAAAAAAACGNsYWltYW50AAAAEwAAAAAAAAAEc2VlZAAAAAQAAAABAAAABA==",
-        "AAAAAAAAADhDaGVjayB3aGV0aGVyIGEgam91cm5hbCBkaWdlc3QgaGFzIGFscmVhZHkgYmVlbiBjbGFpbWVkLgAAAAppc19jbGFpbWVkAAAAAAABAAAAAAAAAA5qb3VybmFsX2RpZ2VzdAAAAAAD7gAAACAAAAABAAAAAQ==",
-        "AAAAAAAAAB9SZWFkIHRoZSBleHBlY3RlZCBydWxlcyBkaWdlc3QuAAAAAAxydWxlc19kaWdlc3QAAAAAAAAAAQAAAAQ=",
+        "AAAAAAAAAF9SZWFkIGEgY2xhaW1hbnQncyBiZXN0IHNjb3JlIGZvciBhIHNwZWNpZmljIGBzZWVkX2lkYC4KClJldHVybnMgYDBgIHdoZW4gbm8gcHJpb3Igc2NvcmUgZXhpc3RzLgAAAAAKYmVzdF9zY29yZQAAAAAAAgAAAAAAAAAIY2xhaW1hbnQAAAATAAAAAAAAAAdzZWVkX2lkAAAAAAQAAAABAAAABA==",
+        "AAAAAAAAAKlDaGVjayB3aGV0aGVyIGEgam91cm5hbCBkaWdlc3QgaGFzIGFscmVhZHkgYmVlbiBjbGFpbWVkLgoKQXJndW1lbnRzOgotIGBlbnZgOiBTb3JvYmFuIGV4ZWN1dGlvbiBlbnZpcm9ubWVudC4KLSBgam91cm5hbF9kaWdlc3RgOiBTSEEtMjU2IGRpZ2VzdCBvZiB0aGUgcmF3IGpvdXJuYWwgYnl0ZXMuAAAAAAAACmlzX2NsYWltZWQAAAAAAAEAAAAAAAAADmpvdXJuYWxfZGlnZXN0AAAAAAPuAAAAIAAAAAEAAAAB",
+        "AAAAAAAAACpBZG1pbjogcGF1c2Ugb3IgdW5wYXVzZSBzY29yZSBzdWJtaXNzaW9ucy4AAAAAAApzZXRfcGF1c2VkAAAAAAABAAAAAAAAAAZwYXVzZWQAAAAAAAEAAAAA",
+        "AAAAAAAAAJlSZXR1cm4gdGhlIGN1cnJlbnQgd2luZG93J3Mgc2VlZCwgbWF0ZXJpYWxpemluZyBpdCBvbiBmaXJzdCBjYWxsIHBlciB3aW5kb3cuCgpUaGlzIG1ldGhvZCB3cml0ZXMgb25seSBvbmUgZGV0ZXJtaW5pc3RpYyBrZXk6CmBTZWVkQnlJZChzZWVkX2lkKSAtPiBzZWVkYC4AAAAAAAAMY3VycmVudF9zZWVkAAAAAAAAAAEAAAfQAAAAC0N1cnJlbnRTZWVkAA==",
+        "AAAAAAAAADpSZWFkIHRoZSBoYXJkLWNvZGVkIHJ1bGVzIGRpZ2VzdCBmb3IgQVNUNCB2ZXJpZmllciBwb2xpY3kuAAAAAAAMcnVsZXNfZGlnZXN0AAAAAAAAAAEAAAAE",
         "AAAAAAAAADJBZG1pbjogdXBkYXRlIHRoZSBpbWFnZSBJRCAoZm9yIHByb2dyYW0gdXBncmFkZXMpLgAAAAAADHNldF9pbWFnZV9pZAAAAAEAAAAAAAAADG5ld19pbWFnZV9pZAAAA+4AAAAgAAAAAA==",
-        "AAAAAAAAASxWZXJpZnkgYSBSSVNDIFplcm8gcHJvb2YgYW5kIG1pbnQgc2NvcmUgdG9rZW5zIHRvIHRoZSBjbGFpbWFudCBhZGRyZXNzLgoKLSBgc2VhbGA6IHZhcmlhYmxlLWxlbmd0aCBwcm9vZiBzZWFsIGJ5dGVzCi0gYGpvdXJuYWxfcmF3YDogcmF3IDI0LWJ5dGUgam91cm5hbCBieXRlcyAoNiDDlyB1MzIgTEUpCi0gYGNsYWltYW50YDogcmVjaXBpZW50IGFkZHJlc3MgZm9yIHRva2VuIG1pbnRpbmcgYW5kIGJlc3Qtc2NvcmUgdHJhY2tpbmcKClJldHVybnMgdGhlIGNsYWltYW50J3MgbmV3IGJlc3Qgc2NvcmUgZm9yIHRoaXMgc2VlZC4AAAAMc3VibWl0X3Njb3JlAAAAAwAAAAAAAAAEc2VhbAAAAA4AAAAAAAAAC2pvdXJuYWxfcmF3AAAAAA4AAAAAAAAACGNsYWltYW50AAAAEwAAAAEAAAPpAAAABAAAB9AAAAAKU2NvcmVFcnJvcgAA",
-        "AAAAAAAAAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAQAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAJcm91dGVyX2lkAAAAAAAAEwAAAAAAAAAIaW1hZ2VfaWQAAAPuAAAAIAAAAAAAAAAIdG9rZW5faWQAAAATAAAAAA==" ]),
+        "AAAAAAAAACBBZG1pbjogdXBkYXRlIHRoZSB0b2tlbiBhZGRyZXNzLgAAAAxzZXRfdG9rZW5faWQAAAABAAAAAAAAAAxuZXdfdG9rZW5faWQAAAATAAAAAA==",
+        "AAAAAAAAAkdWZXJpZnkgYSBSSVNDIFplcm8gcHJvb2YgYW5kIG1pbnQgS0FMSUVOIHRva2Vucy4KCi0gYHNlYWxgOiB2YXJpYWJsZS1sZW5ndGggcHJvb2Ygc2VhbCBieXRlcwotIGBqb3VybmFsX3Jhd2A6IHJhdyA0OS1ieXRlIGpvdXJuYWwgYnl0ZXM6Ci0gNCB4IHUzMiBMRSBmaWVsZHMgKGBzZWVkX2lkYCwgYHNlZWRgLCBgZnJhbWVfY291bnRgLCBgZmluYWxfc2NvcmVgKQotIGNsYWltYW50IHBheWxvYWQgKGtpbmQgKyAzMi1ieXRlIGlkKQoKUmV0dXJucyB0aGUgY2xhaW1hbnQncyBuZXcgYmVzdCBzY29yZSBmb3IgdGhpcyBgc2VlZF9pZGAuCgpFcnJvcnM6Ci0gYENvbnRyYWN0UGF1c2VkYCBpZiBzdWJtaXNzaW9ucyBhcmUgZGlzYWJsZWQuCi0gYEludmFsaWRKb3VybmFsRm9ybWF0YCBmb3IgbWFsZm9ybWVkIGpvdXJuYWwgZGF0YS4KLSBgU2VlZE5vdEFjdGl2ZWAgaWYgdGhlIGAoc2VlZF9pZCwgc2VlZClgIHBhaXIgaXMgbm90IGFjdGl2ZS4KLSBgSm91cm5hbEFscmVhZHlDbGFpbWVkYCBvbiByZXBsYXkuCi0gYFplcm9TY29yZU5vdEFsbG93ZWRgIG9yIGBTY29yZU5vdEltcHJvdmVkYCBmb3IgcG9saWN5IHZpb2xhdGlvbnMuAAAAAAxzdWJtaXRfc2NvcmUAAAACAAAAAAAAAARzZWFsAAAADgAAAAAAAAALam91cm5hbF9yYXcAAAAADgAAAAEAAAPpAAAABAAAB9AAAAAKU2NvcmVFcnJvcgAA",
+        "AAAAAAAAAIVWZXJpZnkgYSBSSVNDIFplcm8gcHJvb2Ygd2l0aG91dCBtaW50aW5nIHJld2FyZHMgb3IgbXV0YXRpbmcgY2xhaW0gc3RhdGUuCgpSZXR1cm5zIHRoZSBgZmluYWxfc2NvcmVgIGNhcnJpZWQgYnkgdGhlIHZlcmlmaWVkIGpvdXJuYWwuAAAAAAAADHZlcmlmeV9zY29yZQAAAAIAAAAAAAAABHNlYWwAAAAOAAAAAAAAAAtqb3VybmFsX3JhdwAAAAAOAAAAAQAAA+kAAAAEAAAH0AAAAApTY29yZUVycm9yAAA=",
+        "AAAAAAAAAX1Jbml0aWFsaXplIGltbXV0YWJsZSBhbmQgbXV0YWJsZSBjb25maWd1cmF0aW9uIGZvciB0aGUgY29udHJhY3QgaW5zdGFuY2UuCgpBcmd1bWVudHM6Ci0gYGVudmA6IFNvcm9iYW4gZXhlY3V0aW9uIGVudmlyb25tZW50LgotIGBhZG1pbmA6IEFkZHJlc3MgYXV0aG9yaXplZCBmb3IgYWRtaW4tb25seSBtZXRob2RzLgotIGByb3V0ZXJfaWRgOiBSSVNDIFplcm8gcm91dGVyIGNvbnRyYWN0IGFkZHJlc3MgdXNlZCBmb3IgcHJvb2YgdmVyaWZpY2F0aW9uLgotIGBpbWFnZV9pZGA6IEV4cGVjdGVkIFJJU0MgWmVybyBpbWFnZSBJRCBmb3IgdmFsaWQgcmVjZWlwdHMuCi0gYHRva2VuX2lkYDogU3RlbGxhciBhc3NldCBjb250cmFjdCB1c2VkIGZvciByZXdhcmQgbWludGluZy4AAAAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAQAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAJcm91dGVyX2lkAAAAAAAAEwAAAAAAAAAIaW1hZ2VfaWQAAAPuAAAAIAAAAAAAAAAIdG9rZW5faWQAAAATAAAAAA==",
+        "AAAAAAAAACtBZG1pbjogdXBkYXRlIHRoZSBSSVNDIFplcm8gcm91dGVyIGFkZHJlc3MuAAAAAA1zZXRfcm91dGVyX2lkAAAAAAAAAQAAAAAAAAANbmV3X3JvdXRlcl9pZAAAAAAAABMAAAAA" ]),
       options
     )
   }
   public readonly fromJSON = {
-    image_id: this.txFromJSON<Buffer>,
+    upgrade: this.txFromJSON<null>,
+        image_id: this.txFromJSON<Buffer>,
         token_id: this.txFromJSON<string>,
         router_id: this.txFromJSON<string>,
         set_admin: this.txFromJSON<null>,
         best_score: this.txFromJSON<u32>,
         is_claimed: this.txFromJSON<boolean>,
+        set_paused: this.txFromJSON<null>,
+        current_seed: this.txFromJSON<CurrentSeed>,
         rules_digest: this.txFromJSON<u32>,
         set_image_id: this.txFromJSON<null>,
-        submit_score: this.txFromJSON<Result<u32>>
+        set_token_id: this.txFromJSON<null>,
+        submit_score: this.txFromJSON<Result<u32>>,
+        verify_score: this.txFromJSON<Result<u32>>,
+        set_router_id: this.txFromJSON<null>
   }
 }

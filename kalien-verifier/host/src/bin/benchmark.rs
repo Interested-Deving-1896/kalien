@@ -2,7 +2,8 @@ use std::{env, fs, path::PathBuf, process};
 
 use anyhow::{anyhow, Context, Result};
 use asteroids_verifier_core::{
-    constants::MAX_FRAMES_DEFAULT, tape::parse_tape, VerificationJournal,
+    constants::MAX_FRAMES_DEFAULT, decode_journal_raw, encode_claimant_for_journal,
+    tape::parse_tape, VerificationJournal,
 };
 use host::SEGMENT_LIMIT_PO2_DEFAULT;
 use methods::VERIFY_TAPE_ELF;
@@ -20,17 +21,35 @@ struct Cli {
 #[derive(Debug, Serialize)]
 struct BenchmarkJson {
     seed: u32,
+    seed_id: u32,
     frame_count: u32,
     final_score: u32,
-    final_rng_state: u32,
-    tape_checksum: u32,
-    rules_digest: u32,
+    claimant: String,
     segments: u64,
     total_cycles: u64,
     cycles_per_frame: u64,
 }
 
+/// Pad a byte vector to a 4-byte boundary for guest `read_slice` alignment.
+#[inline]
+fn pad_to_word_boundary(mut data: Vec<u8>) -> Vec<u8> {
+    let pad_len = (4 - (data.len() & 3)) & 3;
+    if pad_len != 0 {
+        data.resize(data.len() + pad_len, 0);
+    }
+    data
+}
+
 impl Cli {
+    /// Parse benchmark CLI arguments.
+    ///
+    /// Required:
+    /// - `--tape <path>`
+    ///
+    /// Optional:
+    /// - `--max-frames`
+    /// - `--segment-limit-po2`
+    /// - `--json-out`
     fn parse() -> Result<Self> {
         let mut args = env::args().skip(1);
         let mut tape_path: Option<PathBuf> = None;
@@ -88,6 +107,10 @@ impl Cli {
     }
 }
 
+/// Dev-mode benchmark entrypoint for measuring guest execution cycles.
+///
+/// This runs the guest executor (not prover), validates decoded journal output against
+/// parsed tape expectations, and emits a cycle summary (and optional JSON).
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
@@ -102,24 +125,34 @@ fn main() -> Result<()> {
 
     let tape_bytes = fs::read(&cli.tape_path)
         .with_context(|| format!("failed to read tape: {}", cli.tape_path.display()))?;
-    let (expected_seed, expected_frame_count, expected_score, expected_rng_state) = {
+    let (expected_seed, expected_frame_count, expected_score) = {
         let tape = parse_tape(&tape_bytes, cli.max_frames).context("failed to parse tape")?;
         (
             tape.header.seed,
             tape.header.frame_count,
             tape.footer.final_score,
-            tape.footer.final_rng_state,
         )
     };
 
     let tape_len = tape_bytes.len() as u32;
-    let mut padded_tape = tape_bytes;
-    while padded_tape.len() % 4 != 0 {
-        padded_tape.push(0);
-    }
+    let padded_tape = pad_to_word_boundary(tape_bytes);
+    let benchmark_claimant = env::var("BENCHMARK_CLAIMANT")
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or_else(|| "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF".to_string());
+    let benchmark_claimant = encode_claimant_for_journal(&benchmark_claimant).map_err(|err| {
+        anyhow!("BENCHMARK_CLAIMANT must be a valid Stellar G... or C... address: {err}")
+    })?;
+    let seed_id = env::var("BENCHMARK_SEED_ID")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(0);
 
     let mut env_builder = ExecutorEnv::builder();
     env_builder.write_slice(&cli.max_frames.to_le_bytes());
+    env_builder.write_slice(&seed_id.to_le_bytes());
+    env_builder.write_slice(&benchmark_claimant);
     env_builder.write_slice(&tape_len.to_le_bytes());
     env_builder.write_slice(&padded_tape);
     env_builder.segment_limit_po2(cli.segment_limit_po2);
@@ -130,26 +163,21 @@ fn main() -> Result<()> {
     let session = default_executor()
         .execute(env, VERIFY_TAPE_ELF)
         .context("failed executing guest")?;
-    let journal: VerificationJournal = session
-        .journal
-        .decode()
-        .context("failed decoding journal")?;
+    let journal: VerificationJournal =
+        decode_journal_raw(&session.journal.bytes).context("failed decoding journal")?;
 
     if journal.seed != expected_seed
         || journal.frame_count != expected_frame_count
         || journal.final_score != expected_score
-        || journal.final_rng_state != expected_rng_state
     {
         return Err(anyhow!(
-            "journal output mismatch: seed={:#x}/{:#x} frames={}/{} score={}/{} rng={:#x}/{:#x}",
+            "journal output mismatch: seed={:#x}/{:#x} frames={}/{} score={}/{}",
             journal.seed,
             expected_seed,
             journal.frame_count,
             expected_frame_count,
             journal.final_score,
             expected_score,
-            journal.final_rng_state,
-            expected_rng_state,
         ));
     }
 
@@ -164,11 +192,10 @@ fn main() -> Result<()> {
     if let Some(path) = cli.json_out.as_ref() {
         let summary = BenchmarkJson {
             seed: journal.seed,
+            seed_id: journal.seed_id,
             frame_count: journal.frame_count,
             final_score: journal.final_score,
-            final_rng_state: journal.final_rng_state,
-            tape_checksum: journal.tape_checksum,
-            rules_digest: journal.rules_digest,
+            claimant: journal.claimant.clone(),
             segments,
             total_cycles,
             cycles_per_frame,
@@ -181,11 +208,10 @@ fn main() -> Result<()> {
 
     println!("Benchmark complete.");
     println!("  Seed:          0x{:08x}", journal.seed);
+    println!("  Seed ID:       {}", journal.seed_id);
+    println!("  Claimant:      {}", journal.claimant);
     println!("  Frames:        {}", journal.frame_count);
     println!("  Final score:   {}", journal.final_score);
-    println!("  Final RNG:     0x{:08x}", journal.final_rng_state);
-    println!("  Tape checksum: 0x{:08x}", journal.tape_checksum);
-    println!("  Rules digest:  0x{:08x}", journal.rules_digest);
     println!("  Segments:      {}", segments);
     println!("  Total cycles:  {}", total_cycles);
     println!("  Cycles/frame:  {}", cycles_per_frame);

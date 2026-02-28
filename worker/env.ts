@@ -4,6 +4,7 @@ import type { ClaimQueueMessage, ProofQueueMessage } from "./types";
 export interface WorkerEnv {
   ASSETS: Fetcher;
   PROOF_QUEUE: Queue<ProofQueueMessage>;
+  VAST_QUEUE: Queue<ProofQueueMessage>;
   CLAIM_QUEUE: Queue<ClaimQueueMessage>;
   PROOF_COORDINATOR: DurableObjectNamespace<ProofCoordinatorDO>;
   PROOF_ARTIFACTS: R2Bucket;
@@ -44,5 +45,29 @@ export interface WorkerEnv {
   GALEXIE_RPC_BASE_URL?: string;
   GALEXIE_REQUEST_TIMEOUT_MS?: string;
   GALEXIE_SCORE_EVENTS_PATH?: string;
+  GALEXIE_DATALAKE_MAX_MISSING_FILES?: string;
   CLAIM_NETWORK_PASSPHRASE?: string;
+  // Boundless proving (alternative to PROVER_BASE_URL)
+  BOUNDLESS_RPC_URL?: string;
+  BOUNDLESS_PRIVATE_KEY?: string;
+  BOUNDLESS_IMAGE_URL?: string;
+  BOUNDLESS_IMAGE_ID?: string;
+  BOUNDLESS_MIN_PRICE_USD?: string;
+  BOUNDLESS_MAX_PRICE_USD?: string;
+  BOUNDLESS_POLL_INTERVAL_MS?: string;
+  BOUNDLESS_POLL_TIMEOUT_MS?: string;
+  // Auction shape
+  BOUNDLESS_FLAT_PERIOD_SEC?: string;
+  BOUNDLESS_RAMP_PERIOD_SEC?: string;
+  BOUNDLESS_LOCK_TIMEOUT_SEC?: string;
+  BOUNDLESS_TIMEOUT_SEC?: string;
+  // Optional overrides for non-default Boundless deployments
+  BOUNDLESS_CHAIN_ID?: string;
+  BOUNDLESS_MARKET_ADDRESS?: string;
+  BOUNDLESS_ORDER_STREAM_URL?: string;
+  BOUNDLESS_DEPLOYMENT_BLOCK?: string;
+  // IPFS (Pinata) — used by Boundless for stdin upload when inline exceeds order stream limits
+  PINATA_JWT?: string;
+  // Dev endpoint access — if set (and >= 16 chars), unlocks /dev/api/leaderboard/* behind Bearer auth
+  DEV_API_KEY?: string;
 }

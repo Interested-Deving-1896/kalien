@@ -1,3 +1,35 @@
+export type ProverBackend = "boundless" | "vast";
+
+export interface ProverAttempt {
+  index: number; // 0-based attempt index
+  backend: ProverBackend;
+  startedAt: string; // ISO timestamp
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  errorDetail: string | null; // Rich structured error (parity with ClaimAttempt)
+  errorCode: string | null; // VastAI error_code or Boundless error category
+  proverJobId: string | null;
+  statusUrl: string | null; // "boundless:{requestId}" or Vast.ai job URL
+  maxPriceUsd?: number | null; // Boundless: max price offered (USD)
+  actualCostUsd: number | null; // Boundless: actual settlement cost in USD
+  lockPriceWei?: string | null; // Boundless: lock price in wei (cached while locked, cleared after payment)
+  proverAddress: string | null; // Boundless: on-chain prover address from ProofDelivered event
+  fulfillmentTxHash: string | null; // Boundless: tx hash of the fulfillment
+  programCycles?: number | null; // Boundless: guest program cycles from indexer API
+  totalCycles?: number | null; // Boundless: total cycles (program + overhead) from indexer API
+}
+
+export interface ClaimAttempt {
+  index: number;
+  startedAt: string;
+  endedAt: string | null;
+  outcome: "in_progress" | "success" | "failed";
+  error: string | null;
+  errorDetail: string | null;
+  txHash: string | null;
+}
+
 export type ProofJobStatus =
   | "queued"
   | "dispatching"
@@ -18,9 +50,9 @@ export interface ClaimQueueMessage {
 
 export interface TapeMetadata {
   seed: number;
+  seedId: number;
   frameCount: number;
   finalScore: number;
-  finalRngState: number;
   checksum: number;
 }
 
@@ -31,12 +63,11 @@ export interface ProofTapeInfo {
 }
 
 export interface ProofJournal {
+  seed_id: number;
   seed: number;
   frame_count: number;
   final_score: number;
-  final_rng_state: number;
-  tape_checksum: number;
-  rules_digest: number;
+  claimant: string;
 }
 
 export interface ProofStats {
@@ -50,9 +81,20 @@ export interface ProofStats {
 export interface ProofResultSummary {
   elapsedMs: number;
   requestedReceiptKind: string;
-  producedReceiptKind: string | null;
+  producedReceiptKind: string;
   journal: ProofJournal;
   stats: ProofStats;
+}
+
+export interface ProofArtifactV4 {
+  version: "v4";
+  stored_at: string;
+  backend: ProverBackend;
+  seal_hex: string;
+  journal_raw_hex: string;
+  journal_digest_hex: string;
+  requested_receipt_kind: "groth16";
+  produced_receipt_kind: "groth16";
 }
 
 export interface ProofResultInfo {
@@ -74,7 +116,7 @@ export interface ProverTracking {
   segmentLimitPo2: number | null;
   lastPolledAt: string | null;
   pollingErrors: number;
-  recoveryAttempts: number;
+  ipfsCid?: string | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -99,6 +141,8 @@ export interface ProofJobRecord {
   tape: ProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
+  proverAttempts: ProverAttempt[];
+  claimAttempts: ClaimAttempt[];
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
@@ -120,9 +164,6 @@ export interface LeaderboardRunRecord {
   mintedDelta: number;
   seed: number;
   frameCount: number | null;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   completedAt: string;
   claimStatus: ClaimStatus;
   claimTxHash: string | null;
@@ -155,13 +196,9 @@ export interface LeaderboardEventRecord {
   seed: number;
   frameCount: number | null;
   finalScore: number;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   previousBest: number;
   newBest: number;
   mintedDelta: number;
-  journalDigest: string | null;
   txHash: string | null;
   eventIndex: number | null;
   ledger: number | null;
@@ -195,6 +232,8 @@ export interface PublicProofJob {
   tape: PublicProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
+  proverAttempts: ProverAttempt[];
+  claimAttempts: ClaimAttempt[];
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
@@ -232,7 +271,7 @@ export interface ProverJobResultEnvelope {
   proof: {
     journal: ProofJournal;
     requested_receipt_kind: string;
-    produced_receipt_kind?: string | null;
+    produced_receipt_kind: string;
     stats: ProofStats;
     receipt: unknown;
   };
@@ -266,12 +305,27 @@ export interface ProverErrorResponse {
 }
 
 export type ProverSubmitResult =
-  | { type: "success"; jobId: string; statusUrl: string; segmentLimitPo2: number }
+  | {
+      type: "success";
+      jobId: string;
+      statusUrl: string;
+      segmentLimitPo2: number;
+      ipfsCid?: string;
+      maxPriceUsd?: number;
+    }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };
 
+export interface ProverSuccessMetadata {
+  actualCostUsd: number | null;
+  proverAddress: string | null;
+  fulfillmentTxHash: string | null;
+  programCycles?: number | null;
+  totalCycles?: number | null;
+}
+
 export type ProverPollResult =
-  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running"> }
-  | { type: "success"; response: ProverGetJobResponse }
-  | { type: "retry"; message: string; clearProverJob?: boolean }
-  | { type: "fatal"; message: string };
+  | { type: "running"; status: Extract<ProverJobStatus, "queued" | "running">; locked?: boolean; lockPriceWei?: bigint }
+  | { type: "success"; summary: ProofResultSummary; artifact: ProofArtifactV4; metadata?: ProverSuccessMetadata }
+  | { type: "retry"; message: string; clearProverJob?: boolean; errorCode?: string; errorDetail?: string }
+  | { type: "fatal"; message: string; errorCode?: string; errorDetail?: string };

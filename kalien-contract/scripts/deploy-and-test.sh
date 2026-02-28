@@ -35,8 +35,8 @@ RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-deploy-${RUN_ID}"
 PLAYER_NAME="ast-player-${RUN_ID}"
 
-# State file for persistence across runs
-STATE_FILE="$CONTRACT_DIR/.testnet-state.env"
+# Shared state/env file (also loaded by _helpers.sh env chain)
+STATE_FILE="${KALIEN_CONTRACT_STATE_FILE:-$CONTRACT_ENV_FILE}"
 
 # Test counters
 PASSED=0
@@ -122,16 +122,63 @@ assert_fail() {
 }
 
 # ---------------------------------------------------------------------------
+# Seed helpers (for live seed_id + seed materialization)
+# ---------------------------------------------------------------------------
+
+u32_to_le_hex() {
+  local value="$1"
+  local be_hex
+  be_hex=$(printf '%08x' "$value")
+  echo "${be_hex:6:2}${be_hex:4:2}${be_hex:2:2}${be_hex:0:2}"
+}
+
+set_journal_seed_hex() {
+  local journal_hex="$1"
+  local seed="$2"
+  local seed_id="${3:-$CURRENT_SEED_ID}"
+  local seed_le
+  local seed_id_le
+  seed_le=$(u32_to_le_hex "$seed")
+  seed_id_le=$(u32_to_le_hex "$seed_id")
+  # AST4 journal layout starts with:
+  # [0..3] seed_id (u32 LE), [4..7] seed (u32 LE)
+  echo "${seed_id_le}${seed_le}${journal_hex:16}"
+}
+
+materialize_current_seed() {
+  local contract_id="$1"
+  local current_seed_json seed seed_id
+
+  current_seed_json=$(stellar contract invoke -q \
+    --id "$contract_id" \
+    --source "$DEPLOYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    current_seed 2>&1) || return 1
+
+  seed=$(echo "$current_seed_json" | jq -r '.seed // empty' 2>/dev/null || true)
+  seed_id=$(echo "$current_seed_json" | jq -r '.seed_id // empty' 2>/dev/null || true)
+
+  if [[ -z "$seed" || -z "$seed_id" ]]; then
+    err "failed to parse current_seed response: $current_seed_json"
+    return 1
+  fi
+
+  CURRENT_SEED="$seed"
+  CURRENT_SEED_ID="$seed_id"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # State persistence
 # ---------------------------------------------------------------------------
 save_state() {
-  cat > "$STATE_FILE" << EOF
-SCORE_CONTRACT_ID=$SCORE_CONTRACT_ID
-TOKEN_ID=$TOKEN_ID
-DEPLOYER_NAME=$DEPLOYER_NAME
-PLAYER_NAME=$PLAYER_NAME
-IMAGE_ID_HEX=$IMAGE_ID_HEX
-EOF
+  save_state_vars "$STATE_FILE" \
+    SCORE_CONTRACT_ID "$SCORE_CONTRACT_ID" \
+    TOKEN_ID "$TOKEN_ID" \
+    DEPLOYER_NAME "$DEPLOYER_NAME" \
+    PLAYER_NAME "$PLAYER_NAME" \
+    IMAGE_ID_HEX "$IMAGE_ID_HEX"
 }
 
 # ---------------------------------------------------------------------------
@@ -154,15 +201,15 @@ deploy() {
   read_image_id
   info "Image ID: $IMAGE_ID_HEX"
 
-  # Deploy SAC token (SCORE token)
-  info "Deploying SCORE token (Stellar Asset Contract)..."
+  # Deploy SAC token (KALIEN token)
+  info "Deploying KALIEN token (Stellar Asset Contract)..."
   local token_output
   token_output=$(stellar contract asset deploy \
-    --asset "SCORE:$DEPLOYER_ADDR" \
+    --asset "KALIEN:$DEPLOYER_ADDR" \
     --source "$DEPLOYER_NAME" \
     --network "$NETWORK" 2>&1) || {
     token_output=$(stellar contract id asset \
-      --asset "SCORE:$DEPLOYER_ADDR" \
+      --asset "KALIEN:$DEPLOYER_ADDR" \
       --network "$NETWORK" 2>&1)
   }
   TOKEN_ID=$(echo "$token_output" | grep -oE '^C[A-Z0-9]{55}$' | tail -1)
@@ -195,11 +242,11 @@ deploy() {
     --new_admin "$SCORE_CONTRACT_ID" >/dev/null 2>&1
   ok "Token admin transferred"
 
-  # Player needs a trustline to hold the SCORE token
-  info "Creating SCORE trustline for player..."
+  # Player needs a trustline to hold the KALIEN token
+  info "Creating KALIEN trustline for player..."
   stellar tx new change-trust \
     --source "$PLAYER_NAME" \
-    --line "SCORE:$DEPLOYER_ADDR" \
+    --line "KALIEN:$DEPLOYER_ADDR" \
     --network "$NETWORK" >/dev/null 2>&1
   ok "Player trustline created"
 
@@ -260,7 +307,7 @@ test_read_functions() {
     --network "$NETWORK" \
     -- \
     rules_digest 2>&1) || true
-  assert_eq "rules_digest matches AST3" "$((0x41535433))" "$rules_digest_result"
+  assert_eq "rules_digest matches AST4" "$((0x41535434))" "$rules_digest_result"
 }
 
 # ---------------------------------------------------------------------------
@@ -274,16 +321,29 @@ test_submit_fixture() {
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
 
   if [[ ! -f "$journal_file" ]]; then
-    warn "SKIP: fixture file not found: $journal_file"
+    err "fixture file not found: $journal_file"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "$label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
+
+  if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize live seed for $label"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
+  info "Materialized live seed $CURRENT_SEED at seed_id $CURRENT_SEED_ID"
+  journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -308,7 +368,6 @@ test_submit_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) || {
     err "submit_score failed for $label: $result"
     TOTAL=$((TOTAL + 1))
@@ -341,7 +400,6 @@ test_submit_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && dup_exit=0 || dup_exit=$?
   assert_fail "duplicate $label rejected" "$dup_exit"
 }
@@ -357,16 +415,29 @@ test_reject_fixture() {
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
 
   if [[ ! -f "$journal_file" ]]; then
-    warn "SKIP: fixture file not found: $journal_file"
+    err "fixture file not found: $journal_file"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "$label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
+
+  if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize live seed for rejected fixture $label"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
+  info "Materialized live seed $CURRENT_SEED at seed_id $CURRENT_SEED_ID"
+  journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -387,7 +458,6 @@ test_reject_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "$label rejected" "$exit_code"
@@ -402,6 +472,48 @@ test_reject_fixture() {
     --journal_digest "${journal_digest_hex}" \
     2>&1) || true
   assert_eq "is_claimed after rejected $label" "false" "$claimed"
+}
+
+# ---------------------------------------------------------------------------
+# Test: Reject a synthetic zero-score journal via mock verifier
+# ---------------------------------------------------------------------------
+test_reject_zero_score() {
+  info "--- Test: reject synthetic zero-score journal ---"
+
+  # Build a 49-byte AST4 journal with score=0:
+  # seed_id(u32 LE) + seed(u32 LE) + frames + score + claimant(kind=0 + 32-byte payload).
+  # seed_id=0 seed=0xdeadbeef frames=100 score=0
+  local claimant_hex
+  claimant_hex=$(printf '00%064x' 0)
+  local journal_hex="00000000efbeadde6400000000000000${claimant_hex}"
+  if ! materialize_current_seed "$SCORE_CONTRACT_ID"; then
+    err "failed to materialize live seed for zero-score rejection test"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
+    return
+  fi
+  info "Materialized live seed $CURRENT_SEED at seed_id $CURRENT_SEED_ID"
+  journal_hex=$(set_journal_seed_hex "$journal_hex" "$CURRENT_SEED")
+  local journal_digest_hex
+  journal_digest_hex=$(sha256_of_hex "$journal_hex")
+
+  info "Generating mock seal..."
+  local seal_hex
+  seal_hex=$(mock_seal "$IMAGE_ID_HEX" "$journal_digest_hex")
+
+  info "Submitting proof (expect rejection)..."
+  local result
+  result=$(stellar contract invoke -q \
+    --id "$SCORE_CONTRACT_ID" \
+    --source "$PLAYER_NAME" \
+    --network "$NETWORK" \
+    -- \
+    submit_score \
+    --seal "$seal_hex" \
+    --journal_raw "$journal_hex" \
+    2>&1) && exit_code=0 || exit_code=$?
+
+  assert_fail "zero-score journal rejected" "$exit_code"
 }
 
 # ---------------------------------------------------------------------------
@@ -516,14 +628,16 @@ deploy_groth16() {
 test_submit_groth16_fixture() {
   local label="$1" fixture_prefix="$2" expected_score="$3"
 
-  info "--- Test: submit Groth16 $label (expected score: $expected_score) ---"
+  info "--- Test: verify Groth16 $label (expected score: $expected_score) ---"
 
   local seal_file="$FIXTURES_DIR/${fixture_prefix}.seal"
   local journal_file="$FIXTURES_DIR/${fixture_prefix}.journal_raw"
 
   for f in "$seal_file" "$journal_file"; do
     if [[ ! -f "$f" ]]; then
-      warn "SKIP: fixture file not found: $f"
+      err "fixture file not found: $f"
+      TOTAL=$((TOTAL + 1))
+      FAILED=$((FAILED + 1))
       return
     fi
   done
@@ -531,65 +645,34 @@ test_submit_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "Groth16 $label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
-  PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
-
-  local journal_digest_hex
-  journal_digest_hex=$(sha256_of_hex "$journal_hex")
-
   info "Seal: ${#seal_hex} hex chars ($(( ${#seal_hex} / 2 )) bytes)"
 
-  # Submit score using real Groth16 seal (player signs via --source)
-  info "Submitting Groth16 proof..."
+  # Verify proof with real Groth16 seal from fixture.
+  info "Verifying Groth16 proof..."
   local result
   result=$(stellar contract invoke -q \
     --id "$GRF1_SCORE_CONTRACT_ID" \
-    --source "$PLAYER_NAME" \
+    --source "$DEPLOYER_NAME" \
     --network "$NETWORK" \
     -- \
-    submit_score \
+    verify_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) || {
-    err "submit_score (Groth16) failed for $label: $result"
+    err "verify_score (Groth16) failed for $label: $result"
     TOTAL=$((TOTAL + 1))
     FAILED=$((FAILED + 1))
     return
   }
 
-  assert_eq "Groth16 submit_score returned score" "$expected_score" "$result"
-
-  # Check is_claimed
-  local claimed
-  claimed=$(stellar contract invoke -q \
-    --id "$GRF1_SCORE_CONTRACT_ID" \
-    --source "$DEPLOYER_NAME" \
-    --network "$NETWORK" \
-    -- \
-    is_claimed \
-    --journal_digest "${journal_digest_hex}" \
-    2>&1) || true
-  assert_eq "Groth16 is_claimed after submit" "true" "$claimed"
-
-  # Test duplicate rejection
-  info "Testing Groth16 duplicate rejection..."
-  local dup_result
-  dup_result=$(stellar contract invoke -q \
-    --id "$GRF1_SCORE_CONTRACT_ID" \
-    --source "$PLAYER_NAME" \
-    --network "$NETWORK" \
-    -- \
-    submit_score \
-    --seal "$seal_hex" \
-    --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
-    2>&1) && dup_exit=0 || dup_exit=$?
-  assert_fail "Groth16 duplicate $label rejected" "$dup_exit"
+  assert_eq "Groth16 verify_score returned score" "$expected_score" "$result"
 }
 
 # ---------------------------------------------------------------------------
@@ -605,7 +688,9 @@ test_reject_groth16_fixture() {
 
   for f in "$seal_file" "$journal_file"; do
     if [[ ! -f "$f" ]]; then
-      warn "SKIP: fixture file not found: $f"
+      err "fixture file not found: $f"
+      TOTAL=$((TOTAL + 1))
+      FAILED=$((FAILED + 1))
       return
     fi
   done
@@ -613,8 +698,10 @@ test_reject_groth16_fixture() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
-    warn "SKIP: Groth16 $label fixture is not AST3-compatible in forward-only mode"
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "Groth16 $label fixture is not the expected 49-byte compact journal format"
+    TOTAL=$((TOTAL + 1))
+    FAILED=$((FAILED + 1))
     return
   fi
 
@@ -632,7 +719,6 @@ test_reject_groth16_fixture() {
     submit_score \
     --seal "$seal_hex" \
     --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR" \
     2>&1) && exit_code=0 || exit_code=$?
 
   assert_fail "Groth16 $label rejected" "$exit_code"
@@ -687,19 +773,26 @@ test_unclaimed_digest
 
 echo ""
 
-# 3. Reject zero-score fixture, then submit positive-score fixtures via mock verifier
-test_reject_fixture "short tape" "proof-short-groth16"
+# 3. Reject synthetic zero-score journal via mock verifier
+test_reject_zero_score
 echo ""
+
+# 4. Submit positive-score fixtures via mock verifier
+# medium first (score 90, seed 0xDEADBEEF), then short (score 1030, same seed — mints delta 940)
 test_submit_fixture "medium tape"    "proof-medium-groth16"    90
+echo ""
+test_submit_fixture "short tape"     "proof-short-groth16"     1030
 echo ""
 test_submit_fixture "real game tape" "proof-real-game-groth16" 32860
 
 echo ""
 
-# 4. Check cumulative token balance (90 + 32860 = 32950)
-test_cumulative_balance "32950"
+# 5. Check cumulative token balance.
+# All mock submissions are rewritten to the same live seed, so minting is:
+# 90 + (1030-90) + (32860-1030) = 32860, scaled by 10^7.
+test_cumulative_balance "328600000000"
 
-# 5. Groth16 tests (if proof-mode=all)
+# 6. Groth16 tests (if proof-mode=all)
 if [[ "$PROOF_MODE" == "all" ]]; then
   echo ""
   echo "================================================"
@@ -709,16 +802,18 @@ if [[ "$PROOF_MODE" == "all" ]]; then
 
   deploy_groth16
 
-  test_reject_groth16_fixture "short tape" "proof-short-groth16"
-  echo ""
+  # medium first (same seed as short, lower score — must come first)
   test_submit_groth16_fixture "medium tape"    "proof-medium-groth16"    90
+  echo ""
+  test_submit_groth16_fixture "short tape"     "proof-short-groth16"     1030
   echo ""
   test_submit_groth16_fixture "real game tape" "proof-real-game-groth16" 32860
 
   echo ""
 
-  # Check Groth16 cumulative token balance
-  info "--- Test: Groth16 cumulative token balance ---"
+  # Groth16 fixture checks are verify-only because fixture seeds are static and
+  # not guaranteed to match the live indexed seed_id.
+  info "--- Test: Groth16 verify-only keeps token balance unchanged ---"
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
   grf1_balance=$(stellar contract invoke -q \
     --id "$GRF1_TOKEN_ID" \
@@ -729,7 +824,7 @@ if [[ "$PROOF_MODE" == "all" ]]; then
     --id "$PLAYER_ADDR" \
     2>&1) || true
   grf1_balance=$(echo "$grf1_balance" | tr -d '"')
-  assert_eq "Groth16 cumulative token balance" "32950" "$grf1_balance"
+  assert_eq "Groth16 token balance unchanged" "0" "$grf1_balance"
 fi
 
 # ---------------------------------------------------------------------------

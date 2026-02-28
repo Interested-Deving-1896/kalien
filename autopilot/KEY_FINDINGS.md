@@ -1,6 +1,6 @@
 # Key Findings
 
-This file was reset on 2026-02-11 after retiring legacy AST0 run data.
+This file was reset on 2026-02-27 after retiring legacy AST3 run data.
 
 ## Enduring Engineering Findings
 
@@ -12,6 +12,6 @@ This file was reset on 2026-02-11 after retiring legacy AST0 run data.
 
 ## Current Research Direction
 
-- Re-benchmark active roster under AST3 from a clean baseline.
-- Rebuild champion registry and keep-lists from AST3-only evidence.
+- Re-benchmark active roster under AST4 from a clean baseline.
+- Rebuild champion registry and keep-lists from AST4-only evidence.
 - Continue profile tuning/evolution loops using current verifier-compatible outputs.

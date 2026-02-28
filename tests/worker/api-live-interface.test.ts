@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 import {
+  HEALTH_CACHE_CONTROL,
   LEADERBOARD_CACHE_CONTROL,
   LEADERBOARD_PRIVATE_CACHE_CONTROL,
 } from "../../worker/cache-control";
@@ -11,6 +12,7 @@ const EXAMPLE_GENERATED_AT = "2026-02-14T00:00:00.000Z";
 mock.module("../../worker/queue/consumer", () => ({
   handleDlqBatch: async () => undefined,
   handleQueueBatch: async () => undefined,
+  handleVastQueueBatch: async () => undefined,
   handleClaimQueueBatch: async () => undefined,
   handleClaimDlqBatch: async () => undefined,
 }));
@@ -54,6 +56,27 @@ mock.module("../../worker/leaderboard-sync", () => ({
   }),
 }));
 
+mock.module("../../worker/leaderboard-profile-auth", () => ({
+  assertCredentialBelongsToClaimantContract: async () => undefined,
+  encodeRawP256PublicKeyBase64UrlToCose: () => new Uint8Array([1]),
+  fetchCredentialPublicKeyFromChain: async () => "mock-public-key",
+  LeaderboardCredentialBindingError: class LeaderboardCredentialBindingError extends Error {
+    statusCode = 400;
+  },
+}));
+
+mock.module("@simplewebauthn/server", () => ({
+  generateAuthenticationOptions: async () => ({
+    challenge: "mock-challenge",
+  }),
+  verifyAuthenticationResponse: async () => ({
+    verified: false,
+    authenticationInfo: {
+      newCounter: 0,
+    },
+  }),
+}));
+
 mock.module("../../worker/leaderboard-store", () => ({
   countLeaderboardEvents: async () => 1,
   createLeaderboardProfileAuthChallenge: async () => undefined,
@@ -87,9 +110,6 @@ mock.module("../../worker/leaderboard-store", () => ({
         mintedDelta: 1337,
         seed: 42,
         frameCount: 1200,
-        finalRngState: 99,
-        tapeChecksum: 0xdead,
-        rulesDigest: 0x4153_5433,
         completedAt: EXAMPLE_GENERATED_AT,
         claimStatus: "succeeded",
         claimTxHash: "tx-1",
@@ -111,9 +131,6 @@ mock.module("../../worker/leaderboard-store", () => ({
             mintedDelta: 1337,
             seed: 42,
             frameCount: 1200,
-            finalRngState: 99,
-            tapeChecksum: 0xdead,
-            rulesDigest: 0x4153_5433,
             completedAt: EXAMPLE_GENERATED_AT,
             claimStatus: "succeeded",
             claimTxHash: "tx-1",
@@ -149,7 +166,15 @@ mock.module("../../worker/leaderboard-store", () => ({
   updateLeaderboardProfileCredentialCounter: async () => undefined,
   upsertLeaderboardEvents: async () => ({ inserted: 0, updated: 0 }),
   upsertLeaderboardProfile: async () => null,
-  upsertLeaderboardProfileCredential: async () => null,
+  upsertLeaderboardProfileCredential: async () => ({
+    claimantAddress: VALID_CLAIMANT_CONTRACT,
+    credentialId: "credential-1",
+    publicKey: "mock-public-key",
+    counter: 0,
+    transports: null,
+    createdAt: EXAMPLE_GENERATED_AT,
+    updatedAt: EXAMPLE_GENERATED_AT,
+  }),
   upsertLeaderboardProfiles: async () => 0,
 }));
 
@@ -180,6 +205,9 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     PROOF_QUEUE: {
       send: async () => undefined,
     } as Queue<unknown>,
+    VAST_QUEUE: {
+      send: async () => undefined,
+    } as Queue<unknown>,
     CLAIM_QUEUE: {
       send: async () => undefined,
     } as Queue<unknown>,
@@ -187,7 +215,21 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       idFromName: () => "coordinator-id" as unknown as DurableObjectId,
       get: () =>
         ({
-          getActiveJob: async () => null,
+          getActiveJobsSummary: async () => ({
+            total: 0,
+            boundless: 0,
+            vast: 0,
+            waitingDispatch: 0,
+            oldestActiveAgeSec: null,
+            oldestWaitingDispatchAgeSec: null,
+            statusCounts: {
+              queued: 0,
+              dispatching: 0,
+              proverRunning: 0,
+              retrying: 0,
+            },
+            firstJobId: null,
+          }),
           getJob: async () => null,
           markFailed: async () => null,
           createJob: async () => ({ accepted: false, activeJob: null }),
@@ -201,7 +243,21 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     } as unknown as R2Bucket,
     PROVER_BASE_URL: "",
     __coordinator: {
-      getActiveJob: async () => null,
+      getActiveJobsSummary: async () => ({
+        total: 0,
+        boundless: 0,
+        vast: 0,
+        waitingDispatch: 0,
+        oldestActiveAgeSec: null,
+        oldestWaitingDispatchAgeSec: null,
+        statusCounts: {
+          queued: 0,
+          dispatching: 0,
+          proverRunning: 0,
+          retrying: 0,
+        },
+        firstJobId: null,
+      }),
       getJob: async () => null,
       markFailed: async () => null,
       createJob: async () => ({ accepted: false, activeJob: null }),
@@ -231,10 +287,10 @@ async function requestWorker(path: string, init: RequestInit | undefined, env: W
 }
 
 describe("Worker live interface", () => {
-  it("applies default no-store cache-control to /api routes without explicit policy", async () => {
+  it("applies health cache-control to /api/health", async () => {
     const response = await requestWorker("/api/health", undefined, makeEnv());
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe(HEALTH_CACHE_CONTROL);
   });
 
   it("preserves public leaderboard cache policy for public reads", async () => {
@@ -273,6 +329,58 @@ describe("Worker live interface", () => {
     expect(second.status).toBe(304);
     expect(second.headers.get("cache-control")).toBe(LEADERBOARD_CACHE_CONTROL);
     expect(second.headers.get("etag")).toBe(etag);
+  });
+
+  it("sets no-store for profile auth challenge options", async () => {
+    const response = await requestWorker(
+      `/api/leaderboard/player/${VALID_CLAIMANT_CONTRACT}/profile/auth/options`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          credential_id: "credential-1",
+        }),
+      },
+      makeEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("removes legacy /api/leaderboard/dev/* paths", async () => {
+    const response = await requestWorker(
+      "/api/leaderboard/dev/sync",
+      { method: "POST" },
+      makeEnv({ DEV_API_KEY: "test-dev-key-with-enough-entropy" }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("requires DEV_API_KEY and bearer auth for /dev/api/leaderboard/*", async () => {
+    const noKey = await requestWorker("/dev/api/leaderboard/sync", { method: "POST" }, makeEnv());
+    expect(noKey.status).toBe(404);
+
+    const noAuth = await requestWorker(
+      "/dev/api/leaderboard/sync",
+      { method: "POST" },
+      makeEnv({ DEV_API_KEY: "test-dev-key-with-enough-entropy" }),
+    );
+    expect(noAuth.status).toBe(401);
+
+    const ok = await requestWorker(
+      "/dev/api/leaderboard/sync",
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-dev-key-with-enough-entropy",
+        },
+      },
+      makeEnv({ DEV_API_KEY: "test-dev-key-with-enough-entropy" }),
+    );
+    expect(ok.status).toBe(200);
   });
 
   it("returns API not-found payload for unknown /api route", async () => {

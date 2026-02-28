@@ -216,7 +216,6 @@ impl Game {
     pub(super) fn result(&self) -> ReplayResult {
         ReplayResult {
             final_score: self.score,
-            final_rng_state: self.rng.state(),
             frame_count: self.frame_count,
         }
     }

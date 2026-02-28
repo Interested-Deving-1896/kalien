@@ -21,9 +21,6 @@ const EXAMPLE_ENTRY = {
   mintedDelta: 1337,
   seed: 42,
   frameCount: 1200,
-  finalRngState: 99,
-  tapeChecksum: 0xdead,
-  rulesDigest: 0x4153_5433,
   completedAt: EXAMPLE_GENERATED_AT,
   claimStatus: "succeeded" as const,
   claimTxHash: "tx-1",
@@ -74,9 +71,6 @@ mock.module("../../worker/leaderboard-store", () => ({
         mintedDelta: EXAMPLE_ENTRY.mintedDelta,
         seed: EXAMPLE_ENTRY.seed,
         frameCount: EXAMPLE_ENTRY.frameCount,
-        finalRngState: EXAMPLE_ENTRY.finalRngState,
-        tapeChecksum: EXAMPLE_ENTRY.tapeChecksum,
-        rulesDigest: EXAMPLE_ENTRY.rulesDigest,
         completedAt: EXAMPLE_ENTRY.completedAt,
         claimStatus: "succeeded" as const,
         claimTxHash: EXAMPLE_ENTRY.claimTxHash,
@@ -148,7 +142,10 @@ mock.module("../../worker/durable/coordinator", () => ({
 
 const { Hono } = await import("hono");
 const { createApiRouter } = await import("../../worker/api/routes");
-const { createLeaderboardRouter } = await import("../../worker/api/leaderboard-routes");
+const {
+  createLeaderboardDevRouter,
+  createLeaderboardPublicRouter,
+} = await import("../../worker/api/leaderboard-routes");
 
 const noopExecutionContext = {
   waitUntil() {
@@ -161,31 +158,26 @@ const noopExecutionContext = {
 
 function makeCoordinatorStub(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    getActiveJob: async () => null,
+    getActiveJobsSummary: async () => ({
+      total: 0,
+      boundless: 0,
+      vast: 0,
+      waitingDispatch: 0,
+      oldestActiveAgeSec: null,
+      oldestWaitingDispatchAgeSec: null,
+      statusCounts: {
+        queued: 0,
+        dispatching: 0,
+        proverRunning: 0,
+        retrying: 0,
+      },
+      firstJobId: null,
+    }),
     getJob: async () => null,
     markFailed: async () => null,
     createJob: async () => ({ accepted: false, activeJob: null }),
     kickAlarm: async () => undefined,
-    getLeaderboardIngestionState: async () => ({
-      provider: "rpc",
-      sourceMode: "rpc",
-      cursor: null,
-      highestLedger: null,
-      lastSyncedAt: null,
-      lastBackfillAt: null,
-      totalEvents: 0,
-      lastError: null,
-    }),
-    listLeaderboardEventsPage: async () => ({
-      events: [],
-      nextStartAfter: null,
-      done: true,
-    }),
-    listLeaderboardProfilesPage: async () => ({
-      profiles: [],
-      nextStartAfter: null,
-      done: true,
-    }),
+    listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
     ...overrides,
   };
 }
@@ -217,6 +209,9 @@ function makeEnv(
     PROOF_QUEUE: {
       send: async () => undefined,
     } as Queue<unknown>,
+    VAST_QUEUE: {
+      send: async () => undefined,
+    } as Queue<unknown>,
     CLAIM_QUEUE: {
       send: async () => undefined,
     } as Queue<unknown>,
@@ -243,7 +238,8 @@ async function requestApi(
 ): Promise<Response> {
   const app = new Hono<{ Bindings: WorkerEnv }>();
   app.route("/", createApiRouter());
-  app.route("/leaderboard", createLeaderboardRouter());
+  app.route("/leaderboard", createLeaderboardPublicRouter());
+  app.route("/dev/api/leaderboard", createLeaderboardDevRouter());
   const request = new Request(`https://worker.test${path}`, init);
   return app.fetch(request, env, noopExecutionContext);
 }
@@ -259,6 +255,76 @@ describe("API routes", () => {
     };
     expect(payload.success).toBe(true);
     expect(payload.prover.status).toBe("degraded");
+  });
+
+  it("GET /health reports active job summary from coordinator", async () => {
+    const response = await requestApi(
+      "/health",
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          getActiveJobsSummary: async () => ({
+            total: 3,
+            boundless: 2,
+            vast: 1,
+            waitingDispatch: 0,
+            oldestActiveAgeSec: 45,
+            oldestWaitingDispatchAgeSec: 0,
+            statusCounts: {
+              queued: 0,
+              dispatching: 1,
+              proverRunning: 2,
+              retrying: 0,
+            },
+            firstJobId: "job-active-1",
+          }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      active_jobs: number;
+      active_job_id: string | null;
+      oldest_active_job_age_sec: number | null;
+      oldest_waiting_dispatch_age_sec: number | null;
+      active_jobs_by_backend: {
+        boundless: number;
+        vast: number;
+        waiting_dispatch: number;
+      };
+      active_jobs_by_status: {
+        queued: number;
+        dispatching: number;
+        prover_running: number;
+        retrying: number;
+      };
+      configured_backends: {
+        boundless: boolean;
+        vast: boolean;
+      };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.active_jobs).toBe(3);
+    expect(payload.active_job_id).toBe("job-active-1");
+    expect(payload.oldest_active_job_age_sec).toBe(45);
+    expect(payload.oldest_waiting_dispatch_age_sec).toBe(0);
+    expect(payload.active_jobs_by_backend).toEqual({
+      boundless: 2,
+      vast: 1,
+      waiting_dispatch: 0,
+    });
+    expect(payload.active_jobs_by_status).toEqual({
+      queued: 0,
+      dispatching: 1,
+      prover_running: 2,
+      retrying: 0,
+    });
+    expect(payload.configured_backends).toEqual({
+      boundless: false,
+      vast: false,
+    });
   });
 
   it("GET /leaderboard validates window query", async () => {
@@ -425,31 +491,63 @@ describe("API routes", () => {
     expect(response.status).toBe(200);
   });
 
-  it("POST /leaderboard/dev/sync triggers sync and returns result", async () => {
+  // ── Dev endpoint auth guard ────────────────────────────────────────────────
+
+  const DEV_KEY = "test-dev-key-with-enough-entropy";
+  const devAuthHeaders = { authorization: `Bearer ${DEV_KEY}` };
+
+  it("POST /dev/api/leaderboard/sync returns 404 when DEV_API_KEY is not set", async () => {
+    const response = await requestApi(
+      "/dev/api/leaderboard/sync",
+      { method: "POST" },
+      makeEnv(),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("legacy /leaderboard/dev/* paths are removed", async () => {
     const response = await requestApi(
       "/leaderboard/dev/sync",
       { method: "POST" },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("POST /dev/api/leaderboard/sync returns 401 without valid auth", async () => {
+    const response = await requestApi(
+      "/dev/api/leaderboard/sync",
+      { method: "POST" },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("POST /dev/api/leaderboard/sync triggers sync and returns result", async () => {
+    const response = await requestApi(
+      "/dev/api/leaderboard/sync",
+      { method: "POST", headers: devAuthHeaders },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { success: boolean };
     expect(payload.success).toBe(true);
   });
 
-  it("POST /leaderboard/dev/sync?from_ledger=invalid returns 400", async () => {
+  it("POST /dev/api/leaderboard/sync?from_ledger=invalid returns 400", async () => {
     const response = await requestApi(
-      "/leaderboard/dev/sync?from_ledger=abc",
-      { method: "POST" },
-      makeEnv(),
+      "/dev/api/leaderboard/sync?from_ledger=abc",
+      { method: "POST", headers: devAuthHeaders },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(400);
   });
 
-  it("POST /leaderboard/dev/reset clears data", async () => {
+  it("POST /dev/api/leaderboard/reset clears data", async () => {
     const response = await requestApi(
-      "/leaderboard/dev/reset",
-      { method: "POST" },
-      makeEnv(),
+      "/dev/api/leaderboard/reset",
+      { method: "POST", headers: devAuthHeaders },
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { success: boolean; message: string };
@@ -457,12 +555,12 @@ describe("API routes", () => {
     expect(payload.message).toContain("cleared");
   });
 
-  it("POST /leaderboard/dev/seed with valid events returns insert counts", async () => {
+  it("POST /dev/api/leaderboard/seed with valid events returns insert counts", async () => {
     const response = await requestApi(
-      "/leaderboard/dev/seed",
+      "/dev/api/leaderboard/seed",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...devAuthHeaders },
         body: JSON.stringify({
           events: [
             {
@@ -476,36 +574,331 @@ describe("API routes", () => {
           ],
         }),
       },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { success: boolean };
     expect(payload.success).toBe(true);
   });
 
-  it("POST /leaderboard/dev/seed with empty events returns 400", async () => {
+  it("POST /dev/api/leaderboard/seed with empty events returns 400", async () => {
     const response = await requestApi(
-      "/leaderboard/dev/seed",
+      "/dev/api/leaderboard/seed",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...devAuthHeaders },
         body: JSON.stringify({ events: [] }),
       },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(400);
   });
 
-  it("POST /leaderboard/dev/seed with invalid JSON returns 400", async () => {
+  it("POST /dev/api/leaderboard/seed with invalid JSON returns 400", async () => {
     const response = await requestApi(
-      "/leaderboard/dev/seed",
+      "/dev/api/leaderboard/seed",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...devAuthHeaders },
         body: "not json",
       },
-      makeEnv(),
+      makeEnv({ DEV_API_KEY: DEV_KEY }),
     );
     expect(response.status).toBe(400);
+  });
+
+  // ── GET /proofs/jobs ──────────────────────────────────────────────────────
+
+  it("GET /proofs/jobs returns 400 when address param is missing", async () => {
+    const response = await requestApi("/proofs/jobs", undefined, makeEnv());
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { success: boolean; error: string };
+    expect(payload.success).toBe(false);
+    expect(payload.error).toContain("address");
+  });
+
+  it("GET /proofs/jobs returns 400 for an invalid address", async () => {
+    const response = await requestApi("/proofs/jobs?address=not-valid", undefined, makeEnv());
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { success: boolean; error: string };
+    expect(payload.success).toBe(false);
+    expect(payload.error).toContain("invalid address");
+  });
+
+  it("GET /proofs/jobs returns empty list for valid address with no jobs", async () => {
+    const response = await requestApi(
+      `/proofs/jobs?address=${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv(),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      success: boolean;
+      jobs: unknown[];
+      total: number;
+      offset: number;
+      limit: number;
+      next_offset: number | null;
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.jobs).toHaveLength(0);
+    expect(payload.total).toBe(0);
+    expect(payload.next_offset).toBeNull();
+  });
+
+  it("GET /proofs/jobs returns jobs and pagination metadata", async () => {
+    const stubJob = {
+      jobId: "job-abc",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      completedAt: "2026-01-01T00:01:00.000Z",
+      tape: {
+        sizeBytes: 512,
+        key: "proof-jobs/job-abc/input.tape",
+        metadata: { seed: 1, seedId: 1, frameCount: 10, finalScore: 100, checksum: 0 },
+      },
+      queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
+      prover: {
+        jobId: null,
+        status: null,
+        statusUrl: null,
+        segmentLimitPo2: null,
+        lastPolledAt: null,
+        pollingErrors: 0,
+      },
+      proverAttempts: [],
+      result: null,
+      claim: {
+        claimantAddress: VALID_CLAIMANT_CONTRACT,
+        status: "queued",
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+        submittedAt: null,
+        txHash: null,
+      },
+      error: null,
+    };
+    const response = await requestApi(
+      `/proofs/jobs?address=${VALID_CLAIMANT_CONTRACT}&limit=10&offset=0`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => ({ jobs: [stubJob], total: 1 }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      success: boolean;
+      jobs: Array<{ jobId: string }>;
+      total: number;
+      offset: number;
+      limit: number;
+      next_offset: number | null;
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.jobs).toHaveLength(1);
+    expect(payload.jobs[0].jobId).toBe("job-abc");
+    expect(payload.total).toBe(1);
+    expect(payload.offset).toBe(0);
+    expect(payload.limit).toBe(10);
+    expect(payload.next_offset).toBeNull();
+  });
+
+  it("GET /proofs/jobs hydrates canonical summary cycles from successful attempt data", async () => {
+    const stubJob = {
+      jobId: "job-cycles",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      completedAt: "2026-01-01T00:01:00.000Z",
+      tape: {
+        sizeBytes: 512,
+        key: "proof-jobs/job-cycles/input.tape",
+        metadata: { seed: 1, seedId: 1, frameCount: 10, finalScore: 100, checksum: 0 },
+      },
+      queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
+      prover: {
+        jobId: "0xabc",
+        status: "succeeded",
+        statusUrl: "boundless:0xabc",
+        segmentLimitPo2: null,
+        lastPolledAt: null,
+        pollingErrors: 0,
+      },
+      proverAttempts: [
+        {
+          index: 0,
+          backend: "boundless",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          endedAt: "2026-01-01T00:01:00.000Z",
+          outcome: "success",
+          error: null,
+          errorDetail: null,
+          errorCode: null,
+          proverJobId: "0xabc",
+          statusUrl: "boundless:0xabc",
+          actualCostUsd: null,
+          proverAddress: null,
+          fulfillmentTxHash: null,
+          programCycles: 345,
+          totalCycles: 789,
+        },
+      ],
+      result: {
+        artifactKey: "proof-jobs/job-cycles/result.json",
+        summary: {
+          elapsedMs: 0,
+          requestedReceiptKind: "groth16",
+          producedReceiptKind: "groth16",
+          journal: {
+            seed_id: 1,
+            seed: 1,
+            frame_count: 10,
+            final_score: 100,
+            claimant: VALID_CLAIMANT_CONTRACT,
+          },
+          stats: {
+            segments: 0,
+            total_cycles: 0,
+            user_cycles: 0,
+            paging_cycles: 0,
+            reserved_cycles: 0,
+          },
+        },
+      },
+      claim: {
+        claimantAddress: VALID_CLAIMANT_CONTRACT,
+        status: "queued",
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+        submittedAt: null,
+        txHash: null,
+      },
+      error: null,
+    };
+
+    const response = await requestApi(
+      `/proofs/jobs?address=${VALID_CLAIMANT_CONTRACT}&limit=10&offset=0`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => ({ jobs: [stubJob], total: 1 }),
+          enrichBoundlessCycles: async () => stubJob,
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      success: boolean;
+      jobs: Array<{ result: { summary: { stats: { total_cycles: number; user_cycles: number } } } }>;
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.jobs[0].result.summary.stats.total_cycles).toBe(789);
+    expect(payload.jobs[0].result.summary.stats.user_cycles).toBe(345);
+  });
+
+  it("GET /proofs/jobs computes next_offset when more pages remain", async () => {
+    // 3 total jobs, limit=2, offset=0 → next_offset=2
+    const stubJobs = Array.from({ length: 2 }, (_, i) => ({
+      jobId: `job-${i}`,
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      completedAt: null,
+      tape: {
+        sizeBytes: 100,
+        key: `proof-jobs/job-${i}/input.tape`,
+        metadata: { seed: i, seedId: i, frameCount: 10, finalScore: 100, checksum: 0 },
+      },
+      queue: { attempts: 1, lastAttemptAt: null, lastError: null, nextRetryAt: null },
+      prover: { jobId: null, status: null, statusUrl: null, segmentLimitPo2: null, lastPolledAt: null, pollingErrors: 0 },
+      proverAttempts: [],
+      result: null,
+      claim: { claimantAddress: VALID_CLAIMANT_CONTRACT, status: "queued", attempts: 0, lastAttemptAt: null, lastError: null, nextRetryAt: null, submittedAt: null, txHash: null },
+      error: null,
+    }));
+
+    const response = await requestApi(
+      `/proofs/jobs?address=${VALID_CLAIMANT_CONTRACT}&limit=2&offset=0`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => ({ jobs: stubJobs, total: 3 }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      next_offset: number | null;
+    };
+    expect(payload.next_offset).toBe(2);
+  });
+
+  // ── GET /proofs/jobs/:jobId/tape ──────────────────────────────────────────
+
+  it("GET /proofs/jobs/:jobId/tape returns 404 when job does not exist", async () => {
+    const response = await requestApi("/proofs/jobs/no-such-job/tape", undefined, makeEnv());
+    expect(response.status).toBe(404);
+  });
+
+  it("GET /proofs/jobs/:jobId/tape returns 404 when tape artifact is missing", async () => {
+    const response = await requestApi(
+      "/proofs/jobs/job-exists/tape",
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          getJob: async () => ({
+            jobId: "job-exists",
+            tape: { key: "proof-jobs/job-exists/input.tape", sizeBytes: 100, metadata: {} },
+          }),
+        }),
+        // PROOF_ARTIFACTS.get returns null (tape not in R2)
+        PROOF_ARTIFACTS: {
+          get: async () => null,
+          put: async () => undefined,
+          delete: async () => undefined,
+        } as unknown as R2Bucket,
+      }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("GET /proofs/jobs/:jobId/tape streams tape bytes when present", async () => {
+    const tapeBody = new Uint8Array([1, 2, 3, 4]);
+    const response = await requestApi(
+      "/proofs/jobs/job-with-tape/tape",
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          getJob: async () => ({
+            jobId: "job-with-tape",
+            tape: { key: "proof-jobs/job-with-tape/input.tape", sizeBytes: 4, metadata: {} },
+          }),
+        }),
+        PROOF_ARTIFACTS: {
+          get: async () => ({
+            body: new ReadableStream({
+              start(controller) {
+                controller.enqueue(tapeBody);
+                controller.close();
+              },
+            }),
+          }),
+          put: async () => undefined,
+          delete: async () => undefined,
+        } as unknown as R2Bucket,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("content-disposition")).toContain("job-with-tape.tape");
+    const buf = await response.arrayBuffer();
+    expect(new Uint8Array(buf)).toEqual(tapeBody);
   });
 });

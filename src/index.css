@@ -40,6 +40,12 @@
   --color-sidebar-border: rgba(123, 179, 255, 0.25);
   --color-sidebar-ring: rgba(102, 199, 255, 0.5);
 
+  --color-text-soft: rgba(186, 210, 241, 0.92);
+  --color-text-dim: rgba(146, 182, 233, 0.9);
+  --color-link: #9ce8ff;
+  --color-border-subtle: rgba(122, 185, 255, 0.25);
+  --color-surface-dim: rgba(8, 16, 29, 0.6);
+
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 10px;
@@ -76,6 +82,7 @@ body {
 
 #root {
   min-height: 100vh;
+  overflow-x: clip;
 }
 
 /* ---------------------------------------------------------------------------
@@ -152,4 +159,10 @@ body {
 
 .animate-rise {
   animation: leaderboard-rise 300ms ease-out both;
+}
+
+.shadow-elevated {
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }

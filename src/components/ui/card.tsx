@@ -47,14 +47,4 @@ function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
   );
 }
 
-function CardContent({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="card-content" className={cn("grid gap-3", className)} {...props} />;
-}
-
-function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div data-slot="card-footer" className={cn("flex items-center gap-3", className)} {...props} />
-  );
-}
-
-export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter };
+export { Card, CardHeader, CardTitle, CardDescription };

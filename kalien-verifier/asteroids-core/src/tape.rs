@@ -16,14 +16,17 @@ pub struct TapeHeader {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapeFooter {
     pub final_score: u32,
-    pub final_rng_state: u32,
     pub checksum: u32,
 }
 
+/// Parsed tape with unpacked inputs (one byte per frame, low nibble only).
+///
+/// `inputs` is owned because the body bytes are nibble-packed on disk and must
+/// be expanded into individual frame bytes during parsing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TapeView<'a> {
+pub struct TapeView {
     pub header: TapeHeader,
-    pub inputs: &'a [u8],
+    pub inputs: Vec<u8>,
     pub footer: TapeFooter,
 }
 
@@ -53,7 +56,13 @@ pub fn decode_input_byte(byte: u8) -> FrameInput {
     }
 }
 
-pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyError> {
+/// Returns the number of packed body bytes for a given frame count.
+#[inline]
+pub fn body_bytes(frame_count: usize) -> usize {
+    (frame_count + 1) / 2
+}
+
+pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView, VerifyError> {
     let min_len = TAPE_HEADER_SIZE + TAPE_FOOTER_SIZE;
     if bytes.len() < min_len {
         return Err(VerifyError::TapeTooShort {
@@ -90,7 +99,8 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
         });
     }
 
-    let expected_len = TAPE_HEADER_SIZE + frame_count as usize + TAPE_FOOTER_SIZE;
+    let packed_len = body_bytes(frame_count as usize);
+    let expected_len = TAPE_HEADER_SIZE + packed_len + TAPE_FOOTER_SIZE;
     if bytes.len() != expected_len {
         return Err(VerifyError::TapeLengthMismatch {
             expected: expected_len,
@@ -98,21 +108,30 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
         });
     }
 
-    let inputs_start = TAPE_HEADER_SIZE;
-    let inputs_end = inputs_start + frame_count as usize;
-    let inputs = &bytes[inputs_start..inputs_end];
+    let body_start = TAPE_HEADER_SIZE;
+    let body_end = body_start + packed_len;
 
-    let final_score = read_u32_le(bytes, inputs_end);
-    let final_rng_state = read_u32_le(bytes, inputs_end + 4);
-    let checksum = read_u32_le(bytes, inputs_end + 8);
-
-    let computed = crc32_and_validate_inputs(bytes, inputs_start, inputs_end)?;
+    // Verify CRC-32 over header + packed body.
+    let computed = crc32(&bytes[..body_end]);
+    let checksum = read_u32_le(bytes, body_end + 4);
     if checksum != computed {
         return Err(VerifyError::CrcMismatch {
             stored: checksum,
             computed,
         });
     }
+
+    // Unpack nibbles into one byte per frame.
+    let mut inputs = Vec::with_capacity(frame_count as usize);
+    for i in 0..packed_len {
+        let byte = bytes[body_start + i];
+        inputs.push(byte & 0x0F); // low nibble = frame 2i
+        if inputs.len() < frame_count as usize {
+            inputs.push((byte >> 4) & 0x0F); // high nibble = frame 2i+1
+        }
+    }
+
+    let final_score = read_u32_le(bytes, body_end);
 
     Ok(TapeView {
         header: TapeHeader {
@@ -125,14 +144,15 @@ pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView<'_>, VerifyE
         inputs,
         footer: TapeFooter {
             final_score,
-            final_rng_state,
             checksum,
         },
     })
 }
 
-pub fn serialize_tape(seed: u32, inputs: &[u8], final_score: u32, final_rng_state: u32) -> Vec<u8> {
-    let total_len = TAPE_HEADER_SIZE + inputs.len() + TAPE_FOOTER_SIZE;
+pub fn serialize_tape(seed: u32, inputs: &[u8], final_score: u32) -> Vec<u8> {
+    let frame_count = inputs.len();
+    let packed_len = body_bytes(frame_count);
+    let total_len = TAPE_HEADER_SIZE + packed_len + TAPE_FOOTER_SIZE;
     let mut data = vec![0u8; total_len];
 
     write_u32_le(&mut data, 0, TAPE_MAGIC);
@@ -141,17 +161,25 @@ pub fn serialize_tape(seed: u32, inputs: &[u8], final_score: u32, final_rng_stat
     data[6] = 0;
     data[7] = 0;
     write_u32_le(&mut data, 8, seed);
-    write_u32_le(&mut data, 12, inputs.len() as u32);
+    write_u32_le(&mut data, 12, frame_count as u32);
 
+    // Nibble-pack: low nibble = frame 2i, high nibble = frame 2i+1.
     let body_start = TAPE_HEADER_SIZE;
-    let body_end = body_start + inputs.len();
-    data[body_start..body_end].copy_from_slice(inputs);
+    for i in 0..packed_len {
+        let lo = inputs[2 * i] & 0x0F;
+        let hi = if 2 * i + 1 < frame_count {
+            (inputs[2 * i + 1] & 0x0F) << 4
+        } else {
+            0
+        };
+        data[body_start + i] = lo | hi;
+    }
 
+    let body_end = body_start + packed_len;
     write_u32_le(&mut data, body_end, final_score);
-    write_u32_le(&mut data, body_end + 4, final_rng_state);
 
     let checksum = crc32(&data[..body_end]);
-    write_u32_le(&mut data, body_end + 8, checksum);
+    write_u32_le(&mut data, body_end + 4, checksum);
 
     data
 }
@@ -208,37 +236,12 @@ pub fn crc32(data: &[u8]) -> u32 {
     crc ^ 0xFFFF_FFFFu32
 }
 
-fn crc32_and_validate_inputs(
-    bytes: &[u8],
-    inputs_start: usize,
-    inputs_end: usize,
-) -> Result<u32, VerifyError> {
-    let mut crc = 0xFFFF_FFFFu32;
-    let mut i = 0usize;
-
-    while i < inputs_end {
-        let byte = bytes[i];
-        if i >= inputs_start && (byte & 0xF0) != 0 {
-            return Err(VerifyError::ReservedInputBitsNonZero {
-                frame: (i - inputs_start) as u32,
-                byte,
-            });
-        }
-
-        let idx = ((crc ^ byte as u32) & 0xFF) as usize;
-        crc = CRC_TABLE[idx] ^ (crc >> 8);
-        i += 1;
-    }
-
-    Ok(crc ^ 0xFFFF_FFFFu32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn footer_offset(frame_count: usize) -> usize {
-        TAPE_HEADER_SIZE + frame_count
+        TAPE_HEADER_SIZE + body_bytes(frame_count)
     }
 
     #[test]
@@ -256,14 +259,41 @@ mod tests {
     #[test]
     fn roundtrip_small_tape() {
         let inputs = [0x00u8, 0x09u8, 0x06u8];
-        let bytes = serialize_tape(0xABCD_1234, &inputs, 777, 0x1111_2222);
+        let bytes = serialize_tape(0xABCD_1234, &inputs, 777);
         let tape = parse_tape(&bytes, 100).unwrap();
 
         assert_eq!(tape.header.seed, 0xABCD_1234);
         assert_eq!(tape.header.frame_count, 3);
-        assert_eq!(tape.inputs, inputs);
+        assert_eq!(tape.inputs, &inputs[..]);
         assert_eq!(tape.footer.final_score, 777);
-        assert_eq!(tape.footer.final_rng_state, 0x1111_2222);
+    }
+
+    #[test]
+    fn nibble_pack_even_frame_count() {
+        // 4 frames → 2 packed bytes
+        let inputs = [0x0Au8, 0x05u8, 0x03u8, 0x0Cu8];
+        let bytes = serialize_tape(1, &inputs, 0);
+        assert_eq!(bytes.len(), TAPE_HEADER_SIZE + 2 + TAPE_FOOTER_SIZE);
+        // byte 0: lo=0x0A, hi=0x05 → 0x5A
+        assert_eq!(bytes[TAPE_HEADER_SIZE], 0x5A);
+        // byte 1: lo=0x03, hi=0x0C → 0xC3
+        assert_eq!(bytes[TAPE_HEADER_SIZE + 1], 0xC3);
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.inputs, &inputs[..]);
+    }
+
+    #[test]
+    fn nibble_pack_odd_frame_count() {
+        // 3 frames → 2 packed bytes (high nibble of last byte = 0)
+        let inputs = [0x01u8, 0x02u8, 0x04u8];
+        let bytes = serialize_tape(1, &inputs, 0);
+        assert_eq!(bytes.len(), TAPE_HEADER_SIZE + 2 + TAPE_FOOTER_SIZE);
+        // byte 0: lo=0x01, hi=0x02 → 0x21
+        assert_eq!(bytes[TAPE_HEADER_SIZE], 0x21);
+        // byte 1: lo=0x04, hi=0x00 → 0x04
+        assert_eq!(bytes[TAPE_HEADER_SIZE + 1], 0x04);
+        let tape = parse_tape(&bytes, 100).unwrap();
+        assert_eq!(tape.inputs, &inputs[..]);
     }
 
     #[test]
@@ -277,7 +307,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_magic() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         bytes[0] ^= 0x01;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -287,7 +317,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_version() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         bytes[4] = TAPE_VERSION + 1;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -297,7 +327,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_rules_tag() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         bytes[5] = 255;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -307,7 +337,7 @@ mod tests {
 
     #[test]
     fn rejects_nonzero_header_reserved_bytes() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         bytes[6] = 1;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -317,7 +347,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_frame_count() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -330,7 +360,7 @@ mod tests {
 
     #[test]
     fn rejects_frame_count_above_max() {
-        let bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         assert!(matches!(
             parse_tape(&bytes, 0),
             Err(VerifyError::FrameCountOutOfRange {
@@ -342,7 +372,7 @@ mod tests {
 
     #[test]
     fn rejects_trailing_bytes_beyond_declared_frame_count() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
         bytes.push(0);
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -352,7 +382,8 @@ mod tests {
 
     #[test]
     fn rejects_shorter_than_declared_frame_count() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8, 0x00u8], 0, 0x1111_2222);
+        // 2 frames → 1 packed byte; pop a byte from the footer to trigger mismatch
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8, 0x00u8], 0);
         bytes.pop();
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -361,22 +392,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_reserved_input_bits_nonzero() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
-        bytes[TAPE_HEADER_SIZE] = 0x80;
-        assert!(matches!(
-            parse_tape(&bytes, 100),
-            Err(VerifyError::ReservedInputBitsNonZero {
-                frame: 0,
-                byte: 0x80
-            })
-        ));
-    }
-
-    #[test]
     fn rejects_crc_mismatch() {
-        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0, 0x1111_2222);
-        let checksum_offset = footer_offset(1) + 8;
+        let mut bytes = serialize_tape(0xABCD_1234, &[0x00u8], 0);
+        let checksum_offset = footer_offset(1) + 4;
         bytes[checksum_offset] ^= 0x01;
         assert!(matches!(
             parse_tape(&bytes, 100),
@@ -387,8 +405,8 @@ mod tests {
     #[test]
     fn serialize_tape_writes_crc_over_header_and_body() {
         let inputs = [0x01u8, 0x02u8, 0x04u8, 0x08u8];
-        let bytes = serialize_tape(0xABCD_1234, &inputs, 77, 0xCAFEBABE);
-        let checksum_offset = footer_offset(inputs.len()) + 8;
+        let bytes = serialize_tape(0xABCD_1234, &inputs, 77);
+        let checksum_offset = footer_offset(inputs.len()) + 4;
         let stored = u32::from_le_bytes([
             bytes[checksum_offset],
             bytes[checksum_offset + 1],

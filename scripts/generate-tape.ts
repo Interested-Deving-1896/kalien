@@ -13,23 +13,53 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
+import { fetchSeedFromContract } from "../src/chain/seed";
 
-const DEFAULT_MAX_FRAMES = 18_000;
+const DEFAULT_MAX_FRAMES = 36_000;
+const DEFAULT_RPC_URL = process.env.STELLAR_RPC_URL ?? "https://soroban-testnet.stellar.org";
+const DEFAULT_CONTRACT_ID = process.env.SCORE_CONTRACT_ID
+  ?? process.env.VITE_SCORE_CONTRACT_ID
+  ?? "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU";
 
 // Parse arguments
-let seed = Date.now();
+let explicitSeed: number | null = null;
 let maxFrames = DEFAULT_MAX_FRAMES; // ~5 minutes
 let outputPath = "";
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--seed" && args[i + 1]) {
-    seed = parseInt(args[++i], 16);
+    explicitSeed = parseInt(args[++i], 16);
   } else if (args[i] === "--max-frames" && args[i + 1]) {
     maxFrames = parseInt(args[++i], 10);
   } else if (args[i] === "--output" && args[i + 1]) {
     outputPath = args[++i];
   }
+}
+
+// Resolve seed: use explicit --seed flag, or fetch from contract
+let seed: number;
+if (explicitSeed !== null) {
+  seed = explicitSeed;
+} else {
+  process.stdout.write("Fetching seed from contract...");
+  let fetched: number | null = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    fetched = await fetchSeedFromContract(DEFAULT_CONTRACT_ID, DEFAULT_RPC_URL);
+    if (fetched !== null) break;
+    if (attempt < 5) {
+      process.stdout.write(" retrying...");
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  if (fetched === null) {
+    console.error(
+      "\nNo seed available for the current window. The backend cron may not have fired yet.",
+    );
+    process.exit(1);
+  }
+  seed = fetched;
+  console.log(` 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
 }
 
 if (!outputPath) {
@@ -41,7 +71,7 @@ if (!outputPath) {
 }
 
 console.log(`Generating tape:`);
-console.log(`  Seed:       0x${seed.toString(16).padStart(8, "0")}`);
+console.log(`  Seed:       0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
 console.log(`  Max frames: ${maxFrames}`);
 console.log(`  Output:     ${outputPath}`);
 console.log();
@@ -96,7 +126,7 @@ console.log();
 console.log("Verifying tape...");
 
 const verifyData = new Uint8Array(readFileSync(outputPath));
-const tape = deserializeTape(verifyData, DEFAULT_MAX_FRAMES);
+const tape = deserializeTape(verifyData, maxFrames);
 
 const verifyGame = new AsteroidsGame({ headless: true, seed: tape.header.seed });
 verifyGame.startNewGame(tape.header.seed);
@@ -108,19 +138,12 @@ for (let i = 0; i < tape.header.frameCount; i++) {
 }
 
 const vScore = verifyGame.getScore();
-const vRng = verifyGame.getRngState();
 const scoreOk = vScore === tape.footer.finalScore;
-const rngOk = (vRng >>> 0) === (tape.footer.finalRngState >>> 0);
 
-if (scoreOk && rngOk) {
+if (scoreOk) {
   console.log("VERIFICATION PASSED");
 } else {
-  if (!scoreOk)
-    console.error(`  Score mismatch: got ${vScore}, expected ${tape.footer.finalScore}`);
-  if (!rngOk)
-    console.error(
-      `  RNG mismatch: got 0x${vRng.toString(16)}, expected 0x${tape.footer.finalRngState.toString(16)}`,
-    );
+  console.error(`  Score mismatch: got ${vScore}, expected ${tape.footer.finalScore}`);
   console.error("VERIFICATION FAILED");
   process.exit(1);
 }

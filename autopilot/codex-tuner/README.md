@@ -1,41 +1,36 @@
 # codex-tuner
 
-Autopilot tuning lab focused on one goal: iteratively tune a high-scoring Codex ship without growing the core autopilot crate.
+Autopilot tuning lab for improving `codex-potential-adaptive` profiles without
+growing the core autopilot crate.
 
-## What this lab does
+## What It Does
 
-- Tunes `codex-potential-adaptive` by mutating its adaptive profile scales.
-- Learns from winning mutation directions (momentum) and increases exploration when progress stalls.
-- Benchmarks each candidate on deterministic seeds.
-- Promotes the best profile each iteration.
-- Writes a champion profile you can keep iterating from.
+- Mutates adaptive profile scales.
+- Evaluates candidates on deterministic seeds.
+- Promotes best candidates across iterations.
+- Produces reusable champion profiles.
 
 ## Layout
 
-- `profiles/base.json`: starting profile.
-- `profiles/champion.json`: current champion profile (AST3 baseline starts equal to `base.json`).
-- `profiles/SWITCHING.md`: profile reset/activation shortcuts.
-- `seeds/screen-seeds.txt`: iterative seed set.
-- `seeds/validation-seeds.txt`: tougher validation seed set.
-- `scripts/iterative-search.py`: core iterative tuner.
-- `scripts/run-super-score-loop.sh`: one-command tune + validation flow.
-- `runs/`: per-session artifacts and benchmark outputs (gitignored).
+- `profiles/base.json`: baseline profile.
+- `profiles/champion.json`: current promoted profile.
+- `profiles/SWITCHING.md`: profile reset/activation workflow.
+- `seeds/`: seed sets used by iterative search.
+- `scripts/iterative-search.py`: core tuning engine.
+- `scripts/run-super-score-loop.sh`: one-command tuning loop.
+- `runs/`: generated run artifacts (created on first run, gitignored).
 
-## Quick run
+Runtime note:
+- `autopilot/codex-/state/adaptive-profile.json` is generated local state and
+  should remain untracked.
+
+## Quick Run
+
+From repo root:
 
 ```bash
 ./autopilot/codex-tuner/scripts/run-super-score-loop.sh
 ```
-
-Defaults:
-
-- iterations: `6`
-- candidates/iteration: `6`
-- max frames: `108000` (30 minutes at 60 FPS)
-- jobs: `8`
-- selection metric: `score` (`objective`, `score`, or `insane`)
-- install mode: `champion` (`champion` or `restore`)
-- anchor mode: `core` (`core` or `all`)
 
 Custom run:
 
@@ -50,9 +45,4 @@ Custom run:
   --jobs 8
 ```
 
-Notes:
-
-- The tuner uses the proven sim + verifier in `autopilot/`.
-- It writes the active profile into `autopilot/codex-/state/adaptive-profile.json` during evaluation.
-- `autopilot/codex-/` is local runtime state and should remain untracked.
-- Only keep archived `champion-*.json` profiles if they were validated under the current ruleset.
+Keep archived `champion-*.json` only when validated under the current ruleset.

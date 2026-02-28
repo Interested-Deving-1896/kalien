@@ -1,12 +1,12 @@
 # Champion Bots (Current)
 
-Last reset: 2026-02-11 (AST3 compatibility reset).
+Last reset: 2026-02-27 (AST4 compatibility reset).
 
 ## Status
 
 - No canonical champion tapes are currently promoted.
-- Legacy AST0 artifacts were intentionally retired.
-- Current focus is rebuilding a fresh AST3 leaderboard from current bot families.
+- Legacy AST3 artifacts were retired.
+- Current focus is rebuilding a fresh AST4 leaderboard from current bot families.
 
 ## Active Roster (Maintained)
 
@@ -15,7 +15,7 @@ Last reset: 2026-02-11 (AST3 compatibility reset).
 
 ## Promotion Policy
 
-- Promote only AST3-verifiable tapes.
+- Promote only AST4-verifiable tapes.
 - Update all of:
   - `records/champions.json`
   - `records/keep-checkpoints.txt`

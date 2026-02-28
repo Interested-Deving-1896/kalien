@@ -11,6 +11,8 @@ set -euo pipefail
 #   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
 #   --receipts <csv>       groth16 (default: groth16)
 #   --poll <seconds>       Poll interval (default: 5)
+#   --seed-id <u32>        seed_id bound into the proof journal (default: 0)
+#   --claimant <addr>      claimant Stellar address (default: GAAAAAAAA...WHF)
 #   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
 #   -h, --help             Show this help
 #
@@ -25,6 +27,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROVER_URL="http://127.0.0.1:8080"
 RECEIPTS_CSV="groth16"
 POLL_INTERVAL=5
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 OUT_DIR=""
 TAPE_ARGS=()
 declare -a RECEIPTS=()
@@ -36,9 +40,11 @@ Usage: scripts/batch-smoke-test.sh [options] <tape-paths-or-dirs...>
 Options:
   --url <prover-url>     Prover URL (default: http://127.0.0.1:8080)
   --receipts <csv>       Comma-separated list of receipt kinds to run.
-                         Allowed values: composite|groth16
+                         Allowed values: groth16
                          Default: groth16
   --poll <seconds>       Poll interval (default: 5)
+  --seed-id <u32>        seed_id bound into the proof journal (default: 0)
+  --claimant <addr>      claimant Stellar address (default: GAAAAAAAA...WHF)
   --out <dir>            Output directory (default: auto-timestamped in batch-results/)
   -h, --help             Show this help
 USAGE_EOF
@@ -49,12 +55,24 @@ while [[ $# -gt 0 ]]; do
     --url) PROVER_URL="${2%/}"; shift 2 ;;
     --receipts) RECEIPTS_CSV="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
     --poll) POLL_INTERVAL="$2"; shift 2 ;;
+    --seed-id) SEED_ID="${2:-}"; shift 2 ;;
+    --claimant) CLAIMANT="${2:-}"; shift 2 ;;
     --out) OUT_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --*) echo "Unknown option: $1" >&2; exit 1 ;;
     *) TAPE_ARGS+=("$1"); shift ;;
   esac
 done
+
+if [[ ! "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --seed-id must be an unsigned integer" >&2
+  exit 1
+fi
+
+if [[ -z "${CLAIMANT// }" ]]; then
+  echo "ERROR: --claimant cannot be empty" >&2
+  exit 1
+fi
 
 if [[ -z "$RECEIPTS_CSV" ]]; then
   echo "ERROR: --receipts cannot be empty" >&2
@@ -69,11 +87,11 @@ declare -a NORMALIZED_RECEIPTS=()
 for receipt in "${RECEIPTS[@]}"; do
   receipt="$(echo "$receipt" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
   case "$receipt" in
-    composite|groth16)
+    groth16)
       NORMALIZED_RECEIPTS+=("$receipt")
       ;;
     *)
-      echo "ERROR: unsupported receipt kind in --receipts: $receipt (allowed: composite|groth16)" >&2
+      echo "ERROR: unsupported receipt kind in --receipts: $receipt (allowed: groth16 only, v4 flow)" >&2
       exit 1
       ;;
   esac
@@ -168,6 +186,8 @@ echo "Prover:     $PROVER_URL"
 echo "Tapes:      $TAPE_COUNT"
 echo "Receipts:   ${RECEIPTS[*]}"
 echo "Poll:       ${POLL_INTERVAL}s"
+echo "Seed ID:    ${SEED_ID}"
+echo "Claimant:   ${CLAIMANT}"
 echo "Output:     $OUT_DIR"
 echo ""
 } | tee "$LOG_FILE"
@@ -214,7 +234,7 @@ run_stage() {
 
   # Submit
   local query
-  query="receipt_kind=${receipt}&verify_mode=policy"
+  query="receipt_kind=${receipt}&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@${tape}" -H "content-type: application/octet-stream")
@@ -338,22 +358,18 @@ echo "BATCH SUMMARY"
 echo "$(date)"
 echo "================================================================"
 echo ""
-printf "%-55s %-12s %-12s\n" "TAPE" "COMPOSITE" "GROTH16"
-printf "%-55s %-12s %-12s\n" "────" "─────────" "───────"
+printf "%-55s %-12s\n" "TAPE" "GROTH16"
+printf "%-55s %-12s\n" "────" "───────"
 
 while IFS=$'\t' read -r frames score seed size tape; do
   tape_name=$(basename "$tape")
-  comp_result="—"
   g16_result="—"
   while IFS=$'\t' read -r rname rstage rstatus; do
-    if [[ "$rname" == "$tape_name" && "$rstage" == "composite" ]]; then
-      comp_result="$rstatus"
-    fi
     if [[ "$rname" == "$tape_name" && "$rstage" == "groth16" ]]; then
       g16_result="$rstatus"
     fi
   done < "$RESULT_FILE"
-  printf "%-55s %-12s %-12s\n" "$tape_name" "$comp_result" "$g16_result"
+  printf "%-55s %-12s\n" "$tape_name" "$g16_result"
 done < "$TAPE_INDEX_FILE"
 
 echo ""

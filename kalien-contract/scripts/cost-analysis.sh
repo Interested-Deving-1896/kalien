@@ -31,7 +31,7 @@ RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-cost-${RUN_ID}"
 PLAYER_NAME="ast-costp-${RUN_ID}"
 
-STATE_FILE="$CONTRACT_DIR/.cost-analysis-state.env"
+STATE_FILE="${KALIEN_CONTRACT_STATE_FILE:-$CONTRACT_ENV_FILE}"
 
 usage() {
   cat <<'USAGE_EOF'
@@ -78,15 +78,14 @@ fi
 # State persistence (cost-analysis-specific fields)
 # ---------------------------------------------------------------------------
 save_cost_state() {
-  cat > "$STATE_FILE" << EOF
-SCORE_CONTRACT_ID=$SCORE_CONTRACT_ID
-TOKEN_ID=$TOKEN_ID
-DEPLOYER_NAME=$DEPLOYER_NAME
-PLAYER_NAME=$PLAYER_NAME
-IMAGE_ID_HEX=$IMAGE_ID_HEX
-DEPLOY_TX_HASH=${DEPLOY_TX_HASH:-}
-SAC_TX_HASH=${SAC_TX_HASH:-}
-EOF
+  save_state_vars "$STATE_FILE" \
+    SCORE_CONTRACT_ID "$SCORE_CONTRACT_ID" \
+    TOKEN_ID "$TOKEN_ID" \
+    DEPLOYER_NAME "$DEPLOYER_NAME" \
+    PLAYER_NAME "$PLAYER_NAME" \
+    IMAGE_ID_HEX "$IMAGE_ID_HEX" \
+    DEPLOY_TX_HASH "${DEPLOY_TX_HASH:-}" \
+    SAC_TX_HASH "${SAC_TX_HASH:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -301,6 +300,10 @@ measure_submit_score_groth16() {
   local seal_hex journal_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "Groth16 fixture journal must be compact (49 bytes)"
+    return 1
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -311,8 +314,7 @@ measure_submit_score_groth16() {
     -- \
     submit_score \
     --seal "$seal_hex" \
-    --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR"
+    --journal_raw "$journal_hex"
 }
 
 measure_submit_score_mock() {
@@ -326,6 +328,10 @@ measure_submit_score_mock() {
 
   local journal_hex
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
+    err "Mock fixture journal must be compact (49 bytes)"
+    return 1
+  fi
 
   PLAYER_ADDR=$(stellar keys address "$PLAYER_NAME")
 
@@ -343,8 +349,7 @@ measure_submit_score_mock() {
     -- \
     submit_score \
     --seal "$seal_hex" \
-    --journal_raw "$journal_hex" \
-    --claimant "$PLAYER_ADDR"
+    --journal_raw "$journal_hex"
 }
 
 measure_set_image_id() {

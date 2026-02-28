@@ -41,7 +41,7 @@ import {
   WORLD_WIDTH_Q12_4,
 } from "./constants";
 import { AudioSystem } from "./AudioSystem";
-import { Autopilot, type GameStateSnapshot } from "./Autopilot";
+import { Autopilot, type AutopilotConfig, type GameStateSnapshot } from "./Autopilot";
 import {
   applyDrag,
   atan2BAM,
@@ -68,7 +68,7 @@ import {
   wrapXQ12_4,
   wrapYQ12_4,
 } from "./math";
-import { deserializeTape, serializeTape, TapeRecorder } from "./tape";
+import { deserializeTape, serializeTape, TapeRecorder, type Tape } from "./tape";
 import type { Asteroid, AsteroidSize, Bullet, GameMode, Saucer, Ship } from "./types";
 
 const ASTEROID_RADIUS_BY_SIZE: Record<AsteroidSize, number> = {
@@ -167,13 +167,15 @@ export interface GameConfig {
   canvas?: HTMLCanvasElement;
   headless?: boolean;
   seed?: number;
+  seedId?: number;
+  autopilotConfig?: Partial<AutopilotConfig>;
 }
 
 export interface GameRunRecord {
   seed: number;
+  seedId: number;
   inputs: Uint8Array;
   finalScore: number;
-  finalRngState: number;
 }
 
 export class AsteroidsGame {
@@ -185,7 +187,7 @@ export class AsteroidsGame {
 
   private readonly audio = new AudioSystem();
 
-  private readonly autopilot = new Autopilot();
+  private readonly autopilot: Autopilot;
 
   private mode: GameMode = "menu";
 
@@ -234,6 +236,14 @@ export class AsteroidsGame {
 
   // Game seed for deterministic RNG (ZK-friendly)
   private gameSeed = 0;
+  private gameSeedId = 0;
+
+  // Seed supplied externally by the UI (fetched from contract); used when
+  // startNewGame() is called without an explicit seed argument.
+  private pendingSeed: number | null = null;
+  private pendingSeedId: number | null = null;
+  private pendingSeedSecondsLeft = 0;
+  private waitingForSeed = false;
 
   // Frame counter for deterministic timing
   private frameCount = 0;
@@ -248,6 +258,7 @@ export class AsteroidsGame {
   private replaySpeed = 1;
   private replayPaused = false;
   private replayTapeSource: TapeInputSource | null = null;
+  private replayTape: Tape | null = null;
 
   // Current frame input (read at start of updateSimulation, used by updateShip)
   private currentFrameInput: { left: boolean; right: boolean; thrust: boolean; fire: boolean } = {
@@ -302,14 +313,20 @@ export class AsteroidsGame {
   };
 
   constructor(config: GameConfig) {
+    this.autopilot = new Autopilot(config.autopilotConfig);
     this.canvas = config.canvas ?? null;
     this.ship = this.createShip();
+    if (config.seed !== undefined) {
+      this.pendingSeed = config.seed >>> 0;
+      this.pendingSeedId = (config.seedId ?? 0) >>> 0;
+    }
 
     if (config.headless === true) {
       // Headless mode: no rendering, no events, no audio
       this.renderer = null;
       if (config.seed !== undefined) {
-        this.gameSeed = config.seed;
+        this.gameSeed = config.seed >>> 0;
+        this.gameSeedId = (config.seedId ?? 0) >>> 0;
         setGameSeed(this.gameSeed);
       }
       return;
@@ -423,6 +440,15 @@ export class AsteroidsGame {
         }
       }
 
+      // When the replay tape finishes, transition to game-over so the UI
+      // can show the ScoreCard and allow score submission.
+      if (this.replayTapeSource?.isComplete() && this.mode === "replay") {
+        this.mode = "game-over";
+        if (this.renderer) {
+          this.saveHighScore();
+        }
+      }
+
       this.gameTime += deltaSeconds;
     } else {
       this.lastTimeMs = 0;
@@ -502,6 +528,7 @@ export class AsteroidsGame {
     // Return to menu with Escape
     if (this.input.consumePress("Escape") && this.mode !== "menu") {
       this.mode = "menu";
+      this.waitingForSeed = false;
       this.asteroids = [];
       this.bullets = [];
       this.saucers = [];
@@ -515,9 +542,38 @@ export class AsteroidsGame {
     }
   }
 
-  startNewGame(seed?: number): void {
-    // Generate deterministic seed for ZK-friendly RNG
-    this.gameSeed = seed ?? Date.now();
+  /** Update current seed + seed-window countdown provided by the UI layer. */
+  setCurrentSeed(
+    seed: number | null,
+    seedId: number | null,
+    secondsLeft = this.pendingSeedSecondsLeft,
+  ): void {
+    this.pendingSeed = seed === null ? null : seed >>> 0;
+    this.pendingSeedId = seedId === null ? null : seedId >>> 0;
+    this.pendingSeedSecondsLeft = Math.max(0, Math.ceil(secondsLeft));
+
+    // If the player already requested a game start/restart while we were waiting
+    // on the epoch seed, auto-start immediately once it appears.
+    if (this.pendingSeed !== null && this.waitingForSeed) {
+      this.waitingForSeed = false;
+      this.startNewGame(this.pendingSeed, this.pendingSeedId ?? undefined);
+    }
+  }
+
+  startNewGame(seed?: number, seedId?: number): void {
+    // Use provided seed, or fall back to the externally-set pending seed.
+    const resolvedSeed = seed !== undefined ? (seed >>> 0) : this.pendingSeed;
+    const resolvedSeedId = seedId !== undefined ? (seedId >>> 0) : this.pendingSeedId;
+    if (resolvedSeed === null || resolvedSeedId === null) {
+      // Avoid starting runs before a chain seed + seed_id are available.
+      this.waitingForSeed = true;
+      this.mode = "menu";
+      return;
+    }
+
+    this.waitingForSeed = false;
+    this.gameSeed = resolvedSeed;
+    this.gameSeedId = resolvedSeedId;
     setGameSeed(this.gameSeed);
 
     this.mode = "playing";
@@ -1223,14 +1279,18 @@ export class AsteroidsGame {
         if (collidesQ12_4(bullet.x, bullet.y, bullet.radius, saucer.x, saucer.y, saucer.radius)) {
           bullet.alive = false;
           saucer.alive = false;
-          this.addScore(saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER);
+          const saucerScore = saucer.small ? SCORE_SMALL_SAUCER : SCORE_LARGE_SAUCER;
+          this.addScore(saucerScore);
           if (this.renderer) {
             const sSize = saucer.small ? ("medium" as const) : ("large" as const);
-            this.renderer.onExplosion(fromQ12_4(saucer.x), fromQ12_4(saucer.y), sSize);
+            const sx = fromQ12_4(saucer.x);
+            const sy = fromQ12_4(saucer.y);
+            this.renderer.onExplosion(sx, sy, sSize);
             this.renderer.addScreenShake(
               saucer.small ? SHAKE_INTENSITY_MEDIUM : SHAKE_INTENSITY_LARGE,
             );
             this.audio.playExplosion(sSize);
+            this.renderer.onScorePopup(sx, sy - 20, saucerScore);
           }
           break;
         }
@@ -1341,6 +1401,12 @@ export class AsteroidsGame {
             : SHAKE_INTENSITY_SMALL * 0.5,
       );
       this.audio.playExplosion(asteroid.size);
+      if (awardScore) {
+        const pts = asteroid.size === "large" ? SCORE_LARGE_ASTEROID
+          : asteroid.size === "medium" ? SCORE_MEDIUM_ASTEROID
+          : SCORE_SMALL_ASTEROID;
+        this.renderer.onScorePopup(px, py - asteroid.radius, pts);
+      }
     }
 
     if (asteroid.size === "small") {
@@ -1428,6 +1494,8 @@ export class AsteroidsGame {
       wave: this.wave,
       lives: this.lives,
       gameSeed: this.gameSeed,
+      waitingForSeed: this.waitingForSeed,
+      pendingSeedSecondsLeft: this.pendingSeedSecondsLeft,
       gameTime: this.gameTime,
       thrustActive: this.currentFrameInput.thrust,
       autopilotEnabled: this.autopilot.isEnabled(),
@@ -1479,28 +1547,49 @@ export class AsteroidsGame {
   getMode(): GameMode {
     return this.mode;
   }
+
+  /** Toggle autopilot on/off (for mobile UI button). */
+  toggleAutopilot(): void {
+    if (this.mode === "playing") {
+      this.autopilot.toggle();
+    }
+  }
+
+  isAutopilotEnabled(): boolean {
+    return this.autopilot.isEnabled();
+  }
   getGameSeed(): number {
     return this.gameSeed;
   }
 
   /** Snapshot the current recorded run (no claimant binding). */
   getRunRecord(): GameRunRecord | null {
+    // For completed replay: return a record built from the tape's stored data
+    if (!this.recorder && this.replayTape) {
+      return {
+        seed: this.replayTape.header.seed,
+        seedId: this.gameSeedId,
+        inputs: this.replayTape.inputs,
+        finalScore: this.replayTape.footer.finalScore,
+      };
+    }
+
     if (!this.recorder) {
       return null;
     }
 
     return {
       seed: this.gameSeed,
+      seedId: this.gameSeedId,
       inputs: this.recorder.getInputs(),
       finalScore: this.score,
-      finalRngState: getGameRngState(),
     };
   }
 
   /** Build a serialized tape from the current recording. */
   getTape(): Uint8Array | null {
     if (!this.recorder) return null;
-    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score, getGameRngState());
+    return serializeTape(this.gameSeed, this.recorder.getInputs(), this.score);
   }
 
   // =========================================================================
@@ -1511,12 +1600,14 @@ export class AsteroidsGame {
   loadReplay(tapeData: Uint8Array): void {
     const tape = deserializeTape(tapeData);
     this.audio.enable();
-    this.startNewGame(tape.header.seed);
+    // Tape v4 does not encode seed_id; replays are visual-only and never claimed.
+    this.startNewGame(tape.header.seed, 0);
     this.mode = "replay";
     this.replaySpeed = 1;
     this.replayPaused = false;
     this.lastTimeMs = 0;
     this.accumulator = 0;
+    this.replayTape = tape;
     const tapeSource = new TapeInputSource(tape.inputs);
     this.replayTapeSource = tapeSource;
     this.inputSource = tapeSource;
@@ -1544,11 +1635,14 @@ export class AsteroidsGame {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".tape";
+    input.style.display = "none";
     input.addEventListener("change", () => {
       const file = input.files?.[0];
+      document.body.removeChild(input);
       if (!file) return;
       void file.arrayBuffer().then((buf) => this.loadReplay(new Uint8Array(buf)));
     });
+    document.body.appendChild(input);
     input.click();
   }
 

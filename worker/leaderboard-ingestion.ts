@@ -45,6 +45,7 @@ export interface GalexieFetchResult {
   provider: LeaderboardProvider;
   sourceMode: LeaderboardResolvedSourceMode;
   latestLedger: number | null;
+  oldestLedger: number | null;
 }
 
 interface GalexieDatastoreConfig {
@@ -362,47 +363,14 @@ function toHexString(value: unknown): string | null {
   return null;
 }
 
-function normalizeJournalDigest(value: unknown): string | null {
-  const hexRaw = toHexString(value);
-  if (!hexRaw) {
-    return null;
-  }
-
-  const normalized = hexRaw.startsWith("0x") || hexRaw.startsWith("0X") ? hexRaw.slice(2) : hexRaw;
-  if (normalized.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(normalized)) {
-    return null;
-  }
-
-  return normalized.toLowerCase();
-}
-
-function hasCanonicalScoreInvariants(values: {
-  finalScore: number;
-  previousBest: number;
-  newBest: number;
-  mintedDelta: number;
-}): boolean {
-  if (values.finalScore !== values.newBest) {
-    return false;
-  }
-  if (values.previousBest > values.newBest) {
-    return false;
-  }
-  return values.mintedDelta === values.newBest - values.previousBest;
-}
-
 function normalizeScoreSubmittedFromNative(nativeData: unknown): {
   claimantAddress: string;
   seed: number;
   frameCount: number | null;
   finalScore: number;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   previousBest: number;
   newBest: number;
   mintedDelta: number;
-  journalDigest: string | null;
 } | null {
   const mapLike = asNativeMap(nativeData);
   if (!mapLike) {
@@ -425,55 +393,27 @@ function normalizeScoreSubmittedFromNative(nativeData: unknown): {
   const frameCount = toInteger(readNativeMapValue(mapLike, ["frame_count"]));
   const finalScore = toInteger(readNativeMapValue(mapLike, ["final_score"]));
   const newBest = toInteger(readNativeMapValue(mapLike, ["new_best"]));
-  const finalRngState = toInteger(readNativeMapValue(mapLike, ["final_rng_state"]));
-  const tapeChecksum = toInteger(readNativeMapValue(mapLike, ["tape_checksum"]));
-  const rulesDigest = toInteger(readNativeMapValue(mapLike, ["rules_digest"]));
   const previousBest = toInteger(readNativeMapValue(mapLike, ["previous_best"]));
   const mintedDelta = toInteger(readNativeMapValue(mapLike, ["minted_delta"]));
-  const journalDigest = normalizeJournalDigest(readNativeMapValue(mapLike, ["journal_digest"]));
 
-  if (
-    seed === null ||
-    seed < 0 ||
-    frameCount === null ||
-    frameCount < 0 ||
-    finalScore === null ||
-    finalScore <= 0 ||
-    newBest === null ||
-    newBest <= 0 ||
-    finalRngState === null ||
-    finalRngState < 0 ||
-    tapeChecksum === null ||
-    tapeChecksum < 0 ||
-    rulesDigest === null ||
-    rulesDigest < 0 ||
-    previousBest === null ||
-    previousBest < 0 ||
-    mintedDelta === null ||
-    mintedDelta < 0 ||
-    journalDigest === null ||
-    !hasCanonicalScoreInvariants({
-      finalScore,
-      previousBest,
-      newBest,
-      mintedDelta,
-    })
-  ) {
-    return null;
-  }
+  // Best-effort ingestion: extract whatever fields we can.
+  // A score_submitted event should never be silently skipped — advancing
+  // the cursor past it loses the data permanently (RPC ~24h retention).
+  // At minimum we need a claimant and some score. Fill in defaults for
+  // anything we can't parse.
+  const resolvedScore = finalScore ?? newBest ?? 0;
+  const resolvedNewBest = newBest ?? finalScore ?? 0;
+  const resolvedPreviousBest = previousBest ?? 0;
+  const resolvedMintedDelta = mintedDelta ?? Math.max(0, resolvedNewBest - resolvedPreviousBest);
 
   return {
     claimantAddress,
-    seed: seed >>> 0,
-    frameCount: frameCount >>> 0,
-    finalScore: finalScore >>> 0,
-    finalRngState: finalRngState >>> 0,
-    tapeChecksum: tapeChecksum >>> 0,
-    rulesDigest: rulesDigest >>> 0,
-    previousBest: previousBest >>> 0,
-    newBest: newBest >>> 0,
-    mintedDelta: mintedDelta >>> 0,
-    journalDigest,
+    seed: seed !== null && seed >= 0 ? seed >>> 0 : 0,
+    frameCount: frameCount !== null && frameCount >= 0 ? frameCount >>> 0 : null,
+    finalScore: resolvedScore >>> 0,
+    previousBest: resolvedPreviousBest >>> 0,
+    newBest: resolvedNewBest >>> 0,
+    mintedDelta: resolvedMintedDelta >>> 0,
   };
 }
 
@@ -540,16 +480,197 @@ function normalizeEventKey(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+/**
+ * Direct binary parser for ScVal base64 data.
+ *
+ * Parses a base64-encoded XDR ScVal containing an SCV_MAP with symbol keys
+ * and u32 / address / bytes values — the exact shape emitted by the
+ * score_submitted contract event (both the old 11-field and new 8-field
+ * schemas).
+ *
+ * Returns a plain Record<string, unknown> that mirrors what scValToNative
+ * would produce, so normalizeScoreSubmittedFromNative can consume it
+ * without changes. Returns null only when the binary data is corrupt or
+ * in an unrecognised format.
+ */
+function parseScValMapFromBase64(b64: string): Record<string, unknown> | null {
+  // XDR ScVal type discriminants
+  const SCV_U32 = 3;
+  const SCV_BYTES = 13;
+  const SCV_SYMBOL = 15;
+  const SCV_MAP = 17;
+  const SCV_ADDRESS = 18;
+
+  // Stellar StrKey constants
+  const SC_ADDRESS_TYPE_ACCOUNT = 0;
+  const SC_ADDRESS_TYPE_CONTRACT = 1;
+
+  let buf: Uint8Array;
+  try {
+    // atob + Uint8Array works in both Node and Cloudflare Workers
+    const binary = atob(b64);
+    buf = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      buf[i] = binary.charCodeAt(i);
+    }
+  } catch {
+    return null;
+  }
+
+  let pos = 0;
+  const len = buf.length;
+
+  function readU32(): number | null {
+    if (pos + 4 > len) return null;
+    const v = (buf[pos] << 24) | (buf[pos + 1] << 16) | (buf[pos + 2] << 8) | buf[pos + 3];
+    pos += 4;
+    return v >>> 0; // unsigned
+  }
+
+  function readBytes(n: number): Uint8Array | null {
+    if (pos + n > len) return null;
+    const slice = buf.slice(pos, pos + n);
+    pos += n;
+    return slice;
+  }
+
+  function skipPadding(dataLen: number): void {
+    const pad = (4 - (dataLen % 4)) % 4;
+    pos += pad;
+  }
+
+  // Outer ScVal: must be SCV_MAP
+  const disc = readU32();
+  if (disc !== SCV_MAP) return null;
+
+  // Option<ScMap>: discriminant 1 = Some
+  const optPresent = readU32();
+  if (optPresent !== 1) return null;
+
+  // Map length
+  const mapLen = readU32();
+  if (mapLen === null || mapLen < 0 || mapLen > 64) return null;
+
+  const result: Record<string, unknown> = {};
+
+  for (let i = 0; i < mapLen; i++) {
+    // Key: SCV_SYMBOL
+    const keyDisc = readU32();
+    if (keyDisc !== SCV_SYMBOL) return null;
+
+    const keyLen = readU32();
+    if (keyLen === null || keyLen > 256) return null;
+    const keyRaw = readBytes(keyLen);
+    if (!keyRaw) return null;
+    skipPadding(keyLen);
+
+    let keyStr: string;
+    try {
+      keyStr = new TextDecoder().decode(keyRaw);
+    } catch {
+      return null;
+    }
+
+    // Value: read type discriminant
+    const valDisc = readU32();
+    if (valDisc === null) return null;
+
+    if (valDisc === SCV_U32) {
+      const v = readU32();
+      if (v === null) return null;
+      result[keyStr] = v;
+    } else if (valDisc === SCV_ADDRESS) {
+      // SC_ADDRESS: u32 type + 32-byte key
+      const addrType = readU32();
+      if (addrType === null) return null;
+      const addrBytes = readBytes(32);
+      if (!addrBytes) return null;
+
+      try {
+        if (addrType === SC_ADDRESS_TYPE_CONTRACT) {
+          result[keyStr] = StrKey.encodeContract(Buffer.from(addrBytes));
+        } else if (addrType === SC_ADDRESS_TYPE_ACCOUNT) {
+          result[keyStr] = StrKey.encodeEd25519PublicKey(Buffer.from(addrBytes));
+        } else {
+          // Unknown address type — store hex for debugging
+          result[keyStr] = Array.from(addrBytes)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("");
+        }
+      } catch {
+        // StrKey encoding failed — store hex
+        result[keyStr] = Array.from(addrBytes)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+    } else if (valDisc === SCV_BYTES) {
+      const bytesLen = readU32();
+      if (bytesLen === null || bytesLen > 1024) return null;
+      const bytesVal = readBytes(bytesLen);
+      if (!bytesVal) return null;
+      skipPadding(bytesLen);
+      // Store as hex string (matches how toHexString and normalizer expect it)
+      result[keyStr] = Array.from(bytesVal)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    } else {
+      // Unknown value type — skip this entry safely by returning what we have so far.
+      // The map may have extra fields we don't understand, but the fields we
+      // already parsed are still valuable.
+      break;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function decodeScValBase64(value: unknown): unknown {
   if (typeof value !== "string" || value.trim().length === 0) {
     return null;
   }
 
+  const trimmed = value.trim();
+
+  // Primary path: use the SDK's full XDR parser + scValToNative
   try {
-    return scValToNativeSafe(xdr.ScVal.fromXDR(value.trim(), "base64"));
+    const decoded = scValToNativeSafe(xdr.ScVal.fromXDR(trimmed, "base64"));
+    if (decoded !== null) {
+      return decoded;
+    }
   } catch {
-    return null;
+    // Fall through to binary parser
   }
+
+  // Fallback: direct binary XDR parser.
+  // Handles SCV_MAP (event data) and SCV_SYMBOL (event topic) without
+  // depending on scValToNative (which can behave differently across
+  // runtimes like Cloudflare Workers).
+  try {
+    const mapResult = parseScValMapFromBase64(trimmed);
+    if (mapResult !== null) return mapResult;
+  } catch {
+    // ignore
+  }
+
+  // Try bare SCV_SYMBOL (used for event topics like "score_submitted")
+  try {
+    const binary = atob(trimmed);
+    if (binary.length >= 8) {
+      const buf = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+      const disc = (buf[0] << 24 | buf[1] << 16 | buf[2] << 8 | buf[3]) >>> 0;
+      if (disc === 15) { // SCV_SYMBOL
+        const strLen = (buf[4] << 24 | buf[5] << 16 | buf[6] << 8 | buf[7]) >>> 0;
+        if (8 + strLen <= binary.length) {
+          return new TextDecoder().decode(buf.slice(8, 8 + strLen));
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
 }
 
 function extractScoreEventsFromLedgerBatch(
@@ -623,33 +744,57 @@ function extractScoreEventsFromLedgerBatch(
           continue;
         }
 
-        const scoreEvent = normalizeScoreSubmittedFromNative(scValToNativeSafe(eventBody.data()));
-        if (!scoreEvent) {
-          continue;
+        let scoreEventNative = scValToNativeSafe(eventBody.data());
+        if (scoreEventNative === null) {
+          // Fallback: re-encode the ScVal to base64 and use the binary parser
+          try {
+            scoreEventNative = parseScValMapFromBase64(eventBody.data().toXDR("base64"));
+          } catch {
+            // ignore
+          }
         }
-
+        const scoreEvent = normalizeScoreSubmittedFromNative(scoreEventNative);
         const eventId = `${txHash ?? "tx"}:${ledgerSeq}:${txIndex}:${eventIndex}`;
 
-        events.push({
-          eventId,
-          claimantAddress: scoreEvent.claimantAddress,
-          seed: scoreEvent.seed,
-          frameCount: scoreEvent.frameCount,
-          finalScore: scoreEvent.finalScore,
-          finalRngState: scoreEvent.finalRngState,
-          tapeChecksum: scoreEvent.tapeChecksum,
-          rulesDigest: scoreEvent.rulesDigest,
-          previousBest: scoreEvent.previousBest,
-          newBest: scoreEvent.newBest,
-          mintedDelta: scoreEvent.mintedDelta,
-          journalDigest: scoreEvent.journalDigest,
-          txHash,
-          eventIndex,
-          ledger: ledgerSeq,
-          closedAt,
-          source: "galexie",
-          ingestedAt,
-        });
+        if (scoreEvent) {
+          events.push({
+            eventId,
+            claimantAddress: scoreEvent.claimantAddress,
+            seed: scoreEvent.seed,
+            frameCount: scoreEvent.frameCount,
+            finalScore: scoreEvent.finalScore,
+            previousBest: scoreEvent.previousBest,
+            newBest: scoreEvent.newBest,
+            mintedDelta: scoreEvent.mintedDelta,
+            txHash,
+            eventIndex,
+            ledger: ledgerSeq,
+            closedAt,
+            source: "galexie",
+            ingestedAt,
+          });
+        } else {
+          console.warn(
+            `[leaderboard-ingestion] galexie score_submitted value decode failed` +
+              ` (eventId=${eventId}, ledger=${ledgerSeq}, txHash=${txHash})`,
+          );
+          events.push({
+            eventId,
+            claimantAddress: "UNKNOWN",
+            seed: 0,
+            frameCount: null,
+            finalScore: 0,
+            previousBest: 0,
+            newBest: 0,
+            mintedDelta: 0,
+            txHash,
+            eventIndex,
+            ledger: ledgerSeq,
+            closedAt,
+            source: "galexie",
+            ingestedAt,
+          });
+        }
       }
     }
   }
@@ -1074,9 +1219,6 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
     const scoreEvent = normalizeScoreSubmittedFromNative(
       decodeScValBase64(pickValue(nested, ["value", "data"])),
     );
-    if (!scoreEvent) {
-      continue;
-    }
 
     const txHashRaw = pickValue(nested, [
       "txHash",
@@ -1101,10 +1243,8 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
         "timestamp",
       ]),
     );
-    if (!closedAt) {
-      continue;
-    }
 
+    // Build an event ID from whatever we have — never skip a score_submitted event.
     const explicitEventId = pickValue(nested, [
       "id",
       "event_id",
@@ -1123,29 +1263,55 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
       eventId = `${ledger}:${eventIndex ?? 0}`;
     }
     if (!eventId) {
-      continue;
+      // Last resort: synthetic ID from ingestion timestamp + index to avoid duplicates
+      eventId = `synthetic:${ingestedAt}:${events.length}`;
     }
 
-    events.push({
-      eventId,
-      claimantAddress: scoreEvent.claimantAddress,
-      seed: scoreEvent.seed,
-      frameCount: scoreEvent.frameCount,
-      finalScore: scoreEvent.finalScore,
-      finalRngState: scoreEvent.finalRngState,
-      tapeChecksum: scoreEvent.tapeChecksum,
-      rulesDigest: scoreEvent.rulesDigest,
-      previousBest: scoreEvent.previousBest,
-      newBest: scoreEvent.newBest,
-      mintedDelta: scoreEvent.mintedDelta,
-      journalDigest: scoreEvent.journalDigest,
-      txHash,
-      eventIndex,
-      ledger,
-      closedAt,
-      source: "rpc",
-      ingestedAt,
-    });
+    // Best-effort: use parsed data if available, fall back to empty record.
+    // We must never advance the cursor past a score_submitted event without
+    // ingesting it — RPC retention is ~24h so data loss is permanent.
+    if (scoreEvent) {
+      events.push({
+        eventId,
+        claimantAddress: scoreEvent.claimantAddress,
+        seed: scoreEvent.seed,
+        frameCount: scoreEvent.frameCount,
+        finalScore: scoreEvent.finalScore,
+        previousBest: scoreEvent.previousBest,
+        newBest: scoreEvent.newBest,
+        mintedDelta: scoreEvent.mintedDelta,
+        txHash,
+        eventIndex,
+        ledger,
+        closedAt: closedAt ?? ingestedAt,
+        source: "rpc",
+        ingestedAt,
+      });
+    } else {
+      // Fallback: event matched score_submitted topic but value decoding failed.
+      // Log for debugging and ingest with zero scores so we preserve the record.
+      console.warn(
+        `[leaderboard-ingestion] score_submitted event value decode failed` +
+          ` (eventId=${eventId}, ledger=${ledger}, txHash=${txHash})` +
+          ` — ingesting with best-effort defaults`,
+      );
+      events.push({
+        eventId,
+        claimantAddress: "UNKNOWN",
+        seed: 0,
+        frameCount: null,
+        finalScore: 0,
+        previousBest: 0,
+        newBest: 0,
+        mintedDelta: 0,
+        txHash,
+        eventIndex,
+        ledger,
+        closedAt: closedAt ?? ingestedAt,
+        source: "rpc",
+        ingestedAt,
+      });
+    }
   }
 
   const cursorRaw = pickValue([root ?? {}], ["cursor", "next_cursor", "nextCursor"]);
@@ -1154,6 +1320,8 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
 
   const latestLedgerRaw = root ? toInteger(root.latestLedger) : null;
   const latestLedger = latestLedgerRaw !== null && latestLedgerRaw >= 0 ? latestLedgerRaw : null;
+  const oldestLedgerRaw = root ? toInteger(root.oldestLedger) : null;
+  const oldestLedger = oldestLedgerRaw !== null && oldestLedgerRaw >= 0 ? oldestLedgerRaw : null;
 
   return {
     events,
@@ -1162,6 +1330,7 @@ function normalizeRpcGetEventsPayload(payload: unknown, ingestedAt = nowIso()): 
     provider: "rpc",
     sourceMode: "rpc",
     latestLedger,
+    oldestLedger,
   };
 }
 
@@ -1259,8 +1428,11 @@ async function fetchLeaderboardEventsFromRpcEvents(
           }
           requestParams.endLedger = Math.max(2, nextEnd);
         }
-      } catch {
-        // Ignore health clamp errors and continue with caller-provided bounds.
+      } catch (healthError) {
+        // Log but continue with caller-provided bounds.
+        console.warn(
+          `[leaderboard-ingestion] health clamp failed for ${rpcBase.origin}: ${safeErrorMessage(healthError)}`,
+        );
       }
     }
 
@@ -1361,6 +1533,77 @@ async function fetchLeaderboardEventsFromRpcEvents(
         const message =
           typeof errorPayload.message === "string" ? errorPayload.message.trim() : null;
         const details = typeof errorPayload.data === "string" ? errorPayload.data.trim() : null;
+
+        // Detect cursor expiry: the RPC returns an error when the cursor (or
+        // startLedger derived from it) references a ledger older than the
+        // retention window. Common patterns:
+        //   "start is before oldest ledger"
+        //   "startLedger must be within the ledger range: [oldest, latest]"
+        const errorText = `${message ?? ""} ${details ?? ""}`.toLowerCase();
+        const isCursorExpiry =
+          errorText.includes("oldest ledger") || errorText.includes("ledger range");
+        const hasCursor = Object.prototype.hasOwnProperty.call(
+          variantParams.pagination as JsonRecord,
+          "cursor",
+        );
+
+        if (isCursorExpiry && hasCursor) {
+          console.warn(
+            `[leaderboard-ingestion] cursor expiry detected (${rpcBase.origin}): ${message}` +
+              ` — attempting recovery with oldestLedger`,
+          );
+          // Attempt recovery: drop the expired cursor and retry with startLedger = oldestLedger
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const bounds = await ensureRpcBounds();
+            if (bounds.oldestLedger !== null) {
+              const recoveryPagination: JsonRecord = { limit };
+              const recoveryParams: JsonRecord = {
+                filters: [filter],
+                pagination: recoveryPagination,
+                startLedger: bounds.oldestLedger,
+              };
+              // eslint-disable-next-line no-await-in-loop
+              const recoveryResponse = await fetchWithTimeout(
+                rpcBase,
+                {
+                  method: "POST",
+                  headers: {
+                    ...getRpcAuthHeaders(env, rpcBase),
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 1,
+                    method: "getEvents",
+                    params: recoveryParams,
+                  }),
+                },
+                timeoutMs,
+              );
+              if (recoveryResponse.ok) {
+                // eslint-disable-next-line no-await-in-loop
+                const recoveryPayload = await recoveryResponse.json();
+                const recoveryRoot = asRecord(recoveryPayload);
+                if (!asRecord(recoveryRoot?.error)) {
+                  const recoveryResult = asRecord(recoveryRoot?.result);
+                  if (recoveryResult) {
+                    console.log(
+                      `[leaderboard-ingestion] cursor expiry recovery succeeded` +
+                        ` (${rpcBase.origin}, oldestLedger=${bounds.oldestLedger})`,
+                    );
+                    const fetchResult = normalizeRpcGetEventsPayload(recoveryResult);
+                    fetchResult.oldestLedger = bounds.oldestLedger;
+                    return fetchResult;
+                  }
+                }
+              }
+            }
+          } catch {
+            // Recovery failed — fall through to normal error handling
+          }
+        }
+
         const pieces = [
           "rpc getEvents returned an error",
           code !== null ? `code=${code}` : null,
@@ -1377,7 +1620,12 @@ async function fetchLeaderboardEventsFromRpcEvents(
         continue;
       }
 
-      return normalizeRpcGetEventsPayload(result);
+      const fetchResult = normalizeRpcGetEventsPayload(result);
+      // Propagate retention bounds if we fetched them during health clamping
+      if (rpcBounds?.oldestLedger !== null && rpcBounds?.oldestLedger !== undefined) {
+        fetchResult.oldestLedger = rpcBounds.oldestLedger;
+      }
+      return fetchResult;
     }
   }
 
@@ -1410,6 +1658,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
   const extensions = resolveGalexieDatastoreObjectExtensions(env, datastoreConfig);
   const rootPath = getGalexieRootPath(env);
 
+  const maxMissingFiles = parseInteger(env.GALEXIE_DATALAKE_MAX_MISSING_FILES, 4, 1);
   const events: LeaderboardEventRecord[] = [];
   let inspectedEventCount = 0;
   let cursorLedger = ledgerRange.fromLedger;
@@ -1454,7 +1703,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
       fileStartLedger += ledgersPerFile;
       cursorLedger = fileStartLedger;
       if (options.toLedger === null || options.toLedger === undefined) {
-        if (consecutiveMissingFiles >= 2) {
+        if (consecutiveMissingFiles >= maxMissingFiles) {
           break;
         }
       }
@@ -1486,6 +1735,7 @@ async function fetchLeaderboardEventsFromGalexieDatastore(
     provider: "galexie",
     sourceMode: "datalake",
     latestLedger,
+    oldestLedger: null,
   };
 }
 
@@ -1523,53 +1773,24 @@ export function normalizeGalexieScoreEvents(
       continue;
     }
 
+    // Best-effort extraction with defaults — same approach as RPC/datalake paths.
+    // Never skip an event from the Events API, as cursor advancement would lose
+    // the data permanently.
     const seed = toInteger(pickValue(nested, ["seed"]));
     const frameCount = toInteger(pickValue(nested, ["frame_count"]));
     const finalScore = toInteger(pickValue(nested, ["final_score"]));
     const newBest = toInteger(pickValue(nested, ["new_best"]));
-    const finalRngState = toInteger(pickValue(nested, ["final_rng_state"]));
-    const tapeChecksum = toInteger(pickValue(nested, ["tape_checksum"]));
-    const rulesDigest = toInteger(pickValue(nested, ["rules_digest"]));
     const previousBest = toInteger(pickValue(nested, ["previous_best"]));
     const mintedDelta = toInteger(pickValue(nested, ["minted_delta"]));
-    const journalDigestRaw = pickValue(nested, ["journal_digest"]);
     const closedAt = toIsoTimestamp(pickValue(nested, ["closed_at"]));
 
-    if (
-      seed === null ||
-      seed < 0 ||
-      frameCount === null ||
-      frameCount < 0 ||
-      finalScore === null ||
-      finalScore <= 0 ||
-      newBest === null ||
-      newBest <= 0 ||
-      finalRngState === null ||
-      finalRngState < 0 ||
-      tapeChecksum === null ||
-      tapeChecksum < 0 ||
-      rulesDigest === null ||
-      rulesDigest < 0 ||
-      previousBest === null ||
-      previousBest < 0 ||
-      mintedDelta === null ||
-      mintedDelta < 0 ||
-      !closedAt
-    ) {
-      continue;
-    }
-    const journalDigest = normalizeJournalDigest(journalDigestRaw);
-    if (
-      journalDigest === null ||
-      !hasCanonicalScoreInvariants({
-        finalScore,
-        previousBest,
-        newBest,
-        mintedDelta,
-      })
-    ) {
-      continue;
-    }
+    const resolvedScore = (finalScore ?? newBest ?? 0) >>> 0;
+    const resolvedNewBest = (newBest ?? finalScore ?? 0) >>> 0;
+    const resolvedPreviousBest = (previousBest ?? 0) >>> 0;
+    const resolvedMintedDelta =
+      mintedDelta !== null
+        ? mintedDelta >>> 0
+        : Math.max(0, resolvedNewBest - resolvedPreviousBest) >>> 0;
 
     const txHashRaw = pickValue(nested, ["tx_hash"]);
     const txHash =
@@ -1593,26 +1814,22 @@ export function normalizeGalexieScoreEvents(
       eventId = `${ledger}:${eventIndex ?? 0}`;
     }
     if (!eventId) {
-      continue;
+      eventId = `synthetic:${ingestedAt}:${events.length}`;
     }
 
     events.push({
       eventId,
       claimantAddress,
-      seed: seed >>> 0,
-      frameCount: frameCount >>> 0,
-      finalScore: finalScore >>> 0,
-      finalRngState: finalRngState >>> 0,
-      tapeChecksum: tapeChecksum >>> 0,
-      rulesDigest: rulesDigest >>> 0,
-      previousBest: previousBest >>> 0,
-      newBest: newBest >>> 0,
-      mintedDelta: mintedDelta >>> 0,
-      journalDigest,
+      seed: seed !== null && seed >= 0 ? seed >>> 0 : 0,
+      frameCount: frameCount !== null && frameCount >= 0 ? frameCount >>> 0 : null,
+      finalScore: resolvedScore,
+      previousBest: resolvedPreviousBest,
+      newBest: resolvedNewBest,
+      mintedDelta: resolvedMintedDelta,
       txHash,
       eventIndex,
       ledger,
-      closedAt,
+      closedAt: closedAt ?? ingestedAt,
       source: "galexie",
       ingestedAt,
     });
@@ -1625,6 +1842,7 @@ export function normalizeGalexieScoreEvents(
     provider: "galexie",
     sourceMode: "events_api",
     latestLedger: null,
+    oldestLedger: null,
   };
 }
 

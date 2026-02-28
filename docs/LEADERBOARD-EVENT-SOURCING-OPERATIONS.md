@@ -4,8 +4,8 @@
 - Leaderboard API is sourced from ingested chain events, not proof-job records.
 - Source event expected: `score_submitted` (canonical, forward-only).
 - Event payload consumed for leaderboard/analytics:
-  - Journal mirror: `seed`, `frame_count`, `final_score`, `final_rng_state`, `tape_checksum`, `rules_digest`
-  - Reward context: `claimant`, `previous_best`, `new_best`, `minted_delta`, `journal_digest`
+  - Journal mirror: `seed_id`, `seed`, `frame_count`, `final_score`
+  - Reward context: `claimant`, `previous_best`, `new_best`, `minted_delta`
   - Metadata: `event_id`, `tx_hash`, `event_index`, `ledger`, `closed_at`
 - Ingestion is idempotent by `eventId` and safe to re-run.
 - Ingestion supports RPC-first and Galexie backfill modes:
@@ -51,7 +51,7 @@ Set secrets:
 
 ```bash
 npx wrangler secret put GALEXIE_API_KEY
-npx wrangler secret put LEADERBOARD_ADMIN_KEY
+npx wrangler secret put DEV_API_KEY
 ```
 
 If your provider key is labeled as a Lightsail key, use that value for `GALEXIE_API_KEY`.
@@ -72,63 +72,33 @@ If your provider key is labeled as a Lightsail key, use that value for `GALEXIE_
 
 ## Sync Endpoints
 
-Admin header required:
-- `x-leaderboard-admin-key: <LEADERBOARD_ADMIN_KEY>`
+Dev bearer header required:
+- `Authorization: Bearer <DEV_API_KEY>`
 
-### Status
+### Scheduled-equivalent forward sync
 
 ```bash
-curl -sS "http://127.0.0.1:8787/api/leaderboard/sync/status" \
-  -H "x-leaderboard-admin-key: $LEADERBOARD_ADMIN_KEY"
+curl -sS -X POST "http://127.0.0.1:8787/dev/api/leaderboard/sync" \
+  -H "Authorization: Bearer $DEV_API_KEY"
 ```
 
-### One-Time Legacy DO -> D1 Migration
+### Forward sync with reset cursor
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8787/api/leaderboard/migrate/do-to-d1" \
-  -H "x-leaderboard-admin-key: $LEADERBOARD_ADMIN_KEY" \
-  -H "x-migration-confirm: do-to-d1"
+curl -sS -X POST "http://127.0.0.1:8787/dev/api/leaderboard/sync?reset_cursor=1" \
+  -H "Authorization: Bearer $DEV_API_KEY"
 ```
 
-For large legacy datasets, migrate in smaller pages:
+### Forward sync from explicit ledger
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8787/api/leaderboard/migrate/do-to-d1?chunk_size=500" \
-  -H "x-leaderboard-admin-key: $LEADERBOARD_ADMIN_KEY" \
-  -H "x-migration-confirm: do-to-d1"
-```
-
-### Forward Fill (cursor-based)
-
-```bash
-curl -sS -X POST "http://127.0.0.1:8787/api/leaderboard/sync" \
-  -H "content-type: application/json" \
-  -H "x-leaderboard-admin-key: $LEADERBOARD_ADMIN_KEY" \
-  -d '{"mode":"forward","limit":200}'
-```
-
-### Backfill (bounded ledger range)
-
-```bash
-curl -sS -X POST "http://127.0.0.1:8787/api/leaderboard/sync" \
-  -H "content-type: application/json" \
-  -H "x-leaderboard-admin-key: $LEADERBOARD_ADMIN_KEY" \
-  -d '{"mode":"backfill","from_ledger":123456,"to_ledger":124000,"limit":200}'
-```
-
-### Force Datalake Backfill (for verification/recovery)
-
-```bash
-curl -sS -X POST "http://127.0.0.1:8787/api/leaderboard/sync" \
-  -H "content-type: application/json" \
-  -H "x-leaderboard-admin-key: $LEADERBOARD_ADMIN_KEY" \
-  -d '{"mode":"backfill","source":"datalake","from_ledger":123456,"to_ledger":124000,"limit":200}'
+curl -sS -X POST "http://127.0.0.1:8787/dev/api/leaderboard/sync?from_ledger=123456" \
+  -H "Authorization: Bearer $DEV_API_KEY"
 ```
 
 Backfill safety rules:
-- Require `from_ledger`.
-- Reject `from_ledger > to_ledger`.
-- Upsert is idempotent, so repeated backfill windows are safe.
+- `from_ledger` must be an integer >= 2.
+- The sync operation is idempotent, so repeated windows are safe.
 
 ## Catch-Up Cron
 - The Worker scheduled handler runs forward sync every cron tick.
@@ -146,7 +116,7 @@ Backfill safety rules:
 - `PUT /api/leaderboard/player/:claimantAddress/profile`
 
 Profile update flow:
-- `POST .../profile/auth/options` accepts `credential_id`, `credential_public_key`, and optional `transports`, then returns one-time WebAuthn assertion options + `challenge_id`.
+- `POST .../profile/auth/options` accepts `credential_id`, resolves public key metadata server-side, then returns one-time WebAuthn assertion options + `challenge_id`.
 - Client calls `startAuthentication(options)` in browser, then sends `PUT .../profile` with `auth.challenge_id` + `auth.response`.
 - Worker verifies passkey assertion server-side, consumes challenge (single-use), updates authenticator counter, then writes profile.
 - No `x-claimant-address` header is accepted for profile updates anymore.
@@ -156,6 +126,6 @@ Pagination notes:
 - `offset` is capped at `10000`.
 
 ## Operational Notes
-- Keep sync/admin endpoints private behind the admin key.
+- Keep dev sync/reset/seed endpoints private behind `DEV_API_KEY`.
 - Run frequent forward sync (RPC primary), plus controlled backfill windows for full historical coverage.
 - Use `ingestion.last_synced_at` and `ingestion.highest_ledger` in `/api/leaderboard` response to monitor freshness.

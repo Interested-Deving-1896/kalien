@@ -22,7 +22,7 @@ lto = true
 
 - **Integer-only math** — No floats anywhere. Floats cost 60-140 cycles in the zkVM vs 1-2 for integer ops. Our Q12.4/Q8.8/BAM system avoids this entirely.
 - **No HashMap** — Would pull in SipHash randomization. We don't need maps at all.
-- **No serde in the hot path** — Guest reads raw slices via `env::read_slice()`, commits a 24-byte struct. No deserialization overhead.
+- **No serde in the hot path** — Guest reads raw slices via `env::read_slice()`, commits a compact 49-byte journal. No deserialization overhead.
 - **`no_std` guest** — Minimal binary, no std bloat.
 - **No async/threading** — zkVM is single-threaded. Async constructs only add overhead.
 - **Trig via lookup tables** — `sin_bam`/`cos_bam` are array lookups (1 cycle) not computed trig.

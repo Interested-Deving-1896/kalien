@@ -39,13 +39,30 @@
 		"ALLOW_INSECURE_PROVER_URL": "0",
 		// Gateway limits
 		"MAX_TAPE_BYTES": "2097152",
-		"MAX_JOB_WALL_TIME_MS": "660000",
+		"MAX_JOB_WALL_TIME_MS": "2100000",
 		"MAX_COMPLETED_JOBS": "200",
 		"COMPLETED_JOB_RETENTION_MS": "86400000",
 		// Relayer (OpenZeppelin Channels testnet)
 		"RELAYER_URL": "https://channels.openzeppelin.com/testnet",
 		"RELAYER_PLUGIN_ID": "",
 		"RELAYER_REQUEST_TIMEOUT_MS": "30000",
+		// Boundless proving (alternative to Vast.ai prover)
+		// Secrets (BOUNDLESS_PRIVATE_KEY, PINATA_JWT) go in .dev.vars / `wrangler secret`
+		// Defaults target Base Mainnet (chain 8453). Override BOUNDLESS_CHAIN_ID for testnets.
+		"BOUNDLESS_RPC_URL": "https://base-mainnet.public.blastapi.io",
+		"BOUNDLESS_IMAGE_URL": "https://gateway.pinata.cloud/ipfs/QmQ7m1WcrHH4TABWwYjroZzKPeSmqBXv8NeMHvwGFzFwrk",
+		"BOUNDLESS_IMAGE_ID": "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
+		"BOUNDLESS_MAX_PRICE_USD": "0.02",
+		"BOUNDLESS_MIN_PRICE_USD": "0.0002",
+		"BOUNDLESS_FLAT_PERIOD_SEC": "60",
+		"BOUNDLESS_RAMP_PERIOD_SEC": "660",
+		"BOUNDLESS_LOCK_TIMEOUT_SEC": "1740",
+		"BOUNDLESS_TIMEOUT_SEC": "3540",
+		"BOUNDLESS_POLL_INTERVAL_MS": "15000",
+		"BOUNDLESS_POLL_TIMEOUT_MS": "600000",
+		// Set chain ID to select known deployment (8453=Base Mainnet, 11155111=Eth Sepolia, 84532=Base Sepolia)
+		// Or set explicit overrides: BOUNDLESS_MARKET_ADDRESS, BOUNDLESS_ORDER_STREAM_URL, BOUNDLESS_DEPLOYMENT_BLOCK
+		"BOUNDLESS_CHAIN_ID": "8453",
 		// Stellar testnet
 		"SCORE_CONTRACT_ID": "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
 		"CLAIM_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
@@ -63,6 +80,10 @@
 			"database_id": "3ca395d5-5de1-4d46-ac16-b9c2d9982e84",
 		},
 	],
+	// R2 bucket for proof tapes & results.
+	// IMPORTANT: Configure an R2 lifecycle rule "expire-proof-jobs" on this bucket
+	// to auto-delete objects after 7 days. Without it, proof artifacts accumulate indefinitely.
+	// Dashboard → R2 → kalien-proof-artifacts → Settings → Object lifecycle rules.
 	"r2_buckets": [
 		{
 			"binding": "PROOF_ARTIFACTS",
@@ -76,21 +97,42 @@
 				"queue": "kalien-proof-jobs",
 			},
 			{
+				"binding": "VAST_QUEUE",
+				"queue": "kalien-vast-jobs",
+			},
+			{
 				"binding": "CLAIM_QUEUE",
 				"queue": "kalien-claim-jobs",
 			},
 		],
 		"consumers": [
 			{
+				// Boundless submissions — parallel, many concurrent
 				"queue": "kalien-proof-jobs",
 				"max_batch_size": 1,
 				"max_batch_timeout": 1,
 				"max_retries": 10,
-				"max_concurrency": 1,
+				"max_concurrency": 5,
 				"dead_letter_queue": "kalien-proof-jobs-dlq",
 			},
 			{
 				"queue": "kalien-proof-jobs-dlq",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"max_concurrency": 1,
+			},
+			{
+				// VastAI submissions — serial, 1 GPU at a time
+				"queue": "kalien-vast-jobs",
+				"max_batch_size": 1,
+				"max_batch_timeout": 1,
+				"max_retries": 30,
+				"max_concurrency": 1,
+				"dead_letter_queue": "kalien-vast-jobs-dlq",
+			},
+			{
+				"queue": "kalien-vast-jobs-dlq",
 				"max_batch_size": 1,
 				"max_batch_timeout": 5,
 				"max_retries": 3,
@@ -131,7 +173,8 @@
 	],
 	"triggers": {
 		"crons": [
-			"*/1 * * * *"
+			"*/1 * * * *",
+			"*/10 * * * *"
 		],
 	},
 }

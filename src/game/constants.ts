@@ -62,7 +62,7 @@ export const LURK_TIME_THRESHOLD_FRAMES = 360; // 6s * 60fps
 export const LURK_SAUCER_SPAWN_FAST_FRAMES = 180; // 3s * 60fps
 
 // Rules version tag — written to tape header byte [5]
-export const RULES_TAG = 3; // "AST3"
+export const RULES_TAG = 4; // "AST4"
 
 // === Q12.4 World dimensions ===
 export const WORLD_WIDTH_Q12_4 = 15360; // 960 * 16

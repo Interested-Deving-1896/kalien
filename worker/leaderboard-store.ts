@@ -57,13 +57,9 @@ function eventRowHash(event: LeaderboardEventRecord): string {
       event.seed >>> 0,
       event.frameCount === null ? null : event.frameCount >>> 0,
       event.finalScore >>> 0,
-      event.finalRngState === null ? null : event.finalRngState >>> 0,
-      event.tapeChecksum === null ? null : event.tapeChecksum >>> 0,
-      event.rulesDigest === null ? null : event.rulesDigest >>> 0,
       event.previousBest >>> 0,
       event.newBest >>> 0,
       event.mintedDelta >>> 0,
-      event.journalDigest ?? "",
       event.txHash ?? "",
       event.eventIndex ?? -1,
       event.ledger ?? -1,
@@ -207,89 +203,38 @@ function getWindowRange(
   };
 }
 
-async function getTableColumnNames(db: D1Database, table: string): Promise<Set<string>> {
-  const rows = await db.prepare(`PRAGMA table_info(${table})`).all<Record<string, unknown>>();
-  const names = new Set<string>();
-  for (const row of rows.results ?? []) {
-    if (typeof row.name === "string" && row.name.length > 0) {
-      names.add(row.name);
-    }
-  }
-  return names;
-}
-
-async function ensureLeaderboardEventColumns(db: D1Database): Promise<void> {
-  const columns = await getTableColumnNames(db, "leaderboard_events");
-  if (columns.size === 0) {
-    return;
-  }
-
-  const alterStatements: string[] = [];
-  if (!columns.has("frame_count")) {
-    alterStatements.push("ALTER TABLE leaderboard_events ADD COLUMN frame_count INTEGER");
-  }
-  if (!columns.has("final_score")) {
-    alterStatements.push("ALTER TABLE leaderboard_events ADD COLUMN final_score INTEGER");
-  }
-  if (!columns.has("final_rng_state")) {
-    alterStatements.push("ALTER TABLE leaderboard_events ADD COLUMN final_rng_state INTEGER");
-  }
-  if (!columns.has("tape_checksum")) {
-    alterStatements.push("ALTER TABLE leaderboard_events ADD COLUMN tape_checksum INTEGER");
-  }
-  if (!columns.has("rules_digest")) {
-    alterStatements.push("ALTER TABLE leaderboard_events ADD COLUMN rules_digest INTEGER");
-  }
-
-  /* eslint-disable no-await-in-loop */
-  for (const statement of alterStatements) {
-    await db.prepare(statement).run();
-  }
-  /* eslint-enable no-await-in-loop */
-}
-
 async function ensureSchema(env: WorkerEnv): Promise<void> {
   const db = getDb(env);
   let schemaInitPromise = schemaInitByDb.get(db);
   if (!schemaInitPromise) {
     schemaInitPromise = (async () => {
+      const leaderboardEventsTableSql = `CREATE TABLE IF NOT EXISTS leaderboard_events (
+        event_id TEXT PRIMARY KEY,
+        claimant_address TEXT NOT NULL,
+        seed INTEGER NOT NULL,
+        frame_count INTEGER,
+        final_score INTEGER,
+        previous_best INTEGER NOT NULL,
+        new_best INTEGER NOT NULL,
+        minted_delta INTEGER NOT NULL,
+        tx_hash TEXT,
+        event_index INTEGER,
+        ledger INTEGER,
+        closed_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        ingested_at TEXT NOT NULL,
+        row_hash TEXT NOT NULL
+      )`;
       const schemaStatements = [
-        `CREATE TABLE IF NOT EXISTS leaderboard_events (
-          event_id TEXT PRIMARY KEY,
-          claimant_address TEXT NOT NULL,
-          seed INTEGER NOT NULL,
-          frame_count INTEGER,
-          final_score INTEGER,
-          final_rng_state INTEGER,
-          tape_checksum INTEGER,
-          rules_digest INTEGER,
-          previous_best INTEGER NOT NULL,
-          new_best INTEGER NOT NULL,
-          minted_delta INTEGER NOT NULL,
-          journal_digest TEXT,
-          tx_hash TEXT,
-          event_index INTEGER,
-          ledger INTEGER,
-          closed_at TEXT NOT NULL,
-          source TEXT NOT NULL,
-          ingested_at TEXT NOT NULL,
-          row_hash TEXT NOT NULL
-        )`,
-        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_closed_at
-          ON leaderboard_events(closed_at DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_claimant_closed_at
-          ON leaderboard_events(claimant_address, closed_at DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_claimant_best
-          ON leaderboard_events(claimant_address, new_best DESC, closed_at ASC, event_id ASC)`,
-        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_window_rank
-          ON leaderboard_events(closed_at DESC, new_best DESC, claimant_address, event_id ASC)`,
-        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_seed_closed_at
-          ON leaderboard_events(seed, closed_at DESC)`,
         `CREATE TABLE IF NOT EXISTS leaderboard_profiles (
           claimant_address TEXT PRIMARY KEY,
           username TEXT,
           link_url TEXT,
           updated_at TEXT NOT NULL
+        )`,
+        `CREATE TABLE IF NOT EXISTS proof_tape_index (
+          tx_hash TEXT PRIMARY KEY,
+          proof_job_id TEXT NOT NULL
         )`,
         `CREATE TABLE IF NOT EXISTS leaderboard_profile_credentials (
           credential_id TEXT PRIMARY KEY,
@@ -330,16 +275,24 @@ async function ensureSchema(env: WorkerEnv): Promise<void> {
 
       // D1 local dev can fail on multi-statement exec; run DDL one-by-one.
       /* eslint-disable no-await-in-loop */
+      await db.prepare(leaderboardEventsTableSql).run();
       for (const statement of schemaStatements) {
         await db.prepare(statement).run();
       }
-      await ensureLeaderboardEventColumns(db);
-      await db
-        .prepare(
-          `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_rules_digest
-            ON leaderboard_events(rules_digest)`,
-        )
-        .run();
+      for (const statement of [
+        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_closed_at
+          ON leaderboard_events(closed_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_claimant_closed_at
+          ON leaderboard_events(claimant_address, closed_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_claimant_best
+          ON leaderboard_events(claimant_address, new_best DESC, closed_at ASC, event_id ASC)`,
+        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_window_rank
+          ON leaderboard_events(closed_at DESC, new_best DESC, claimant_address, event_id ASC)`,
+        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_seed_closed_at
+          ON leaderboard_events(seed, closed_at DESC)`,
+      ]) {
+        await db.prepare(statement).run();
+      }
       /* eslint-enable no-await-in-loop */
     })().catch((error) => {
       schemaInitByDb.delete(db);
@@ -513,22 +466,18 @@ export async function upsertLeaderboardEvents(
 
   const upsert = db.prepare(
     `INSERT INTO leaderboard_events (
-      event_id, claimant_address, seed, frame_count, final_score, final_rng_state, tape_checksum, rules_digest,
-      previous_best, new_best, minted_delta, journal_digest,
+      event_id, claimant_address, seed, frame_count, final_score,
+      previous_best, new_best, minted_delta,
       tx_hash, event_index, ledger, closed_at, source, ingested_at, row_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(event_id) DO UPDATE SET
       claimant_address = excluded.claimant_address,
       seed = excluded.seed,
       frame_count = excluded.frame_count,
       final_score = excluded.final_score,
-      final_rng_state = excluded.final_rng_state,
-      tape_checksum = excluded.tape_checksum,
-      rules_digest = excluded.rules_digest,
       previous_best = excluded.previous_best,
       new_best = excluded.new_best,
       minted_delta = excluded.minted_delta,
-      journal_digest = excluded.journal_digest,
       tx_hash = excluded.tx_hash,
       event_index = excluded.event_index,
       ledger = excluded.ledger,
@@ -547,16 +496,10 @@ export async function upsertLeaderboardEvents(
     if (finalScore === null) {
       continue;
     }
-    const finalRngState = toNullableU32(event.finalRngState);
-    const tapeChecksum = toNullableU32(event.tapeChecksum);
-    const rulesDigest = toNullableU32(event.rulesDigest);
     const normalizedEvent: LeaderboardEventRecord = {
       ...event,
       frameCount,
       finalScore,
-      finalRngState,
-      tapeChecksum,
-      rulesDigest,
     };
 
     const rowHash = eventRowHash(normalizedEvent);
@@ -576,13 +519,9 @@ export async function upsertLeaderboardEvents(
         event.seed >>> 0,
         frameCount,
         finalScore >>> 0,
-        finalRngState,
-        tapeChecksum,
-        rulesDigest,
         event.previousBest >>> 0,
         event.newBest >>> 0,
         event.mintedDelta >>> 0,
-        event.journalDigest,
         event.txHash,
         event.eventIndex,
         event.ledger,
@@ -893,6 +832,23 @@ export async function purgeExpiredLeaderboardProfileAuthChallenges(
     .run();
 }
 
+export async function writeProofTapeMapping(
+  env: WorkerEnv,
+  txHash: string,
+  proofJobId: string,
+): Promise<void> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  await db
+    .prepare(
+      `INSERT INTO proof_tape_index (tx_hash, proof_job_id)
+       VALUES (?, ?)
+       ON CONFLICT(tx_hash) DO UPDATE SET proof_job_id = excluded.proof_job_id`,
+    )
+    .bind(txHash, proofJobId)
+    .run();
+}
+
 function windowWhereClause(window: LeaderboardWindow): string {
   return window === "all" ? "" : "WHERE closed_at >= ?";
 }
@@ -910,9 +866,6 @@ function rankedQueryCteSql(whereClause: string): string {
       seed,
       frame_count,
       final_score,
-      final_rng_state,
-      tape_checksum,
-      rules_digest,
       new_best,
       minted_delta,
       tx_hash,
@@ -935,9 +888,6 @@ function rankedQueryCteSql(whereClause: string): string {
       seed,
       frame_count,
       final_score,
-      final_rng_state,
-      tape_checksum,
-      rules_digest,
       new_best,
       minted_delta,
       tx_hash,
@@ -956,12 +906,10 @@ function mapRankedEntry(row: Record<string, unknown>): {
   mintedDelta: number;
   seed: number;
   frameCount: number | null;
-  finalRngState: number | null;
-  tapeChecksum: number | null;
-  rulesDigest: number | null;
   completedAt: string;
   claimStatus: "succeeded";
   claimTxHash: string | null;
+  proofJobId: string | null;
   profile: PlayerProfileRecord | null;
 } {
   const profileUpdatedAt = toNullableString(row.profile_updated_at);
@@ -976,12 +924,10 @@ function mapRankedEntry(row: Record<string, unknown>): {
     mintedDelta: toNumber(row.minted_delta, 0),
     seed: toNumber(row.seed, 0) >>> 0,
     frameCount: toNullableU32(row.frame_count),
-    finalRngState: toNullableU32(row.final_rng_state),
-    tapeChecksum: toNullableU32(row.tape_checksum),
-    rulesDigest: toNullableU32(row.rules_digest),
     completedAt: String(row.completed_at),
     claimStatus: "succeeded",
     claimTxHash: toNullableString(row.claim_tx_hash),
+    proofJobId: toNullableString(row.proof_job_id),
     profile:
       profileUpdatedAt || profileUsername || profileLinkUrl
         ? {
@@ -1042,17 +988,17 @@ export async function getLeaderboardPage(
          ranked.minted_delta AS minted_delta,
          ranked.seed AS seed,
          ranked.frame_count AS frame_count,
-         ranked.final_rng_state AS final_rng_state,
-         ranked.tape_checksum AS tape_checksum,
-         ranked.rules_digest AS rules_digest,
          ranked.closed_at AS completed_at,
          ranked.tx_hash AS claim_tx_hash,
+         t.proof_job_id AS proof_job_id,
          p.username AS profile_username,
          p.link_url AS profile_link_url,
          p.updated_at AS profile_updated_at
        FROM ranked
        LEFT JOIN leaderboard_profiles AS p
          ON p.claimant_address = ranked.claimant_address
+       LEFT JOIN proof_tape_index AS t
+         ON t.tx_hash = ranked.tx_hash
        ORDER BY ranked.rank ASC
        LIMIT ? OFFSET ?`,
     )
@@ -1074,17 +1020,17 @@ export async function getLeaderboardPage(
            ranked.minted_delta AS minted_delta,
            ranked.seed AS seed,
            ranked.frame_count AS frame_count,
-           ranked.final_rng_state AS final_rng_state,
-           ranked.tape_checksum AS tape_checksum,
-           ranked.rules_digest AS rules_digest,
            ranked.closed_at AS completed_at,
            ranked.tx_hash AS claim_tx_hash,
+           t.proof_job_id AS proof_job_id,
            p.username AS profile_username,
            p.link_url AS profile_link_url,
            p.updated_at AS profile_updated_at
          FROM ranked
          LEFT JOIN leaderboard_profiles AS p
            ON p.claimant_address = ranked.claimant_address
+         LEFT JOIN proof_tape_index AS t
+           ON t.tx_hash = ranked.tx_hash
          WHERE ranked.claimant_address = ?
          LIMIT 1`,
       )
@@ -1161,12 +1107,10 @@ export async function getLeaderboardPlayer(
     mintedDelta: number;
     seed: number;
     frameCount: number | null;
-    finalRngState: number | null;
-    tapeChecksum: number | null;
-    rulesDigest: number | null;
     completedAt: string;
     claimStatus: "succeeded";
     claimTxHash: string | null;
+    proofJobId: string | null;
   }>;
   runsPagination: {
     limit: number;
@@ -1206,20 +1150,20 @@ export async function getLeaderboardPlayer(
     db
       .prepare(
         `SELECT
-           event_id AS job_id,
-           claimant_address,
-           new_best AS score,
-           minted_delta AS minted_delta,
-           seed,
-           frame_count AS frame_count,
-           final_rng_state AS final_rng_state,
-           tape_checksum AS tape_checksum,
-           rules_digest AS rules_digest,
-           closed_at AS completed_at,
-           tx_hash AS claim_tx_hash
-         FROM leaderboard_events
-         WHERE claimant_address = ?
-         ORDER BY closed_at DESC, new_best DESC, event_id ASC
+           e.event_id AS job_id,
+           e.claimant_address,
+           e.new_best AS score,
+           e.minted_delta AS minted_delta,
+           e.seed,
+           e.frame_count AS frame_count,
+           e.closed_at AS completed_at,
+           e.tx_hash AS claim_tx_hash,
+           t.proof_job_id AS proof_job_id
+         FROM leaderboard_events AS e
+         LEFT JOIN proof_tape_index AS t
+           ON t.tx_hash = e.tx_hash
+         WHERE e.claimant_address = ?
+         ORDER BY e.closed_at DESC, e.new_best DESC, e.event_id ASC
          LIMIT ? OFFSET ?`,
       )
       .bind(claimantAddress, runsLimit, runsOffset)
@@ -1245,12 +1189,10 @@ export async function getLeaderboardPlayer(
     mintedDelta: toNumber(row.minted_delta, 0),
     seed: toNumber(row.seed, 0) >>> 0,
     frameCount: toNullableU32(row.frame_count),
-    finalRngState: toNullableU32(row.final_rng_state),
-    tapeChecksum: toNullableU32(row.tape_checksum),
-    rulesDigest: toNullableU32(row.rules_digest),
     completedAt: String(row.completed_at),
     claimStatus: "succeeded" as const,
     claimTxHash: toNullableString(row.claim_tx_hash),
+    proofJobId: toNullableString(row.proof_job_id),
   }));
 
   const totalRuns = toNumber(statsRow?.total_runs, 0);

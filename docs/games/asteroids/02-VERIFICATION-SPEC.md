@@ -6,25 +6,26 @@ A tape is valid only if all conditions hold:
 2. Replay executes exactly `frameCount` frames.
 3. Canonical transition order is preserved.
 4. All invariant groups pass.
-5. Final score and final gameplay RNG state match footer claims.
+5. Final score matches footer claim.
 
 ## Tape Rules
-### Header
+### Header (16 bytes)
 - `magic == 0x5A4B5450` (`ZKTP`)
-- `version == 2`
-- `rules_tag == 3` (`AST3`)
+- `version == 4`
+- `rules_tag == 4` (`AST4`)
 - header reserved bytes `[6..7] == 0`
 - `frameCount > 0`
 - `frameCount <= configured max` (default 18,000)
 
-### Body
-- Exactly `frameCount` bytes.
-- Bits `0..3` are control bits.
-- Bits `4..7` must be zero.
+### Body (nibble-packed)
+- `ceil(frameCount / 2)` bytes.
+- Each byte holds two frames: low nibble = frame 2i, high nibble = frame 2i+1.
+- Each nibble encodes: bit0=left, bit1=right, bit2=thrust, bit3=fire.
+- If frameCount is odd, the high nibble of the last byte is zero.
 
-### Footer
-- Contains `finalScore`, `finalRngState`, `checksum`.
-- `checksum` must equal CRC32 of header+body.
+### Footer (8 bytes)
+- Contains `finalScore`, `checksum` (each u32 LE).
+- `checksum` must equal CRC-32 of header + body.
 
 ## Canonical Transition Order
 1. Increment frame counter.
@@ -55,16 +56,20 @@ Any reorder is invalid.
 ## RNG Integrity
 - Gameplay RNG algorithm and call sequence are consensus-critical.
 - Visual RNG must be isolated and non-authoritative.
-- Footer RNG check is required and catches divergence cascades.
 
 ## Required Verification Output
-On success, verifier returns/commits the canonical 24-byte journal (6 × `u32` LE):
-- `seed`
-- `frame_count`
-- `final_score`
-- `final_rng_state`
-- `tape_checksum`
-- `rules_digest` (`0x4153_5433`, `AST3`)
+On success, verifier returns/commits the canonical 49-byte journal (all fields u32 LE unless noted):
+
+| Offset | Field | Size | Type |
+|--------|-------|------|------|
+| 0 | `seed_id` | 4 | u32 LE |
+| 4 | `seed` | 4 | u32 LE |
+| 8 | `frame_count` | 4 | u32 LE |
+| 12 | `final_score` | 4 | u32 LE |
+| 16 | `claimant_kind` | 1 | u8 (0=account, 1=contract) |
+| 17 | `claimant_id` | 32 | raw bytes |
+
+`seed_id` is provided out-of-band (not embedded in the tape) and binds the proof to a specific on-chain game seed epoch.
 
 On failure, verifier returns a deterministic `VerifyError` variant (parse error,
 rule violation, or footer mismatch class).

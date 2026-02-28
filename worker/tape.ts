@@ -7,23 +7,6 @@ import {
 } from "./constants";
 import type { TapeMetadata } from "./types";
 
-function crc32AndValidateInputs(data: Uint8Array, inputsStart: number, inputsEnd: number): number {
-  let crc = 0xffffffff;
-
-  for (let index = 0; index < inputsEnd; index += 1) {
-    const byte = data[index];
-    if (index >= inputsStart && (byte & 0xf0) !== 0) {
-      const frame = index - inputsStart;
-      throw new Error(
-        `tape input reserved bits set at frame ${frame}: 0x${byte.toString(16).padStart(2, "0")}`,
-      );
-    }
-    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  }
-
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): TapeMetadata {
   if (bytes.length === 0) {
     throw new Error("tape payload is empty");
@@ -58,22 +41,22 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
 
   const seed = view.getUint32(8, true);
   const frameCount = view.getUint32(12, true);
-  const expectedLength = TAPE_HEADER_SIZE + frameCount + TAPE_FOOTER_SIZE;
+  const bodyBytes = (frameCount + 1) >> 1;
+  const expectedLength = TAPE_HEADER_SIZE + bodyBytes + TAPE_FOOTER_SIZE;
 
   if (bytes.length !== expectedLength) {
     throw new Error(`tape size mismatch: expected ${expectedLength} bytes, got ${bytes.length}`);
   }
 
-  const footerOffset = TAPE_HEADER_SIZE + frameCount;
+  const footerOffset = TAPE_HEADER_SIZE + bodyBytes;
   const finalScore = view.getUint32(footerOffset, true);
-  const finalRngState = view.getUint32(footerOffset + 4, true);
-  const checksum = view.getUint32(footerOffset + 8, true);
+  const checksum = view.getUint32(footerOffset + 4, true);
 
   if (finalScore === 0) {
     throw new Error("tape final_score must be greater than zero");
   }
 
-  const computedChecksum = crc32AndValidateInputs(bytes, TAPE_HEADER_SIZE, footerOffset);
+  const computedChecksum = crc32(bytes, footerOffset);
   if (checksum >>> 0 !== computedChecksum >>> 0) {
     throw new Error(
       `tape checksum mismatch: expected 0x${checksum.toString(16)}, computed 0x${computedChecksum.toString(16)}`,
@@ -82,11 +65,22 @@ export function parseAndValidateTape(bytes: Uint8Array, maxTapeBytes: number): T
 
   return {
     seed,
+    // seed_id is provided out-of-band by the API request query param (seed_id).
+    seedId: 0,
     frameCount,
     finalScore,
-    finalRngState,
     checksum,
   };
+}
+
+function crc32(data: Uint8Array, end: number): number {
+  let crc = 0xffffffff;
+
+  for (let index = 0; index < end; index += 1) {
+    crc = CRC_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 const CRC_TABLE = (() => {

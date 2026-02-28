@@ -18,10 +18,10 @@ submission and surfaces claim relay status from the worker.
 
 1. User opens app, creates or connects a smart-account wallet.
 2. User plays Asteroids; tape records every frame.
-3. Game over → user submits tape to worker for proving with `x-claimant-address`.
+3. Game over → user submits tape to worker for proving with `seed_id` + `claimant` query params.
 4. UI shows proof pipeline status (queued → proving → done).
 5. Proof succeeds → worker enqueues claim relay job automatically.
-6. Claim relay submits `submit_score(seal, journal_raw, claimant)` on-chain.
+6. Claim relay submits `submit_score(seal, journal_raw)` on-chain.
 7. UI shows claim status (`queued/submitting/retrying/succeeded/failed`) and tx hash when available.
 
 ---
@@ -61,7 +61,7 @@ packages/asteroids-score-client/
 The generated `Client` has typed methods matching each contract function:
 
 ```typescript
-client.submit_score({ seal, journal_raw, claimant }) → AssembledTransaction<u32>
+client.submit_score({ seal, journal_raw })           → AssembledTransaction<Result<u32>>
 client.is_claimed({ journal_digest })              → AssembledTransaction<boolean>
 client.image_id()                                  → AssembledTransaction<Buffer>
 client.router_id()                                 → AssembledTransaction<string>
@@ -221,7 +221,7 @@ The browser should never receive privileged backend relay secrets.
 
 ```
 1. Submit proof job to worker
-   POST /api/proofs/jobs (raw tape body + x-claimant-address)
+   POST /api/proofs/jobs?seed_id=<u32>&claimant=<G...|C...> (raw tape body)
 
 2. Poll proof job
    GET /api/proofs/jobs/{id}
@@ -241,19 +241,20 @@ The browser should never receive privileged backend relay secrets.
 
 ### Journal Packing
 
-Pack 24 bytes from the proof journal fields (all u32 LE):
+Pack 49 bytes from the proof journal fields:
+- `seed_id`, `seed`, `frame_count`, `final_score` as u32 LE
+- claimant as `kind(1) + id(32)`
 
 ```typescript
 function packJournal(journal: ProofJournal): Uint8Array {
-  const buf = new ArrayBuffer(24);
-  const view = new DataView(buf);
-  view.setUint32(0, journal.seed, true);
-  view.setUint32(4, journal.frame_count, true);
-  view.setUint32(8, journal.final_score, true);
-  view.setUint32(12, journal.final_rng_state, true);
-  view.setUint32(16, journal.tape_checksum, true);
-  view.setUint32(20, journal.rules_digest, true);
-  return new Uint8Array(buf);
+  const bytes = new Uint8Array(49);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, journal.seed_id, true);
+  view.setUint32(4, journal.seed, true);
+  view.setUint32(8, journal.frame_count, true);
+  view.setUint32(12, journal.final_score, true);
+  bytes.set(encodeClaimantForJournal(journal.claimant), 16);
+  return bytes;
 }
 ```
 
@@ -274,8 +275,8 @@ const balance = await tokenClient.balance({ id: walletContractId });
 ### History
 
 Query `ScoreSubmitted` contract events via Soroban RPC `getEvents` or
-Horizon transaction history. Each entry provides: score, claimant, journal digest,
-ledger timestamp, and tx hash.
+Horizon transaction history. Each entry provides: score, claimant, seed/seed_id,
+frame_count, previous/new best, minted delta, ledger timestamp, and tx hash.
 
 ---
 
@@ -300,7 +301,7 @@ ledger timestamp, and tx hash.
 
 ### Game Panel Gating
 - Game playable without wallet (tape capture still works)
-- "Connect wallet to claim scores" prompt on game-over without wallet
+- "Connect wallet to earn KALIEN" prompt on game-over without wallet
 - Proof submission to worker requires wallet (claimant address is mandatory)
 
 ---
@@ -416,11 +417,9 @@ src/
 
 ## Open Questions
 
-1. **Seal extraction** — The worker stores the full prover response in R2 at
-   `prover_response.result.proof.receipt` (typed as `unknown` in worker types).
-   Need to inspect a real groth16 proof result to determine the exact path to
-   the raw seal bytes and confirm the format (hex string, base64, or nested
-   object). This is the primary blocker before implementing the claim flow.
+1. **Seal extraction** — Worker now stores canonical `ProofArtifactV4` in R2.
+   Frontend/clients must read `seal_hex` directly (260-byte hex) rather than
+   decoding nested prover receipts.
 
 2. **Claim submission path** — Should claim transactions submit directly from
    frontend via `kit.signAndSubmit()`, or should frontend only sign and send

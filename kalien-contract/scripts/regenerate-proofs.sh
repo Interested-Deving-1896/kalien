@@ -2,7 +2,6 @@
 # regenerate-proofs.sh
 #
 # Regenerate mintable Groth16 proof fixtures from source tapes.
-# Zero-score tapes are expected to be rejected.
 # The prover is single-flight, so tapes are submitted sequentially.
 # Each generated proof is verified on-chain via the router.
 #
@@ -37,23 +36,59 @@ TOTAL=0
 # ---------------------------------------------------------------------------
 usage() {
   cat <<'USAGE_EOF'
-Usage: kalien-contract/scripts/regenerate-proofs.sh [prover-url]
+Usage: kalien-contract/scripts/regenerate-proofs.sh [prover-url] [--seed-id <u32>] [--claimant <addr>]
 
 Defaults:
   prover-url  http://127.0.0.1:8080
+  seed-id     0
+  claimant    GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
 
 Examples:
   ./scripts/regenerate-proofs.sh
   ./scripts/regenerate-proofs.sh https://<vast-host>:<port>
+  ./scripts/regenerate-proofs.sh --seed-id 0 --claimant GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
 USAGE_EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
+PROVER_URL="http://127.0.0.1:8080"
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --seed-id)
+      SEED_ID="${2:-}"
+      shift 2
+      ;;
+    --claimant)
+      CLAIMANT="${2:-}"
+      shift 2
+      ;;
+    *)
+      if [[ "$1" == --* ]]; then
+        err "unknown option: $1"
+        usage
+        exit 1
+      fi
+      PROVER_URL="$1"
+      shift
+      ;;
+  esac
+done
+
+if ! [[ "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  err "--seed-id must be an unsigned integer"
+  exit 1
 fi
 
-PROVER_URL="${1:-http://127.0.0.1:8080}"
+if [[ -z "${CLAIMANT// }" ]]; then
+  err "--claimant cannot be empty"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Regenerate + verify a single fixture
@@ -76,6 +111,8 @@ regenerate_fixture() {
   if ! bun run "$GENERATE_SCRIPT" \
     --tape "$tape_path" \
     --prover "$PROVER_URL" \
+    --seed-id "$SEED_ID" \
+    --claimant "$CLAIMANT" \
     --out "$FIXTURES_DIR/${out_prefix}.json"; then
     err "Proof generation failed for $label"
     FAILED=$((FAILED + 1))
@@ -87,6 +124,11 @@ regenerate_fixture() {
   local seal_hex journal_hex image_id_hex journal_digest_hex
   seal_hex=$(tr -d '[:space:]' < "$FIXTURES_DIR/${out_prefix}.seal")
   journal_hex=$(tr -d '[:space:]' < "$FIXTURES_DIR/${out_prefix}.journal_raw")
+  if ! assert_compact_journal_hex "$journal_hex" "$out_prefix"; then
+    err "$label: generated journal is not the expected 49-byte compact format"
+    FAILED=$((FAILED + 1))
+    return
+  fi
   image_id_hex=$(tr -d '[:space:]' < "$FIXTURES_DIR/${out_prefix}.image_id")
   journal_digest_hex=$(sha256_of_hex "$journal_hex")
 
@@ -114,62 +156,39 @@ regenerate_fixture() {
 }
 
 # ---------------------------------------------------------------------------
-# Ensure zero-score tapes are rejected by the prover API
-# ---------------------------------------------------------------------------
-assert_reject_zero_score_tape() {
-  local tape_file="$FIXTURES_DIR/test-short.tape"
-  TOTAL=$((TOTAL + 1))
-
-  if [[ ! -f "$tape_file" ]]; then
-    err "Short tape not found: $tape_file"
-    FAILED=$((FAILED + 1))
-    return
-  fi
-
-  info "Checking zero-score rejection for short tape..."
-  local resp http_code body error_code
-  local query="receipt_kind=groth16&verify_mode=policy"
-  resp=$(curl -sS -X POST \
-    "${PROVER_URL}/api/jobs/prove-tape/raw?${query}" \
-    -H "content-type: application/octet-stream" \
-    --data-binary "@${tape_file}" \
-    -w $'\n%{http_code}')
-  http_code=$(echo "$resp" | tail -1)
-  body=$(echo "$resp" | sed '$d')
-  error_code=$(echo "$body" | python3 -c "import sys, json; print((json.load(sys.stdin).get('error_code') or '').strip())" 2>/dev/null || true)
-
-  if [[ "$http_code" == "400" && "$error_code" == "zero_score_not_allowed" ]]; then
-    PASSED=$((PASSED + 1))
-    ok "short tape rejected with zero_score_not_allowed"
-  else
-    FAILED=$((FAILED + 1))
-    err "short tape rejection check failed (HTTP $http_code, error_code=${error_code:-<none>})"
-  fi
-}
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "================================================"
-echo "Regenerate Groth16 Proof Fixtures (Non-Zero Scores)"
+echo "Regenerate Groth16 Proof Fixtures"
 echo "Prover: $PROVER_URL"
+echo "Seed ID: $SEED_ID"
+echo "Claimant: $CLAIMANT"
 echo "$(date)"
 echo "================================================"
 echo ""
 
 # Check prover health first
 info "Checking prover health..."
-health=$(curl -sf "$PROVER_URL/health" 2>&1) || {
+health=""
+for attempt in 1 2 3; do
+  if health=$(curl -sS --max-time 15 --retry 2 --retry-delay 1 --retry-all-errors "$PROVER_URL/health" 2>&1); then
+    break
+  fi
+  warn "Prover health check attempt $attempt failed: $health"
+  sleep 1
+  health=""
+done
+if [[ -z "$health" ]]; then
   err "Prover not reachable at $PROVER_URL/health"
   exit 1
-}
+fi
 echo "  $health"
 echo ""
 
 ensure_funded_key "$CALLER_NAME"
 echo ""
 
-assert_reject_zero_score_tape
+regenerate_fixture "short tape"     "test-short.tape"     "proof-short-groth16"
 echo ""
 regenerate_fixture "medium tape"    "test-medium.tape"    "proof-medium-groth16"
 echo ""

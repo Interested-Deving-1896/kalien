@@ -1,22 +1,44 @@
-# Soroban Project
+# Kalien Soroban Contract
 
-## Project Structure
+`kalien-contract/` contains the `asteroids_score` Soroban contract used to verify
+RISC Zero receipts and mint score rewards.
 
-This repository uses the recommended structure for a Soroban project:
+## Layout
 
-```text
-.
-├── contracts
-│   └── hello_world
-│       ├── src
-│       │   ├── lib.rs
-│       │   └── test.rs
-│       └── Cargo.toml
-├── Cargo.toml
-└── README.md
+- `contracts/asteroids_score/`: contract source (`lib.rs`) and tests.
+- `scripts/`: deployment, proof regeneration, and verification scripts.
+- `target/`: build artifacts.
+
+## Contract Surface
+
+Primary methods in `asteroids_score`:
+
+- `submit_score(seal, journal_raw)`: verifies proof, enforces policy, mints delta rewards.
+- `verify_score(seal, journal_raw)`: verifies proof without minting or state mutation.
+- `current_seed()`: returns active seed window materialized on-chain.
+- `best_score(claimant, seed_id)`: claimant best score for a seed window.
+- Admin methods: `set_image_id`, `set_router_id`, `set_token_id`, `set_admin`, `set_paused`, `upgrade`.
+
+Rules digest is currently fixed to `AST4` (`0x41535434`).
+
+## Quick Start
+
+From `kalien-contract/contracts/asteroids_score/`:
+
+```bash
+stellar contract build
+cargo test
 ```
 
-- New Soroban contracts can be put in `contracts`, each in their own directory. There is already a `hello_world` contract in there to get you started.
-- If you initialized this project with any other example contracts via `--with-example`, those contracts will be in the `contracts` directory as well.
-- Contracts should have their own `Cargo.toml` files that rely on the top-level `Cargo.toml` workspace for their dependencies.
-- Frontend libraries can be added to the top-level directory as well. If you initialized this project with a frontend template via `--frontend-template` you will have those files already included.
+## Scripted Workflows
+
+From `kalien-contract/`:
+
+```bash
+bash scripts/verify-proofs.sh
+bash scripts/deploy-and-test.sh
+bash scripts/regenerate-proofs.sh https://risc0-kalien.stellar.buzz
+```
+
+Script details and prerequisites are documented in
+[kalien-contract/scripts/README.md](scripts/README.md).

@@ -11,4 +11,21 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    watch: {
+      ignored: [
+        "**/autopilot/**",
+        "**/cli/**",
+        "**/kalien-contract/**",
+        "**/kalien-verifier/**",
+        "**/scripts/**",
+        "**/batch-results/**",
+        "**/generated-tapes/**",
+        "**/test-fixtures/**",
+        "**/tests/**",
+        "**/docs/**",
+        "**/dist/**",
+      ],
+    },
+  },
 });

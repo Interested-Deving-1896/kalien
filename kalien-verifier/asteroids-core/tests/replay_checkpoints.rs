@@ -44,14 +44,9 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         *input = (rng.next() & 0x0F) as u8;
     }
     let replay_result = replay(seed, &inputs);
-    let bytes = serialize_tape(
-        seed,
-        &inputs,
-        replay_result.final_score,
-        replay_result.final_rng_state,
-    );
+    let bytes = serialize_tape(seed, &inputs, replay_result.final_score);
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
-    let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 50);
+    let checkpoints = replay_with_checkpoints(tape.header.seed, &tape.inputs, 50);
 
     assert_eq!(checkpoints.first().expect("checkpoint").frame_count, 0);
     assert_eq!(
@@ -59,7 +54,7 @@ fn short_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Golden fingerprint for generated AST3 tape.
+    // Golden fingerprint for generated AST4 tape.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
         13_845_899_089_436_327_554
@@ -75,14 +70,9 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         *input = (rng.next() & 0x0F) as u8;
     }
     let replay_result = replay(seed, &inputs);
-    let bytes = serialize_tape(
-        seed,
-        &inputs,
-        replay_result.final_score,
-        replay_result.final_rng_state,
-    );
+    let bytes = serialize_tape(seed, &inputs, replay_result.final_score);
     let tape = parse_tape(&bytes, 18_000).expect("fixture tape should parse");
-    let checkpoints = replay_with_checkpoints(tape.header.seed, tape.inputs, 200);
+    let checkpoints = replay_with_checkpoints(tape.header.seed, &tape.inputs, 200);
 
     assert_eq!(checkpoints.first().expect("checkpoint").frame_count, 0);
     assert_eq!(
@@ -90,7 +80,7 @@ fn medium_fixture_checkpoint_fingerprint_stable() {
         tape.header.frame_count
     );
 
-    // Golden fingerprint for generated AST3 tape.
+    // Golden fingerprint for generated AST4 tape.
     assert_eq!(
         checkpoint_fingerprint(&checkpoints),
         10_200_522_372_937_520_498

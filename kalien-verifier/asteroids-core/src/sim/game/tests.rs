@@ -188,22 +188,17 @@ fn checked_step_accepts_verified_fixture_inputs() {
         *byte = (rng.next() & 0x0F) as u8;
     }
     let replay_result = replay(seed, &inputs);
-    let tape_bytes = crate::tape::serialize_tape(
-        seed,
-        &inputs,
-        replay_result.final_score,
-        replay_result.final_rng_state,
-    );
+    let tape_bytes = crate::tape::serialize_tape(seed, &inputs, replay_result.final_score);
     let tape = parse_tape(&tape_bytes, 18_000).expect("generated tape should parse");
 
     let mut live = LiveGame::new(tape.header.seed);
-    for input in tape.inputs {
+    for input in &tape.inputs {
         live.step_checked(*input)
             .expect("fixture transitions should pass checked-step");
     }
 
     let strict =
-        replay_strict(tape.header.seed, tape.inputs).expect("fixture should pass strict replay");
+        replay_strict(tape.header.seed, &tape.inputs).expect("fixture should pass strict replay");
     assert_eq!(live.result(), strict);
 }
 
@@ -346,12 +341,7 @@ fn strict_transition_validator_matches_downloads_fixture() {
         *byte = (rng.next() & 0x0F) as u8;
     }
     let replay_result = replay(seed, &inputs);
-    let tape_bytes = crate::tape::serialize_tape(
-        seed,
-        &inputs,
-        replay_result.final_score,
-        replay_result.final_rng_state,
-    );
+    let tape_bytes = crate::tape::serialize_tape(seed, &inputs, replay_result.final_score);
     let tape = parse_tape(&tape_bytes, 18_000).expect("generated tape should parse");
 
     let mut game = Game::new(tape.header.seed);

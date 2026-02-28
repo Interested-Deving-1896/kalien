@@ -1,0 +1,36 @@
+# KALIEN Stellar domain metadata (SEP-0001)
+# Endpoint: https://kalien.xyz/.well-known/stellar.toml
+#
+# When mainnet is launched, update:
+# 1) NETWORK_PASSPHRASE
+# 2) ACCOUNTS and [[CURRENCIES]].issuer
+# 3) [[CURRENCIES]].status
+
+VERSION = "2.7.0"
+NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
+ACCOUNTS = ["GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB"]
+
+[DOCUMENTATION]
+ORG_NAME = "KALIEN"
+ORG_DBA = "KALIEN"
+ORG_URL = "https://kalien.xyz"
+ORG_DESCRIPTION = "Proof-verified Asteroids game on Stellar where players earn KALIEN."
+ORG_OFFICIAL_EMAIL = "support@kalien.xyz"
+ORG_SUPPORT_EMAIL = "support@kalien.xyz"
+
+[[PRINCIPALS]]
+name = "KALIEN Team"
+email = "support@kalien.xyz"
+
+[[CURRENCIES]]
+code = "KALIEN"
+issuer = "GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB"
+name = "KALIEN"
+image = "https://pub-b2eaaee2bbe74d70820bacb7298958f5.r2.dev/kalien.png"
+desc = "Reward token minted for score improvements proven on-chain by the KALIEN score contract."
+status = "test"
+display_decimals = 7
+is_asset_anchored = false
+anchor_asset_type = "crypto"
+is_unlimited = true
+conditions = "Testnet asset for gameplay rewards. Not redeemable for fiat."

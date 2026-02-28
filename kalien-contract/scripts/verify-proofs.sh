@@ -48,7 +48,7 @@ verify_fixture() {
   local seal_hex journal_hex image_id_hex journal_digest_hex
   seal_hex=$(tr -d '[:space:]' < "$seal_file")
   journal_hex=$(tr -d '[:space:]' < "$journal_file")
-  if ! assert_ast3_rules_digest_in_journal_hex "$journal_hex" "$fixture_prefix"; then
+  if ! assert_compact_journal_hex "$journal_hex" "$fixture_prefix"; then
     TOTAL=$((TOTAL + 1))
     FAILED=$((FAILED + 1))
     return

@@ -18,6 +18,10 @@ import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
 
 const BASE_URL = "http://localhost:5173";
+const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
+const devAuthHeaders: Record<string, string> = DEV_API_KEY
+  ? { Authorization: `Bearer ${DEV_API_KEY}` }
+  : {};
 const CLAIMANT = "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
 
 // Parse args
@@ -37,7 +41,6 @@ interface TapeInfo {
   seed: number;
   frames: number;
   score: number;
-  rngState: number;
   bytes: Uint8Array;
 }
 
@@ -58,7 +61,7 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
 
   const tapeData = game.getTape();
   if (!tapeData) {
-    throw new Error(`Failed to get tape data for seed 0x${seed.toString(16)}`);
+    throw new Error(`Failed to get tape data for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
   }
   writeFileSync(outputPath, tapeData);
 
@@ -76,10 +79,9 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
   }
 
   const vScore = verifyGame.getScore();
-  const vRng = verifyGame.getRngState();
 
-  if (vScore !== tape.footer.finalScore || (vRng >>> 0) !== (tape.footer.finalRngState >>> 0)) {
-    throw new Error(`Tape verification failed for seed 0x${seed.toString(16)}`);
+  if (vScore !== tape.footer.finalScore) {
+    throw new Error(`Tape verification failed for seed 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
   }
 
   return {
@@ -87,7 +89,6 @@ function generateTape(seed: number, maxFrames: number, outputPath: string): Tape
     seed,
     frames: tape.header.frameCount,
     score: tape.footer.finalScore,
-    rngState: tape.footer.finalRngState,
     bytes: rawTape,
   };
 }
@@ -102,13 +103,17 @@ interface JobStatus {
 }
 
 async function submitTape(tape: TapeInfo): Promise<string> {
-  const response = await fetch(`${BASE_URL}/api/proofs/jobs`, {
+  const seedId = Math.floor(Date.now() / 1000 / 600);
+  const params = new URLSearchParams({
+    claimant: CLAIMANT,
+    seed_id: String(seedId >>> 0),
+  });
+  const response = await fetch(`${BASE_URL}/api/proofs/jobs?${params.toString()}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
-      "x-claimant-address": CLAIMANT,
     },
-    body: tape.bytes,
+    body: new Uint8Array(tape.bytes),
   });
 
   if (!response.ok) {
@@ -225,7 +230,7 @@ async function main() {
     const tape = generateTape(seed, MAX_FRAMES, path);
     tapes.push(tape);
     console.log(
-      `  [${i + 1}/${NUM_RUNS}] seed=0x${seed.toString(16).padStart(8, "0")} ` +
+      `  [${i + 1}/${NUM_RUNS}] seed=0x${seed.toString(16).toUpperCase().padStart(8, "0")} ` +
         `score=${tape.score} frames=${tape.frames} size=${tape.bytes.length}B`,
     );
   }
@@ -264,7 +269,7 @@ async function main() {
 
     try {
       console.log(
-        `  ${label} Submitting seed=0x${tape.seed.toString(16).padStart(8, "0")} score=${tape.score}...`,
+        `  ${label} Submitting seed=0x${tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${tape.score}...`,
       );
 
       const jobId = await submitTape(tape);
@@ -444,9 +449,9 @@ async function main() {
 
     // Seed them into the local leaderboard via the dev endpoint
     if (fetchResult.events.length > 0) {
-      const seedResp = await fetch(`${BASE_URL}/api/leaderboard/dev/seed`, {
+      const seedResp = await fetch(`${BASE_URL}/dev/api/leaderboard/seed`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...devAuthHeaders },
         body: JSON.stringify({
           events: fetchResult.events,
           profiles: [],
@@ -548,13 +553,13 @@ function printSummary(
   for (const r of results) {
     const status = r.claimTxHash ? "CLAIMED" : "NO_CLAIM";
     console.log(
-      `    seed=0x${r.tape.seed.toString(16).padStart(8, "0")} score=${String(r.tape.score).padStart(6)} ` +
+      `    seed=0x${r.tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${String(r.tape.score).padStart(6)} ` +
         `${(r.durationMs / 1000).toFixed(1).padStart(6)}s ${status} ${r.claimTxHash?.slice(0, 16) ?? ""}`,
     );
   }
   for (const e of errors) {
     console.log(
-      `    seed=0x${e.tape.seed.toString(16).padStart(8, "0")} score=${String(e.tape.score).padStart(6)} FAILED: ${e.error.slice(0, 60)}`,
+      `    seed=0x${e.tape.seed.toString(16).toUpperCase().padStart(8, "0")} score=${String(e.tape.score).padStart(6)} FAILED: ${e.error.slice(0, 60)}`,
     );
   }
 

@@ -4,14 +4,14 @@ import {
   PluginExecutionError,
   PluginTransportError,
 } from "@openzeppelin/relayer-plugin-channels/dist/client";
-import { Client as ScoreContractClient } from "../../shared/stellar/bindings/asteroids-score/dist/index.js";
 import {
   DEFAULT_BINDINGS_RPC_URL,
   DEFAULT_RELAYER_REQUEST_TIMEOUT_MS,
   OPENZEPPELIN_CHANNELS_HOSTNAME,
-  TESTNET_NETWORK_PASSPHRASE,
 } from "../constants";
 import type { WorkerEnv } from "../env";
+import { JOURNAL_LEN } from "../../shared/stellar/journal";
+import { hexToBytes, sha256Hex, STELLAR_GROTH16_SEAL_LEN } from "../proof-artifact";
 import { parseInteger, safeErrorMessage } from "../utils";
 import type { RelayClaimRequest, RelaySubmitResult } from "./types";
 
@@ -25,6 +25,19 @@ interface ChannelsConfig {
 interface DirectClaimConfig {
   scoreContractId: string;
   channels: ChannelsConfig;
+}
+
+const SEED_INTERVAL_SECONDS = 600;
+const SEED_REFRESH_COOLDOWN_MS = 2_500;
+const SEED_LEDGER_FETCH_TIMEOUT_MS = 15_000;
+
+let inFlightSeedEnsureSeedId: number | null = null;
+let inFlightSeedEnsurePromise: Promise<EnsureCurrentEpochSeedResult> | null = null;
+let lastSeedRefreshAttemptSeedId: number | null = null;
+let lastSeedRefreshAttemptAt = 0;
+
+function isAcceptedWithoutHashMessage(message: string | null | undefined): boolean {
+  return (message ?? "").toLowerCase().includes("did not return hash");
 }
 
 function nonEmpty(value: string | undefined): string | null {
@@ -89,17 +102,8 @@ export function isDirectClaimConfigured(env: WorkerEnv): boolean {
   return resolveDirectClaimConfig(env) !== null;
 }
 
-function hexToBytes(hex: string, fieldName: string): Uint8Array {
-  const normalized = hex.trim().toLowerCase();
-  if (normalized.length === 0 || normalized.length % 2 !== 0 || /[^0-9a-f]/.test(normalized)) {
-    throw new Error(`${fieldName} must be a valid even-length hex string`);
-  }
-
-  const bytes = new Uint8Array(normalized.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(normalized.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
+function resolveBindingsRpcUrl(env: WorkerEnv): string {
+  return nonEmpty(env.STELLAR_RPC_URL) ?? DEFAULT_BINDINGS_RPC_URL;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -109,65 +113,21 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function asByte(value: unknown, fieldName: string, index: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 255) {
-    throw new Error(`${fieldName}[${index}] must be a byte`);
-  }
-  return value & 0xff;
-}
-
-function asU32(value: unknown, fieldName: string, index: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 0xffff_ffff) {
-    throw new Error(`${fieldName}[${index}] must be a u32`);
-  }
-  return value >>> 0;
-}
-
-function extractGroth16SealFromProverResponse(proverResponse: unknown): Uint8Array {
-  const responseObj = asObject(proverResponse);
-  const resultObj = responseObj ? asObject(responseObj.result) : null;
-  const proofObj = resultObj ? asObject(resultObj.proof) : null;
-  const receiptObj = proofObj ? asObject(proofObj.receipt) : null;
-  const innerObj = receiptObj ? asObject(receiptObj.inner) : null;
-  const groth16 = innerObj ? asObject(innerObj.Groth16) : null;
-
-  if (!groth16) {
-    throw new Error("prover_response.result.proof.receipt.inner.Groth16 is required");
-  }
-
-  const seal = groth16.seal;
-  const verifierParameters = groth16.verifier_parameters;
-  if (!Array.isArray(seal) || seal.length !== 256) {
-    throw new Error("receipt.inner.Groth16.seal must be a 256-byte array");
-  }
-  if (!Array.isArray(verifierParameters) || verifierParameters.length !== 8) {
-    throw new Error("receipt.inner.Groth16.verifier_parameters must be an 8-word array");
-  }
-
-  const rawSeal = Uint8Array.from(
-    seal.map((value, index) => asByte(value, "receipt.inner.Groth16.seal", index)),
-  );
-  const params = verifierParameters.map((value, index) =>
-    asU32(value, "receipt.inner.Groth16.verifier_parameters", index),
-  );
-
-  const paramsBytes = new Uint8Array(32);
-  const paramsView = new DataView(paramsBytes.buffer);
-  for (let index = 0; index < params.length; index += 1) {
-    paramsView.setUint32(index * 4, params[index], true);
-  }
-
-  const selector = paramsBytes.slice(0, 4);
-  const stellarSeal = new Uint8Array(260);
-  stellarSeal.set(selector, 0);
-  stellarSeal.set(rawSeal, 4);
-  return stellarSeal;
-}
-
 interface SorobanInvokePayload {
   func: string;
   auth: string[];
 }
+
+export type RelayProxyPayload =
+  | {
+      kind: "xdr";
+      xdr: string;
+    }
+  | {
+      kind: "soroban";
+      func: string;
+      auth: string[];
+    };
 
 function retryableChannelsExecutionCode(rawCode: string | null): boolean {
   if (!rawCode) {
@@ -193,6 +153,75 @@ function extractExecutionCode(details: unknown): string | null {
   return null;
 }
 
+/**
+ * Extract a Soroban contract error number from SIMULATION_FAILED errorDetails.
+ * Channels surfaces these as e.g. "escalating Ok(ScErrorType::Contract) frame-exit to Err (Contract, #3)".
+ */
+function extractContractErrorCode(errorDetails: unknown): number | null {
+  const details = asObject(errorDetails);
+  const inner = details ? asObject(details.details) : null;
+  const errorStr = inner && typeof inner.error === "string" ? inner.error : null;
+  if (!errorStr) return null;
+  const match = /\(Contract,\s*#(\d+)\)/.exec(errorStr);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+/**
+ * Map a known asteroids-score contract error code to an appropriate RelaySubmitResult.
+ *
+ * Error codes (from lib.rs #[contracterror]):
+ *   1 InvalidJournalFormat  — journal is malformed                → fatal
+ *   3 JournalAlreadyClaimed — digest already on-chain             → treat as prior success
+ *   4 ZeroScoreNotAllowed   — score is 0                          → fatal
+ *   5 ScoreNotImproved      — not better than existing best       → treat as superseded
+ *   6 ContractPaused        — contract is paused (admin action)   → fatal
+ *   7 SeedNotActive         — seed missing/expired/future         → fatal
+ */
+function classifySimulationContractError(
+  contractCode: number,
+  errorDetails: unknown,
+): RelaySubmitResult {
+  const errorDetail = buildErrorDetail({ errorDetails });
+  switch (contractCode) {
+    case 1:
+      return {
+        type: "fatal",
+        message: "claim rejected: journal data is malformed (InvalidJournalFormat)",
+        errorDetail,
+      };
+    case 3:
+      // Journal digest already exists on-chain — a prior claim attempt succeeded.
+      return { type: "success", txHash: "prior-attempt" };
+    case 4:
+      return {
+        type: "fatal",
+        message: "claim rejected: score is zero (ZeroScoreNotAllowed)",
+        errorDetail,
+      };
+    case 5:
+      // Score did not beat claimant's current best — superseded by a higher score.
+      return { type: "success", txHash: "superseded-by-higher-score" };
+    case 6:
+      return {
+        type: "fatal",
+        message: "claim rejected: contract is paused (ContractPaused)",
+        errorDetail,
+      };
+    case 7:
+      return {
+        type: "fatal",
+        message: "claim rejected: seed is not active for this seed_id (SeedNotActive)",
+        errorDetail,
+      };
+    default:
+      return {
+        type: "fatal",
+        message: `claim rejected: contract error #${contractCode}`,
+        errorDetail,
+      };
+  }
+}
+
 /** Deterministic contract / input patterns that should never be retried. */
 function hasFatalClaimIndicator(message: string): boolean {
   const m = message.toLowerCase();
@@ -208,11 +237,9 @@ function hasFatalClaimIndicator(message: string): boolean {
 }
 
 function isRetryableChannelsExecution(message: string, code: string | null): boolean {
+  // SIMULATION_FAILED is handled via extractContractErrorCode before reaching here;
+  // this branch is a fallback for opaque simulation failures with no contract code.
   if (code?.toLowerCase() === "simulation_failed") {
-    // Channels can surface transient RPC/plugin errors as SIMULATION_FAILED.
-    // Treat as fatal when the message carries a deterministic contract/input
-    // failure; otherwise check for known transient indicators before defaulting
-    // to fatal (avoids blind retries on opaque simulation failures).
     if (hasFatalClaimIndicator(message)) {
       return false;
     }
@@ -222,12 +249,17 @@ function isRetryableChannelsExecution(message: string, code: string | null): boo
   if (retryableChannelsExecutionCode(code)) {
     return true;
   }
+  // The error code itself may be a known network/transient error (e.g. ECONNRESET).
+  if (code && isRetryableDirectClaimMessage(code)) {
+    return true;
+  }
   const normalized = message.toLowerCase();
   return (
     (normalized.includes("internal error") && normalized.includes("reference")) ||
     normalized.includes("too many transactions queued") ||
     normalized.includes("temporarily unavailable") ||
-    normalized.includes("try again later")
+    normalized.includes("try again later") ||
+    isRetryableDirectClaimMessage(message)
   );
 }
 
@@ -282,6 +314,24 @@ export function isRetryableDirectClaimMessage(rawMessage: string): boolean {
   );
 }
 
+function safeJsonStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function buildErrorDetail(parts: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(parts)) {
+    if (value == null) continue;
+    const str = typeof value === "string" ? value : safeJsonStringify(value) ?? String(value);
+    if (str.length > 0) lines.push(`${key}: ${str}`);
+  }
+  return lines.join("\n");
+}
+
 async function submitSorobanOperationViaChannels(
   config: ChannelsConfig,
   payload: SorobanInvokePayload,
@@ -309,6 +359,102 @@ async function submitSorobanOperationViaChannels(
       return {
         type: "retry",
         message: `channels relayer transport failed: ${error.message}`,
+        errorDetail: buildErrorDetail({
+          category: error.category,
+          statusCode: error.statusCode,
+          message: error.message,
+          errorDetails: error.errorDetails,
+          stack: error.stack,
+        }),
+      };
+    }
+
+    if (error instanceof PluginExecutionError) {
+      const code = extractExecutionCode(error.errorDetails);
+
+      // For SIMULATION_FAILED, parse the Soroban contract error code first so
+      // we can give each outcome a precise classification and message.
+      if (code?.toLowerCase() === "simulation_failed") {
+        const contractCode = extractContractErrorCode(error.errorDetails);
+        if (contractCode !== null) {
+          return classifySimulationContractError(contractCode, error.errorDetails);
+        }
+        // Opaque simulation failure — no contract error code found.
+        const isRetryable = !hasFatalClaimIndicator(error.message) &&
+          isRetryableDirectClaimMessage(error.message);
+        return {
+          type: isRetryable ? "retry" : "fatal",
+          message: `soroban simulation failed: ${error.message}`,
+          errorDetail: buildErrorDetail({
+            category: error.category,
+            code,
+            message: error.message,
+            errorDetails: error.errorDetails,
+            stack: error.stack,
+          }),
+        };
+      }
+
+      const detail = code ? `${error.message} (${code})` : error.message;
+      return {
+        type: isRetryableChannelsExecution(error.message, code) ? "retry" : "fatal",
+        message: `channels relayer soroban submission failed: ${detail}`,
+        errorDetail: buildErrorDetail({
+          category: error.category,
+          code,
+          message: error.message,
+          errorDetails: error.errorDetails,
+          stack: error.stack,
+        }),
+      };
+    }
+
+    const detail = safeErrorMessage(error);
+    return {
+      type: isRetryableDirectClaimMessage(detail) ? "retry" : "fatal",
+      message: `channels relayer soroban submission failed: ${detail}`,
+      errorDetail: buildErrorDetail({
+        message: detail,
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
+    };
+  }
+}
+
+async function submitSignedTransactionViaChannels(
+  config: ChannelsConfig,
+  signedXdr: string,
+): Promise<RelaySubmitResult> {
+  const client = buildChannelsClient(config);
+
+  try {
+    const result = await client.submitTransaction({ xdr: signedXdr });
+
+    const txHash = result.hash?.trim() ?? "";
+    const status = result.status?.trim().toLowerCase() ?? "";
+    if (txHash.length === 0) {
+      return {
+        type: status === "failed" || status === "error" ? "fatal" : "retry",
+        message: "channels relayer accepted signed transaction but did not return hash",
+      };
+    }
+
+    return {
+      type: "success",
+      txHash,
+    };
+  } catch (error) {
+    if (error instanceof PluginTransportError) {
+      return {
+        type: "retry",
+        message: `channels relayer transport failed: ${error.message}`,
+        errorDetail: buildErrorDetail({
+          category: error.category,
+          statusCode: error.statusCode,
+          message: error.message,
+          errorDetails: error.errorDetails,
+          stack: error.stack,
+        }),
       };
     }
 
@@ -317,55 +463,420 @@ async function submitSorobanOperationViaChannels(
       const detail = code ? `${error.message} (${code})` : error.message;
       return {
         type: isRetryableChannelsExecution(error.message, code) ? "retry" : "fatal",
-        message: `channels relayer soroban submission failed: ${detail}`,
+        message: `channels relayer signed transaction submission failed: ${detail}`,
+        errorDetail: buildErrorDetail({
+          category: error.category,
+          code,
+          message: error.message,
+          errorDetails: error.errorDetails,
+          stack: error.stack,
+        }),
       };
     }
 
     const detail = safeErrorMessage(error);
     return {
       type: isRetryableDirectClaimMessage(detail) ? "retry" : "fatal",
-      message: `channels relayer soroban submission failed: ${detail}`,
+      message: `channels relayer signed transaction submission failed: ${detail}`,
+      errorDetail: buildErrorDetail({
+        message: detail,
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
     };
   }
+}
+
+export async function submitRelayProxy(
+  env: WorkerEnv,
+  payload: RelayProxyPayload,
+): Promise<RelaySubmitResult> {
+  const channels = resolveChannelsConfig(env);
+  if (!channels) {
+    return {
+      type: "fatal",
+      message: "relayer is not configured; set RELAYER_URL and RELAYER_API_KEY",
+    };
+  }
+
+  if (payload.kind === "xdr") {
+    return submitSignedTransactionViaChannels(channels, payload.xdr);
+  }
+
+  return submitSorobanOperationViaChannels(channels, {
+    func: payload.func,
+    auth: payload.auth,
+  });
 }
 
 async function buildSubmitScorePayloadViaBindings(
   scoreContractId: string,
   seal: Uint8Array,
   journalRaw: Uint8Array,
-  claimantAddress: string,
 ): Promise<SorobanInvokePayload> {
-  const client = new ScoreContractClient({
-    contractId: scoreContractId,
-    rpcUrl: DEFAULT_BINDINGS_RPC_URL,
-    networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
+  return buildInvokePayloadForContractFn(
+    scoreContractId,
+    "submit_score",
+    [xdr.ScVal.scvBytes(Buffer.from(seal)), xdr.ScVal.scvBytes(Buffer.from(journalRaw))],
+  );
+}
+
+function buildCurrentSeedPayload(scoreContractId: string): SorobanInvokePayload {
+  return buildInvokePayloadForContractFn(scoreContractId, "current_seed", []);
+}
+
+function buildInvokePayloadForContractFn(
+  contractId: string,
+  fnName: string,
+  args: xdr.ScVal[],
+): SorobanInvokePayload {
+  const invokeArgs = new xdr.InvokeContractArgs({
+    contractAddress: Address.fromString(contractId).toScAddress(),
+    functionName: fnName,
+    args,
   });
-
-  type SubmitScoreArgs = Parameters<ScoreContractClient["submit_score"]>[0];
-  const args: SubmitScoreArgs = {
-    seal: seal as unknown as SubmitScoreArgs["seal"],
-    journal_raw: journalRaw as unknown as SubmitScoreArgs["journal_raw"],
-    claimant: claimantAddress,
+  const hostFn = xdr.HostFunction.hostFunctionTypeInvokeContract(invokeArgs);
+  return {
+    func: hostFn.toXDR("base64"),
+    auth: [],
   };
+}
 
-  const assembled = await client.submit_score(args, { simulate: false });
-  const built = assembled.raw?.build();
-  const operation = built?.operations?.[0] as
-    | {
-        func?: xdr.HostFunction;
-        auth?: xdr.SorobanAuthorizationEntry[];
-      }
-    | undefined;
+function buildSeedByIdLedgerKeyXdr(contractId: string, seedId: number): string {
+  const contractAddress = Address.fromString(contractId).toScAddress();
+  const seedKey = xdr.ScVal.scvVec([
+    xdr.ScVal.scvSymbol("SeedById"),
+    xdr.ScVal.scvU32(seedId >>> 0),
+  ]);
+  const ledgerKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: contractAddress,
+      key: seedKey,
+      durability: xdr.ContractDataDurability.temporary(),
+    }),
+  );
+  return ledgerKey.toXDR("base64");
+}
 
-  if (!operation?.func) {
-    throw new Error("generated bindings did not produce invokeHostFunction operation");
+async function fetchSeedById(
+  contractId: string,
+  rpcUrl: string,
+  seedId: number,
+): Promise<number | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SEED_LEDGER_FETCH_TIMEOUT_MS);
+  try {
+    const keyXdr = buildSeedByIdLedgerKeyXdr(contractId, seedId);
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getLedgerEntries",
+        params: {
+          keys: [keyXdr],
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`getLedgerEntries HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>;
+    const rpcError = asObject(payload.error);
+    if (rpcError) {
+      const code = typeof rpcError.code === "number" ? rpcError.code : null;
+      const message = typeof rpcError.message === "string" ? rpcError.message : "unknown rpc error";
+      throw new Error(code !== null ? `getLedgerEntries RPC error ${code}: ${message}` : message);
+    }
+
+    const result = asObject(payload.result);
+    const first = Array.isArray(result?.entries) ? asObject(result.entries[0]) : null;
+    if (!first) {
+      return null;
+    }
+
+    const entryXdr = typeof first.xdr === "string" ? first.xdr : null;
+    if (!entryXdr) {
+      return null;
+    }
+
+    const entry = xdr.LedgerEntryData.fromXDR(entryXdr, "base64");
+    if (entry.switch().value !== xdr.LedgerEntryType.contractData().value) {
+      return null;
+    }
+
+    const value = entry.contractData().val();
+    if (value.switch().value !== xdr.ScValType.scvU32().value) {
+      return null;
+    }
+
+    return value.u32() >>> 0;
+  } catch (error) {
+    console.warn("[seed-refresh] fetchSeedById: failed", { rpcUrl, seedId, error: safeErrorMessage(error) });
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function currentSeedIdWithSecondsLeft(nowMs: number = Date.now()): {
+  seedId: number;
+  secondsLeft: number;
+} {
+  const epochMs = SEED_INTERVAL_SECONDS * 1000;
+  const seedId = Math.floor(nowMs / epochMs);
+  const secondsLeft = Math.ceil((epochMs - (nowMs % epochMs)) / 1000);
+  return { seedId, secondsLeft };
+}
+
+export interface CurrentEpochSeedState {
+  seedId: number;
+  secondsLeft: number;
+  seed: number | null;
+}
+
+export interface SeedRefreshResult {
+  success: boolean;
+  message: string | null;
+  seedId: number | null;
+  seed: number | null;
+  txHashCurrentSeed: string | null;
+}
+
+export interface EnsureCurrentEpochSeedResult {
+  success: boolean;
+  state: CurrentEpochSeedState;
+  refreshAttempted: boolean;
+  refreshed: boolean;
+  message: string | null;
+  txHashCurrentSeed: string | null;
+  retryAfterSeconds?: number;
+}
+
+export async function readCurrentEpochSeedState(env: WorkerEnv): Promise<CurrentEpochSeedState> {
+  const scoreContractId = nonEmpty(env.SCORE_CONTRACT_ID);
+  if (!scoreContractId) {
+    throw new Error("SCORE_CONTRACT_ID is not configured");
   }
 
-  const authEntries = Array.isArray(operation.auth) ? operation.auth : [];
-  return {
-    func: operation.func.toXDR("base64"),
-    auth: authEntries.map((entry) => entry.toXDR("base64")),
-  };
+  const rpcUrl = resolveBindingsRpcUrl(env);
+  const { seedId, secondsLeft } = currentSeedIdWithSecondsLeft();
+  const seed = await fetchSeedById(scoreContractId, rpcUrl, seedId);
+  return { seedId, secondsLeft, seed };
+}
+
+export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResult> {
+  const config = resolveDirectClaimConfig(env);
+  if (!config) {
+    console.log("[seed-refresh] channels relayer not configured, skipping seed refresh");
+    return {
+      success: false,
+      message: "channels relayer not configured",
+      seedId: null,
+      seed: null,
+      txHashCurrentSeed: null,
+    };
+  }
+
+  const rpcUrl = resolveBindingsRpcUrl(env);
+  let phase = "init";
+  try {
+    phase = "build_payload_current_seed";
+    const payload = buildCurrentSeedPayload(config.scoreContractId);
+
+    console.log("[seed-refresh] submitting current_seed() to create seed for current epoch", {
+      contractId: config.scoreContractId,
+      relayerUrl: config.channels.baseUrl,
+    });
+
+    phase = "send_tx_current_seed";
+    const result = await submitSorobanOperationViaChannels(config.channels, payload);
+    let txHashCurrentSeed: string | null = null;
+    const currentSeedAcceptedWithoutHash = result.type === "retry" &&
+      isAcceptedWithoutHashMessage(result.message);
+    if (result.type === "success") {
+      txHashCurrentSeed = result.txHash;
+    } else if (!currentSeedAcceptedWithoutHash) {
+      console.warn("[seed-refresh] current_seed submission failed", {
+        type: result.type,
+        message: result.message,
+      });
+      return {
+        success: false,
+        message: result.message,
+        seedId: null,
+        seed: null,
+        txHashCurrentSeed: txHashCurrentSeed,
+      };
+    }
+    if (currentSeedAcceptedWithoutHash) {
+      console.warn("[seed-refresh] current_seed accepted without hash; will retry reading", {
+        message: result.message,
+      });
+    }
+
+    const nowSeedId = Math.floor(Date.now() / 1000 / SEED_INTERVAL_SECONDS);
+    const candidateSeedIds = nowSeedId > 0 ? [nowSeedId, nowSeedId - 1] : [nowSeedId];
+
+    phase = "fetch_seed_by_id";
+    let seedId: number | null = null;
+    let seed: number | null = null;
+    const readDelaysMs = currentSeedAcceptedWithoutHash ? [0, 600, 1_500, 3_000] : [0, 1_000];
+    for (const delayMs of readDelaysMs) {
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+
+      for (const candidateSeedId of candidateSeedIds) {
+        const candidateSeed = await fetchSeedById(config.scoreContractId, rpcUrl, candidateSeedId);
+        if (candidateSeed !== null) {
+          seedId = candidateSeedId;
+          seed = candidateSeed;
+          break;
+        }
+      }
+
+      if (seed !== null) {
+        break;
+      }
+    }
+
+    if (seedId === null || seed === null) {
+      console.warn("[seed-refresh] unable to read seed after current_seed() submission");
+      return {
+        success: false,
+        message: "could not read seed after current_seed() submission",
+        seedId: null,
+        seed: null,
+        txHashCurrentSeed: txHashCurrentSeed,
+      };
+    }
+
+    console.log("[seed-refresh] seed created successfully", {
+      seedId,
+      seed,
+      txHashCurrentSeed,
+    });
+    return {
+      success: true,
+      message: null,
+      seedId,
+      seed,
+      txHashCurrentSeed,
+    };
+  } catch (error) {
+    const detail = safeErrorMessage(error);
+    console.error(`[seed-refresh] error during ${phase}: ${detail}`);
+    return {
+      success: false,
+      message: detail,
+      seedId: null,
+      seed: null,
+      txHashCurrentSeed: null,
+    };
+  }
+}
+
+export async function ensureCurrentEpochSeed(env: WorkerEnv): Promise<EnsureCurrentEpochSeedResult> {
+  let state = await readCurrentEpochSeedState(env);
+  if (state.seed !== null) {
+    return {
+      success: true,
+      state,
+      refreshAttempted: false,
+      refreshed: false,
+      message: "current epoch seed already exists",
+      txHashCurrentSeed: null,
+    };
+  }
+
+  const seedId = state.seedId;
+  if (inFlightSeedEnsurePromise && inFlightSeedEnsureSeedId === seedId) {
+    return inFlightSeedEnsurePromise;
+  }
+
+  const now = Date.now();
+  if (
+    lastSeedRefreshAttemptSeedId === seedId &&
+    now - lastSeedRefreshAttemptAt < SEED_REFRESH_COOLDOWN_MS
+  ) {
+    const retryAfterSeconds = Math.ceil(
+      (SEED_REFRESH_COOLDOWN_MS - (now - lastSeedRefreshAttemptAt)) / 1000,
+    );
+    return {
+      success: false,
+      state,
+      refreshAttempted: false,
+      refreshed: false,
+      message: "seed refresh recently attempted; backing off",
+      txHashCurrentSeed: null,
+      retryAfterSeconds,
+    };
+  }
+
+  const attempt = (async (): Promise<EnsureCurrentEpochSeedResult> => {
+    lastSeedRefreshAttemptSeedId = seedId;
+    lastSeedRefreshAttemptAt = Date.now();
+
+    const refresh = await submitSeedRefresh(env);
+
+    // submitSeedRefresh already retries reading the seed after submission.
+    // If it found the seed, use its data directly — no extra RPC call needed.
+    if (refresh.success && refresh.seedId !== null && refresh.seed !== null) {
+      const { secondsLeft } = currentSeedIdWithSecondsLeft();
+      state = {
+        seedId: refresh.seedId,
+        secondsLeft,
+        seed: refresh.seed,
+      };
+      return {
+        success: true,
+        state,
+        refreshAttempted: true,
+        refreshed: true,
+        message: null,
+        txHashCurrentSeed: refresh.txHashCurrentSeed,
+      };
+    }
+
+    // Submission didn't confirm seed yet. Do one single re-read after a
+    // short delay — Channels may have accepted but RPC needs a moment.
+    if (!refresh.success) {
+      const msg = (refresh.message ?? "").toLowerCase();
+      const shouldRecheck = msg.includes("did not return hash") || isRetryableDirectClaimMessage(msg);
+      if (shouldRecheck) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        state = await readCurrentEpochSeedState(env).catch(() => state);
+      }
+    }
+
+    const indexed = state.seed !== null;
+    return {
+      success: indexed,
+      state,
+      refreshAttempted: true,
+      refreshed: refresh.success || indexed,
+      message: indexed ? null : (refresh.message ?? "seed refresh failed"),
+      txHashCurrentSeed: refresh.txHashCurrentSeed,
+    };
+  })();
+
+  inFlightSeedEnsureSeedId = seedId;
+  inFlightSeedEnsurePromise = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (inFlightSeedEnsurePromise === attempt) {
+      inFlightSeedEnsurePromise = null;
+      inFlightSeedEnsureSeedId = null;
+    }
+  }
 }
 
 export async function submitClaimDirect(
@@ -384,23 +895,37 @@ export async function submitClaimDirect(
   let phase = "init";
   try {
     phase = "parse_payload";
-    const seal = extractGroth16SealFromProverResponse(request.proverResponse);
+    const seal = hexToBytes(request.sealHex, "seal_hex");
     const journalRaw = hexToBytes(request.journalRawHex, "journal_raw_hex");
-    // Validate claimant formatting before constructing invoke payload.
-    Address.fromString(request.claimantAddress);
+    const requestedDigest = request.journalDigestHex.trim().toLowerCase();
+    if (seal.length !== STELLAR_GROTH16_SEAL_LEN) {
+      throw new Error(
+        `seal_hex must encode exactly ${STELLAR_GROTH16_SEAL_LEN} bytes (got ${seal.length})`,
+      );
+    }
+    if (journalRaw.length !== JOURNAL_LEN) {
+      throw new Error(
+        `journal_raw_hex must encode exactly ${JOURNAL_LEN} bytes (got ${journalRaw.length})`,
+      );
+    }
+    if (!/^[0-9a-f]{64}$/.test(requestedDigest)) {
+      throw new Error("journal_digest_hex must be a 32-byte lowercase hex string");
+    }
+    const computedDigest = await sha256Hex(journalRaw);
+    if (computedDigest !== requestedDigest) {
+      throw new Error("journal_digest_hex does not match journal_raw_hex");
+    }
 
     phase = "build_payload_bindings";
     const payload = await buildSubmitScorePayloadViaBindings(
       config.scoreContractId,
       seal,
       journalRaw,
-      request.claimantAddress,
     );
 
     console.log("[claim-direct] relayer-only submit", {
       jobId: request.jobId,
       relayerUrl: config.channels.baseUrl,
-      claimant: request.claimantAddress,
       journalDigestHex: request.journalDigestHex,
       journalBytes: journalRaw.length,
       sealBytes: seal.length,
@@ -421,6 +946,11 @@ export async function submitClaimDirect(
     return {
       type: retryable ? "retry" : "fatal",
       message: `direct claim failed during ${phase}: ${detail}`,
+      errorDetail: buildErrorDetail({
+        phase,
+        message: detail,
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
     };
   }
 }

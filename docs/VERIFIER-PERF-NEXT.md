@@ -1,11 +1,11 @@
-# Verifier Perf: Next Exploration Notes (AST3)
+# Verifier Perf: Next Exploration Notes (AST4)
 
 This doc captures the next performance/determinism investigations to run later, without weakening strict fairness guarantees.
 
 ## Constraints (Non-Negotiable)
 
 - Proof verification must continue to use strict replay (`verify_tape -> replay_strict`) and enforce all game rules deterministically.
-- No backwards compatibility: AST3 tapes are the only supported format (v2 header, no claimant bytes, old tapes rejected).
+- No backwards compatibility: AST4 tapes are the only supported format (v3 header, nibble-packed body, claimant not embedded in tape; old tapes rejected).
 - Any gameplay-semantic change in Rust must be mirrored to TypeScript (sim + tape serializer) for 1:1 parity.
 - Determinism: no floats, no nondeterministic iteration, no dependence on host timing, and no data-structure reordering that changes collision resolution order.
 
@@ -26,7 +26,7 @@ Avoid retesting these unless the surrounding code changes materially:
 - Branchless `abs`-style AABB collision reject (regressed).
 - Pow2-mod RNG fast-path (`x & (n-1)`) in `next_int` (regressed despite being correct).
 - Reusing `TransitionState` across frames to reduce `transition_state()` calls (regressed on RV32 due to spills/copies).
-- Small “clever” branch rewrites in collision/turn logic (mixed-to-negative).
+- Small "clever" branch rewrites in collision/turn logic (mixed-to-negative).
 
 ## Next Targets (Ordered By Expected ROI)
 
@@ -58,7 +58,7 @@ Why: these collections have hard caps:
 - saucers: <= 3 (capacity currently 4)
 
 Idea:
-- Replace `Vec<T>` with a fixed-cap “slot array” and a `len`:
+- Replace `Vec<T>` with a fixed-cap "slot array" and a `len`:
   - push = write at `len` (if `len < CAP`)
   - prune = stable compaction into the same array
   - iterate `0..len`
@@ -83,7 +83,7 @@ Reality check:
 
 Must-do if attempted:
 - Add explicit bound comments + debug asserts (debug-only) for safe casts.
-- Mirror TS types/behavior if semantics change (usually it shouldn’t).
+- Mirror TS types/behavior if semantics change (usually it shouldn't).
 - A/B with `bench-core-cycles` immediately.
 
 ### 4) Micro-Optimizations Inside `validate_transition` (No Check Removal)
@@ -96,11 +96,11 @@ Permissible work:
 
 Do NOT:
 - Remove checks.
-- Skip checks based on “shouldn’t happen”.
+- Skip checks based on "shouldn't happen".
 
 ### 5) Profiling Hygiene: Get Line-Level Attribution
 
-Current `go tool pprof -list` can’t locate source (“unknown” file paths). Fixing this may reveal more actionable hotspots.
+Current `go tool pprof -list` can't locate source ("unknown" file paths). Fixing this may reveal more actionable hotspots.
 
 Ideas to investigate:
 - Ensure the benchmark build emits usable debug paths for guest symbols.
@@ -113,7 +113,7 @@ Even if guest attribution stays coarse, still capture pprof before/after large r
 - One change at a time (single PR/commit).
 - `cargo test -p asteroids-verifier-core` before bench.
 - `bash scripts/bench-core-cycles.sh` for the A/B.
-- Accept only improvements in the “real” case; “short/medium” must not regress materially.
+- Accept only improvements in the "real" case; "short/medium" must not regress materially.
 - Record the before/after cycle counts in the commit message.
 
 ## Determinism + Overflow Checklist

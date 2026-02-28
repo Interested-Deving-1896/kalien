@@ -11,6 +11,7 @@ import type { WorkerEnv } from "../../worker/env";
 import type { ProverGetJobResponse } from "../../worker/types";
 
 const VALID_IMAGE_ID = "a".repeat(64);
+const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
@@ -46,12 +47,11 @@ function validProverGetJobResponse(overrides: Partial<ProverGetJobResponse> = {}
     result: {
       proof: {
         journal: {
+          seed_id: 123,
           seed: 42,
           frame_count: 100,
           final_score: 1337,
-          final_rng_state: 999,
-          tape_checksum: 0xdead,
-          rules_digest: EXPECTED_RULES_DIGEST,
+          claimant: TEST_CLAIMANT,
         },
         requested_receipt_kind: "groth16",
         produced_receipt_kind: "groth16",
@@ -62,7 +62,14 @@ function validProverGetJobResponse(overrides: Partial<ProverGetJobResponse> = {}
           paging_cycles: 1000,
           reserved_cycles: 1000,
         },
-        receipt: {},
+        receipt: {
+          inner: {
+            Groth16: {
+              seal: Array.from({ length: 256 }, (_, index) => index & 0xff),
+              verifier_parameters: [0x73c457ba, 0, 0, 0, 0, 0, 0, 0],
+            },
+          },
+        },
       },
       elapsed_ms: 5000,
     },
@@ -98,7 +105,7 @@ describe("prover client", () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async () =>
         new Response(
-          JSON.stringify({ status: "ok", image_id: "short", rules_digest: 1, ruleset: "AST3" }),
+          JSON.stringify({ status: "ok", image_id: "short", rules_digest: 1, ruleset: "WRONG" }),
           { status: 200, headers: { "content-type": "application/json" } },
         )) as typeof fetch;
       try {
@@ -141,11 +148,6 @@ describe("prover client", () => {
       expect(() => summarizeProof(response)).toThrow("zero-score");
     });
 
-    it("throws for rules digest mismatch", () => {
-      const response = validProverGetJobResponse();
-      response.result!.proof.journal.rules_digest = 0xdeadbeef;
-      expect(() => summarizeProof(response)).toThrow("0x");
-    });
   });
 
   describe("getValidatedProverHealth", () => {
@@ -294,7 +296,10 @@ describe("prover client", () => {
         );
       }) as typeof fetch;
       try {
-        const result = await submitToProver(makeEnv(), tapeBytes, {});
+        const result = await submitToProver(makeEnv(), tapeBytes, {
+          seedId: 123,
+          claimantAddress: TEST_CLAIMANT,
+        });
         expect(result.type).toBe("success");
         if (result.type === "success") {
           expect(result.jobId).toBe("prover-job-1");
@@ -320,7 +325,10 @@ describe("prover client", () => {
         });
       }) as typeof fetch;
       try {
-        const result = await submitToProver(makeEnv(), tapeBytes, {});
+        const result = await submitToProver(makeEnv(), tapeBytes, {
+          seedId: 123,
+          claimantAddress: TEST_CLAIMANT,
+        });
         expect(result.type).toBe("retry");
       } finally {
         globalThis.fetch = originalFetch;
@@ -340,7 +348,10 @@ describe("prover client", () => {
         return new Response("bad request", { status: 400 });
       }) as typeof fetch;
       try {
-        const result = await submitToProver(makeEnv(), tapeBytes, {});
+        const result = await submitToProver(makeEnv(), tapeBytes, {
+          seedId: 123,
+          claimantAddress: TEST_CLAIMANT,
+        });
         expect(result.type).toBe("fatal");
       } finally {
         globalThis.fetch = originalFetch;
@@ -360,7 +371,10 @@ describe("prover client", () => {
         const result = await pollProverOnce(makeEnv(), "job-1");
         expect(result.type).toBe("success");
         if (result.type === "success") {
-          expect(result.response.job_id).toBe("prover-job-1");
+          expect(result.summary.journal.final_score).toBe(1337);
+          expect(result.artifact.version).toBe("v4");
+          expect(result.artifact.backend).toBe("vast");
+          expect(result.artifact.produced_receipt_kind).toBe("groth16");
         }
       } finally {
         globalThis.fetch = originalFetch;

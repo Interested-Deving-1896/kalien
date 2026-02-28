@@ -3,6 +3,7 @@
 These files are the canonical Stellar ZK reference set for this repository.
 
 ## File Order
+
 | File | Purpose |
 |---|---|
 | `00-OVERVIEW.md` | Current-state map and navigation |
@@ -20,9 +21,8 @@ These files are the canonical Stellar ZK reference set for this repository.
 | `12-REFERENCE-INDEX.md` | Extended retained sources from prior research sweeps |
 
 ## Scope
+
 - Owns protocol/ecosystem/application-pattern docs.
 - Game-specific implementation detail stays under `docs/games/`.
 
-## Style
-- Keep decision-first and implementation-oriented.
-- Keep only canonical docs; update files in place as decisions evolve.
+See [docs/README.md](../README.md) for global docs policy.

@@ -4,5 +4,4 @@ target
 # Local settings
 .soroban
 .stellar
-.testnet-state.env
-.cost-analysis-state.env
+.env

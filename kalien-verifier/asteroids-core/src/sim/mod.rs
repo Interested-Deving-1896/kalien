@@ -89,7 +89,6 @@ struct Saucer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReplayResult {
     pub final_score: u32,
-    pub final_rng_state: u32,
     pub frame_count: u32,
 }
 

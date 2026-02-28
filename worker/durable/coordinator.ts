@@ -1,29 +1,31 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  ACTIVE_JOB_KEY,
+  ACTIVE_JOBS_KEY,
   COORDINATOR_OBJECT_NAME,
+  DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
   DEFAULT_COMPLETED_JOB_RETENTION_MS,
   DEFAULT_MAX_JOB_WALL_TIME_MS,
   DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
-  DEFAULT_SEGMENT_LIMIT_PO2,
   MIN_PROVER_POLL_INTERVAL_MS,
   JOB_KEY_PREFIX,
-  LEADERBOARD_EVENT_KEY_PREFIX,
-  LEADERBOARD_INGESTION_STATE_KEY,
-  MAX_PROVER_RECOVERY_ATTEMPTS,
-  PROFILE_KEY_PREFIX,
+  MAX_TOTAL_PROVER_ATTEMPTS,
 } from "../constants";
+import { resolveBoundlessConfig } from "../boundless/config";
+import { BoundlessClient, fetchBoundlessCycles } from "../boundless/sdk/client";
+import { fetchEthPriceUsd, weiToUsd } from "../boundless/pricing";
+import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
-import { pollProver, pollProverOnce, submitToProver, summarizeProof } from "../prover/client";
+import { pollProver, pollProverOnce } from "../prover/client";
+import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import type {
-  CreateJobResult,
-  LeaderboardEventRecord,
-  LeaderboardIngestionState,
-  PlayerProfileRecord,
+  ClaimAttempt,
+  CreateJobAccepted,
   ProofJobRecord,
   ProofResultSummary,
+  ProverAttempt,
+  ProverBackend,
   ProverPollResult,
   PublicProofJob,
   ProofTapeInfo,
@@ -36,12 +38,25 @@ import {
   safeErrorMessage,
 } from "../utils";
 
+const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
+
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
   return env.PROOF_COORDINATOR.get(id);
 }
 
 export function asPublicJob(job: ProofJobRecord): PublicProofJob {
+  const proverAttempts = (job.proverAttempts ?? []).map((a) => ({
+    ...a,
+    errorDetail: a.errorDetail ?? null,
+    errorCode: a.errorCode ?? null,
+    actualCostUsd: a.actualCostUsd != null && a.actualCostUsd <= 1000 ? a.actualCostUsd : null,
+    proverAddress: a.proverAddress ?? null,
+    fulfillmentTxHash: a.fulfillmentTxHash ?? null,
+    programCycles: a.programCycles ?? null,
+    totalCycles: a.totalCycles ?? null,
+  }));
+
   return {
     jobId: job.jobId,
     status: job.status,
@@ -54,6 +69,8 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     },
     queue: job.queue,
     prover: job.prover,
+    proverAttempts,
+    claimAttempts: job.claimAttempts ?? [],
     result: job.result,
     claim: job.claim,
     error: job.error,
@@ -80,6 +97,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     } catch (error) {
       console.warn(`[proof-worker] failed deleting artifact ${key}: ${safeErrorMessage(error)}`);
     }
+  }
+
+  private async unpinIpfsInput(job: ProofJobRecord): Promise<void> {
+    const cid = job.prover.ipfsCid;
+    if (!cid) {
+      return;
+    }
+
+    const pinataJwt = this.env.PINATA_JWT;
+    if (!pinataJwt) {
+      return;
+    }
+
+    // Fire-and-forget via waitUntil so it doesn't block the response
+    this.ctx.waitUntil(unpinInput(pinataJwt, cid));
   }
 
   private async pruneCompletedJobs(): Promise<void> {
@@ -177,89 +209,154 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     /* eslint-enable no-await-in-loop */
   }
 
-  private async getActiveJobId(): Promise<string | null> {
-    return (await this.ctx.storage.get<string>(ACTIVE_JOB_KEY)) ?? null;
+  private async getActiveJobIds(): Promise<string[]> {
+    return (await this.ctx.storage.get<string[]>(ACTIVE_JOBS_KEY)) ?? [];
+  }
+
+  private async addActiveJobId(jobId: string): Promise<void> {
+    const current = await this.getActiveJobIds();
+    if (!current.includes(jobId)) {
+      await this.ctx.storage.put(ACTIVE_JOBS_KEY, [...current, jobId]);
+    }
+  }
+
+  private async removeActiveJobId(jobId: string): Promise<void> {
+    const current = await this.getActiveJobIds();
+    const updated = current.filter((id) => id !== jobId);
+    await this.ctx.storage.put(ACTIVE_JOBS_KEY, updated);
   }
 
   private async loadJob(jobId: string): Promise<ProofJobRecord | null> {
     return (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
   }
 
-  private profileKey(claimantAddress: string): string {
-    return `${PROFILE_KEY_PREFIX}${claimantAddress}`;
-  }
-
-  private leaderboardEventKey(eventId: string): string {
-    return `${LEADERBOARD_EVENT_KEY_PREFIX}${eventId}`;
-  }
-
   private async saveJob(job: ProofJobRecord): Promise<void> {
     await this.ctx.storage.put(jobKey(job.jobId), job);
-  }
-
-  private async releaseActiveIfMatches(jobId: string): Promise<void> {
-    const activeJobId = await this.getActiveJobId();
-    if (activeJobId === jobId) {
-      await this.ctx.storage.delete(ACTIVE_JOB_KEY);
-    }
   }
 
   private async scheduleAlarm(delayMs: number): Promise<void> {
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
   }
 
-  private segmentFallbackForOom(job: ProofJobRecord, reason: string): number | null {
-    const currentSegment =
-      typeof job.prover.segmentLimitPo2 === "number"
-        ? job.prover.segmentLimitPo2
-        : DEFAULT_SEGMENT_LIMIT_PO2;
-    const fallbackSegment = DEFAULT_SEGMENT_LIMIT_PO2;
-    const normalizedReason = reason.toLowerCase();
-    const looksLikeOom =
-      normalizedReason.includes("out of memory") || normalizedReason.includes("allocation failed");
-
-    if (!looksLikeOom || currentSegment <= fallbackSegment) {
-      return null;
+  /**
+   * If there are no active or retained jobs left, clear all DO storage so the
+   * object can be fully deallocated.
+   */
+  private async flushStorageIfEmpty(): Promise<boolean> {
+    const activeJobIds = await this.getActiveJobIds();
+    if (activeJobIds.length > 0) {
+      return false;
     }
 
-    return fallbackSegment;
+    const remainingJobs = await this.ctx.storage.list<ProofJobRecord>({
+      prefix: JOB_KEY_PREFIX,
+      limit: 1,
+    });
+    if (remainingJobs.size > 0) {
+      return false;
+    }
+
+    await this.ctx.storage.deleteAll();
+    return true;
+  }
+
+  private isBoundlessJob(job: ProofJobRecord): boolean {
+    return job.prover.statusUrl?.startsWith("boundless:") === true;
+  }
+
+  private getLatestSuccessfulAttempt(job: ProofJobRecord): ProverAttempt | null {
+    for (let i = job.proverAttempts.length - 1; i >= 0; i -= 1) {
+      const attempt = job.proverAttempts[i];
+      if (attempt.outcome === "success") {
+        return attempt;
+      }
+    }
+    return null;
+  }
+
+  private isBoundlessSuccessAttempt(job: ProofJobRecord, attempt: ProverAttempt): boolean {
+    return (
+      attempt.backend === "boundless" ||
+      attempt.statusUrl?.startsWith("boundless:") === true ||
+      this.isBoundlessJob(job)
+    );
+  }
+
+  private normalizeBoundlessRequestId(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    const normalized = trimmed.startsWith("boundless:")
+      ? trimmed.slice("boundless:".length)
+      : trimmed;
+    if (/^0x[0-9a-f]+$/i.test(normalized)) return normalized;
+    return null;
+  }
+
+  private getBoundlessRequestId(job: ProofJobRecord, attempt: ProverAttempt): string | null {
+    const candidates = [
+      attempt.proverJobId,
+      attempt.statusUrl,
+      job.prover.jobId,
+      job.prover.statusUrl,
+    ];
+
+    for (const candidate of candidates) {
+      const requestId = this.normalizeBoundlessRequestId(candidate);
+      if (requestId) return requestId;
+    }
+    return null;
+  }
+
+  private getBoundlessChainId(): string {
+    const raw = this.env.BOUNDLESS_CHAIN_ID?.trim();
+    if (!raw) return DEFAULT_BOUNDLESS_CHAIN_ID;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BOUNDLESS_CHAIN_ID;
+    return String(parsed);
+  }
+
+  private normalizeCycleMetric(value: number | null | undefined): number | null {
+    if (value == null || !Number.isFinite(value)) {
+      return null;
+    }
+    return Math.max(0, Math.floor(value));
+  }
+
+  private syncResultCycleStats(
+    job: ProofJobRecord,
+    programCycles: number | null | undefined,
+    totalCycles: number | null | undefined,
+  ): boolean {
+    const stats = job.result?.summary?.stats;
+    if (!stats) {
+      return false;
+    }
+
+    const normalizedTotal = this.normalizeCycleMetric(totalCycles);
+    if (normalizedTotal == null || normalizedTotal <= 0) {
+      return false;
+    }
+
+    let changed = false;
+    if (stats.total_cycles !== normalizedTotal) {
+      stats.total_cycles = normalizedTotal;
+      changed = true;
+    }
+
+    const normalizedProgram = this.normalizeCycleMetric(programCycles);
+    if (normalizedProgram != null && stats.user_cycles !== normalizedProgram) {
+      stats.user_cycles = normalizedProgram;
+      changed = true;
+    }
+
+    return changed;
   }
 
   async createJob(
     tapeInfo: Omit<ProofTapeInfo, "key"> & { claimantAddress: string },
-  ): Promise<CreateJobResult> {
+  ): Promise<CreateJobAccepted> {
     const { claimantAddress, ...proofTape } = tapeInfo;
-    const activeJobId = await this.getActiveJobId();
-    if (activeJobId) {
-      const activeJob = await this.loadJob(activeJobId);
-      if (activeJob && !isTerminalProofStatus(activeJob.status)) {
-        const maxWallTimeMs = parseInteger(
-          this.env.MAX_JOB_WALL_TIME_MS,
-          DEFAULT_MAX_JOB_WALL_TIME_MS,
-          60_000,
-        );
-        const jobAgeMs = Date.now() - new Date(activeJob.createdAt).getTime();
-        if (jobAgeMs <= maxWallTimeMs) {
-          return {
-            accepted: false,
-            message: "another proof job is already active",
-            activeJob,
-          };
-        }
-
-        // Zombie recovery: the active job has exceeded the wall-time limit
-        // but was never moved to a terminal state (alarm lost, queue exhausted, etc.).
-        console.warn(
-          `[proof-worker] force-failing zombie job ${activeJob.jobId} (age ${Math.round(jobAgeMs / 60_000)} min)`,
-        );
-        await this.markFailed(
-          activeJob.jobId,
-          `zombie recovery: job exceeded wall-time limit (${Math.round(jobAgeMs / 60_000)} min)`,
-        );
-      } else {
-        await this.ctx.storage.delete(ACTIVE_JOB_KEY);
-      }
-    }
 
     const jobId = crypto.randomUUID();
     const now = nowIso();
@@ -287,8 +384,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         segmentLimitPo2: null,
         lastPolledAt: null,
         pollingErrors: 0,
-        recoveryAttempts: 0,
       },
+      proverAttempts: [],
+      claimAttempts: [],
       result: null,
       claim: {
         claimantAddress,
@@ -304,7 +402,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     };
 
     await this.saveJob(job);
-    await this.ctx.storage.put(ACTIVE_JOB_KEY, jobId);
+    await this.addActiveJobId(jobId);
 
     return {
       accepted: true,
@@ -316,13 +414,212 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return this.loadJob(jobId);
   }
 
-  async getActiveJob(): Promise<ProofJobRecord | null> {
-    const activeJobId = await this.getActiveJobId();
-    if (!activeJobId) {
-      return null;
+  /**
+   * Lightweight periodic maintenance:
+   * - prune completed jobs by retention/count policy
+   * - fully clear storage when the coordinator is empty
+   */
+  async runMaintenance(): Promise<void> {
+    const activeJobIds = await this.getActiveJobIds();
+    if (activeJobIds.length > 0) {
+      return;
     }
 
-    return this.loadJob(activeJobId);
+    await this.pruneCompletedJobs();
+    await this.flushStorageIfEmpty();
+  }
+
+  /**
+   * Lazy backfill: if a succeeded Boundless job has null cycle counts,
+   * re-check the indexer (Bento processes cycles asynchronously) and
+   * persist the result so subsequent reads are free.
+   *
+   * Returns the (possibly enriched) job record, or null if not found.
+   */
+  async enrichBoundlessCycles(jobId: string): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job) return null;
+
+    // Only enrich succeeded Boundless jobs
+    if (job.status !== "succeeded") return job;
+    const attempt = this.getLatestSuccessfulAttempt(job);
+    if (!attempt) return job;
+    if (!this.isBoundlessSuccessAttempt(job, attempt)) return job;
+
+    const hasAttemptCycles = attempt.totalCycles != null;
+    const summaryTotal = job.result?.summary?.stats.total_cycles ?? null;
+    const summaryMissingCycles = !Number.isFinite(summaryTotal) || summaryTotal <= 0;
+
+    if (!summaryMissingCycles && !hasAttemptCycles) {
+      return job;
+    }
+
+    // Fast path: cycles already exist on the attempt but canonical summary stats
+    // were never updated (legacy records). Persist canonical stats on read.
+    if (hasAttemptCycles && summaryMissingCycles) {
+      if (this.syncResultCycleStats(job, attempt.programCycles, attempt.totalCycles)) {
+        await this.saveJob(job);
+      }
+      return job;
+    }
+
+    // Nothing missing to enrich.
+    if (hasAttemptCycles) {
+      return job;
+    }
+
+    const requestIdHex = this.getBoundlessRequestId(job, attempt);
+    if (!requestIdHex) return job;
+
+    try {
+      const chainId = this.getBoundlessChainId();
+      const { programCycles, totalCycles } = await fetchBoundlessCycles(
+        chainId,
+        requestIdHex,
+      );
+      if (totalCycles != null) {
+        let changed = false;
+        if (attempt.programCycles !== programCycles) {
+          attempt.programCycles = programCycles;
+          changed = true;
+        }
+        if (attempt.totalCycles !== totalCycles) {
+          attempt.totalCycles = totalCycles;
+          changed = true;
+        }
+        if (this.syncResultCycleStats(job, programCycles, totalCycles)) {
+          changed = true;
+        }
+        if (changed) {
+          await this.saveJob(job);
+        }
+      }
+    } catch (error) {
+      // Non-fatal — indexer may be down; next read will retry.
+      console.warn(
+        `[coordinator] cycle backfill failed for ${jobId} (${requestIdHex}): ${safeErrorMessage(error)}`,
+      );
+    }
+    return job;
+  }
+
+  async getActiveJobsSummary(): Promise<{
+    total: number;
+    boundless: number;
+    vast: number;
+    waitingDispatch: number;
+    oldestActiveAgeSec: number | null;
+    oldestWaitingDispatchAgeSec: number | null;
+    statusCounts: {
+      queued: number;
+      dispatching: number;
+      proverRunning: number;
+      retrying: number;
+    };
+    firstJobId: string | null;
+  }> {
+    const activeJobIds = await this.getActiveJobIds();
+    let total = 0;
+    let boundless = 0;
+    let vast = 0;
+    let waitingDispatch = 0;
+    let oldestActiveCreatedAtMs: number | null = null;
+    let oldestWaitingDispatchCreatedAtMs: number | null = null;
+    const statusCounts = {
+      queued: 0,
+      dispatching: 0,
+      proverRunning: 0,
+      retrying: 0,
+    };
+    let firstJobId: string | null = null;
+
+    for (const jobId of activeJobIds) {
+      const job = await this.loadJob(jobId);
+      if (!job || isTerminalProofStatus(job.status)) {
+        continue;
+      }
+
+      if (firstJobId == null) {
+        firstJobId = jobId;
+      }
+      total += 1;
+      const createdAtMs = this.timestampMs(job.createdAt);
+      if (createdAtMs > 0) {
+        oldestActiveCreatedAtMs =
+          oldestActiveCreatedAtMs == null
+            ? createdAtMs
+            : Math.min(oldestActiveCreatedAtMs, createdAtMs);
+      }
+      if (job.status === "queued") statusCounts.queued += 1;
+      if (job.status === "dispatching") statusCounts.dispatching += 1;
+      if (job.status === "prover_running") statusCounts.proverRunning += 1;
+      if (job.status === "retrying") statusCounts.retrying += 1;
+
+      if (!job.prover.jobId) {
+        waitingDispatch += 1;
+        if (createdAtMs > 0) {
+          oldestWaitingDispatchCreatedAtMs =
+            oldestWaitingDispatchCreatedAtMs == null
+              ? createdAtMs
+              : Math.min(oldestWaitingDispatchCreatedAtMs, createdAtMs);
+        }
+        continue;
+      }
+
+      if (this.isBoundlessJob(job)) {
+        boundless += 1;
+      } else {
+        vast += 1;
+      }
+    }
+
+    return {
+      total,
+      boundless,
+      vast,
+      waitingDispatch,
+      oldestActiveAgeSec:
+        oldestActiveCreatedAtMs == null
+          ? null
+          : Math.max(0, Math.floor((Date.now() - oldestActiveCreatedAtMs) / 1000)),
+      oldestWaitingDispatchAgeSec:
+        oldestWaitingDispatchCreatedAtMs == null
+          ? null
+          : Math.max(0, Math.floor((Date.now() - oldestWaitingDispatchCreatedAtMs) / 1000)),
+      statusCounts,
+      firstJobId,
+    };
+  }
+
+  async getActiveJob(): Promise<ProofJobRecord | null> {
+    const activeJobIds = await this.getActiveJobIds();
+    for (const jobId of activeJobIds) {
+      const job = await this.loadJob(jobId);
+      if (job && !isTerminalProofStatus(job.status)) {
+        return job;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns true if a VastAI prover job is currently running (submitted and
+   * being polled). Used by the VastAI queue consumer to enforce 1-at-a-time.
+   */
+  async hasActiveVastJob(): Promise<boolean> {
+    const activeJobIds = await this.getActiveJobIds();
+    for (const jobId of activeJobIds) {
+      const job = await this.loadJob(jobId);
+      if (
+        job &&
+        !isTerminalProofStatus(job.status) &&
+        job.prover.jobId &&
+        !this.isBoundlessJob(job)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async listSucceededJobs(): Promise<ProofJobRecord[]> {
@@ -357,243 +654,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     /* eslint-enable no-await-in-loop */
 
     return jobs;
-  }
-
-  async getProfile(claimantAddress: string): Promise<PlayerProfileRecord | null> {
-    return (
-      (await this.ctx.storage.get<PlayerProfileRecord>(this.profileKey(claimantAddress))) ?? null
-    );
-  }
-
-  async getProfiles(claimantAddresses: string[]): Promise<Record<string, PlayerProfileRecord>> {
-    const unique = Array.from(
-      new Set(claimantAddresses.filter((value) => value.trim().length > 0)),
-    );
-    const entries = await Promise.all(
-      unique.map(async (address) => [address, await this.getProfile(address)] as const),
-    );
-
-    const out: Record<string, PlayerProfileRecord> = {};
-    for (const [address, profile] of entries) {
-      if (profile) {
-        out[address] = profile;
-      }
-    }
-    return out;
-  }
-
-  async listLeaderboardProfiles(): Promise<PlayerProfileRecord[]> {
-    const listPageSize = 256;
-    const profiles: PlayerProfileRecord[] = [];
-    let startAfter: string | undefined;
-
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.listLeaderboardProfilesPage({
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.profiles.length === 0) {
-        break;
-      }
-
-      profiles.push(...page.profiles);
-      if (!page.nextStartAfter || page.done) {
-        break;
-      }
-      startAfter = page.nextStartAfter;
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return profiles;
-  }
-
-  async listLeaderboardProfilesPage(options?: {
-    startAfter?: string | null;
-    limit?: number | null;
-  }): Promise<{
-    profiles: PlayerProfileRecord[];
-    nextStartAfter: string | null;
-    done: boolean;
-  }> {
-    const limitRaw = options?.limit ?? 256;
-    const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 2000);
-    const startAfter = options?.startAfter ?? undefined;
-    const page = await this.ctx.storage.list<PlayerProfileRecord>({
-      prefix: PROFILE_KEY_PREFIX,
-      startAfter: startAfter ?? undefined,
-      limit,
-    });
-    if (page.size === 0) {
-      return {
-        profiles: [],
-        nextStartAfter: null,
-        done: true,
-      };
-    }
-
-    const profiles: PlayerProfileRecord[] = [];
-    for (const [, value] of page) {
-      if (value?.claimantAddress) {
-        profiles.push(value);
-      }
-    }
-
-    const pageKeys = Array.from(page.keys());
-    const lastKey = pageKeys[pageKeys.length - 1];
-    const done = !lastKey || page.size < limit;
-    return {
-      profiles,
-      nextStartAfter: done ? null : lastKey,
-      done,
-    };
-  }
-
-  async upsertProfile(
-    claimantAddress: string,
-    updates: { username: string | null; linkUrl: string | null },
-  ): Promise<PlayerProfileRecord> {
-    const profile: PlayerProfileRecord = {
-      claimantAddress,
-      username: updates.username,
-      linkUrl: updates.linkUrl,
-      updatedAt: nowIso(),
-    };
-
-    await this.ctx.storage.put(this.profileKey(claimantAddress), profile);
-    return profile;
-  }
-
-  async listLeaderboardEvents(): Promise<LeaderboardEventRecord[]> {
-    const listPageSize = 256;
-    const events: LeaderboardEventRecord[] = [];
-    let startAfter: string | undefined;
-
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.listLeaderboardEventsPage({
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.events.length === 0) {
-        break;
-      }
-
-      events.push(...page.events);
-      if (!page.nextStartAfter || page.done) {
-        break;
-      }
-      startAfter = page.nextStartAfter;
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return events;
-  }
-
-  async listLeaderboardEventsPage(options?: {
-    startAfter?: string | null;
-    limit?: number | null;
-  }): Promise<{
-    events: LeaderboardEventRecord[];
-    nextStartAfter: string | null;
-    done: boolean;
-  }> {
-    const limitRaw = options?.limit ?? 256;
-    const limit = Math.min(Math.max(Math.trunc(limitRaw), 1), 2000);
-    const startAfter = options?.startAfter ?? undefined;
-    const page = await this.ctx.storage.list<LeaderboardEventRecord>({
-      prefix: LEADERBOARD_EVENT_KEY_PREFIX,
-      startAfter: startAfter ?? undefined,
-      limit,
-    });
-    if (page.size === 0) {
-      return {
-        events: [],
-        nextStartAfter: null,
-        done: true,
-      };
-    }
-
-    const events: LeaderboardEventRecord[] = [];
-    for (const [, value] of page) {
-      if (value?.eventId) {
-        events.push(value);
-      }
-    }
-
-    const pageKeys = Array.from(page.keys());
-    const lastKey = pageKeys[pageKeys.length - 1];
-    const done = !lastKey || page.size < limit;
-    return {
-      events,
-      nextStartAfter: done ? null : lastKey,
-      done,
-    };
-  }
-
-  async upsertLeaderboardEvents(
-    events: LeaderboardEventRecord[],
-  ): Promise<{ inserted: number; updated: number }> {
-    let inserted = 0;
-    let updated = 0;
-
-    /* eslint-disable no-await-in-loop */
-    for (const event of events) {
-      const key = this.leaderboardEventKey(event.eventId);
-      const existing = await this.ctx.storage.get<LeaderboardEventRecord>(key);
-      if (!existing) {
-        inserted += 1;
-      } else if (JSON.stringify(existing) !== JSON.stringify(event)) {
-        updated += 1;
-      } else {
-        continue;
-      }
-
-      await this.ctx.storage.put(key, event);
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return { inserted, updated };
-  }
-
-  async getLeaderboardIngestionState(): Promise<LeaderboardIngestionState> {
-    const current =
-      (await this.ctx.storage.get<LeaderboardIngestionState>(LEADERBOARD_INGESTION_STATE_KEY)) ??
-      null;
-    if (current) {
-      return {
-        provider: current.provider === "rpc" ? "rpc" : "galexie",
-        sourceMode:
-          current.sourceMode === "rpc" ||
-          current.sourceMode === "events_api" ||
-          current.sourceMode === "datalake"
-            ? current.sourceMode
-            : current.provider === "rpc"
-              ? "rpc"
-              : "datalake",
-        cursor: current.cursor ?? null,
-        highestLedger: current.highestLedger ?? null,
-        lastSyncedAt: current.lastSyncedAt ?? null,
-        lastBackfillAt: current.lastBackfillAt ?? null,
-        totalEvents: current.totalEvents ?? 0,
-        lastError: current.lastError ?? null,
-      };
-    }
-
-    return {
-      provider: "galexie",
-      sourceMode: "datalake",
-      cursor: null,
-      highestLedger: null,
-      lastSyncedAt: null,
-      lastBackfillAt: null,
-      totalEvents: 0,
-      lastError: null,
-    };
-  }
-
-  async setLeaderboardIngestionState(state: LeaderboardIngestionState): Promise<void> {
-    await this.ctx.storage.put(LEADERBOARD_INGESTION_STATE_KEY, state);
   }
 
   async beginQueueAttempt(jobId: string, attempts: number): Promise<ProofJobRecord | null> {
@@ -656,7 +716,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     proverJobId: string,
     statusUrl: string,
     segmentLimitPo2: number,
-    recoveryAttempts?: number,
+    ipfsCid?: string,
+    maxPriceUsd?: number,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -672,8 +733,38 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.statusUrl = statusUrl;
     job.prover.segmentLimitPo2 = segmentLimitPo2;
     job.prover.pollingErrors = 0;
-    job.prover.recoveryAttempts = recoveryAttempts ?? job.prover.recoveryAttempts;
+    if (ipfsCid) {
+      job.prover.ipfsCid = ipfsCid;
+    }
     await this.saveJob(job);
+
+    // Track the attempt. If no in_progress attempt exists, start a new one.
+    // This covers both the initial submission (proverAttempts empty) and
+    // retry submissions after failover to a different backend queue.
+    const hasInProgress = job.proverAttempts.some((a) => a.outcome === "in_progress");
+    if (!hasInProgress) {
+      const backend: ProverBackend = statusUrl.startsWith("boundless:") ? "boundless" : "vast";
+      const attempt: ProverAttempt = {
+        index: job.proverAttempts.length,
+        backend,
+        startedAt: nowIso(),
+        endedAt: null,
+        outcome: "in_progress",
+        error: null,
+        errorDetail: null,
+        errorCode: null,
+        proverJobId,
+        statusUrl,
+        maxPriceUsd: maxPriceUsd ?? null,
+        actualCostUsd: null,
+        proverAddress: null,
+        fulfillmentTxHash: null,
+        programCycles: null,
+        totalCycles: null,
+      };
+      job.proverAttempts.push(attempt);
+      await this.saveJob(job);
+    }
 
     const pollIntervalMs = parseInteger(
       this.env.PROVER_POLL_INTERVAL_MS,
@@ -689,10 +780,32 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     summary: ProofResultSummary,
     artifactKey: string,
+    enrichment?: {
+      actualCostUsd?: number | null;
+      proverAddress?: string | null;
+      fulfillmentTxHash?: string | null;
+      programCycles?: number | null;
+      totalCycles?: number | null;
+    },
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job) {
       return null;
+    }
+
+    let requestedClaimant = "";
+    let provedClaimant = "";
+    try {
+      requestedClaimant = parseClaimantStrKeyFromUserInput(job.claim.claimantAddress).normalized;
+      provedClaimant = parseClaimantStrKeyFromUserInput(summary.journal.claimant).normalized;
+    } catch {
+      return this.markFailed(jobId, "prover returned invalid claimant in journal");
+    }
+    if (requestedClaimant !== provedClaimant) {
+      return this.markFailed(
+        jobId,
+        `prover journal claimant mismatch: requested ${requestedClaimant}, proved ${provedClaimant}`,
+      );
     }
 
     const now = nowIso();
@@ -707,26 +820,50 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       artifactKey,
       summary,
     };
+    // Keep canonicalized claimant in state after proof confirmation.
+    job.claim.claimantAddress = provedClaimant;
     job.error = null;
     job.claim.status = "queued";
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
 
     await this.saveJob(job);
-    await this.releaseActiveIfMatches(jobId);
+    await this.recordAttemptEnd(job, "success", null, enrichment);
+    await this.removeActiveJobId(jobId);
+    await this.unpinIpfsInput(job);
     await this.enqueueClaimJob(jobId);
     try {
       await this.pruneCompletedJobs();
+      await this.flushStorageIfEmpty();
     } catch (error) {
       console.warn(`[proof-worker] prune after success failed: ${safeErrorMessage(error)}`);
     }
     return job;
   }
 
-  async markFailed(jobId: string, reason: string): Promise<ProofJobRecord | null> {
+  async markFailed(
+    jobId: string,
+    reason: string,
+    enrichment?: {
+      errorDetail?: string | null;
+      errorCode?: string | null;
+    },
+  ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job) {
       return null;
+    }
+
+    // Close any lingering in-progress attempt so the UI shows it as failed
+    const openAttempt = job.proverAttempts.find((a) => a.outcome === "in_progress");
+    if (openAttempt) {
+      openAttempt.endedAt = nowIso();
+      openAttempt.outcome = "failed";
+      openAttempt.error = openAttempt.error ?? reason;
+      if (enrichment) {
+        if (enrichment.errorDetail !== undefined) openAttempt.errorDetail = enrichment.errorDetail;
+        if (enrichment.errorCode !== undefined) openAttempt.errorCode = enrichment.errorCode;
+      }
     }
 
     const now = nowIso();
@@ -747,9 +884,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     await this.saveJob(job);
-    await this.releaseActiveIfMatches(jobId);
+    await this.removeActiveJobId(jobId);
+    await this.unpinIpfsInput(job);
     try {
       await this.pruneCompletedJobs();
+      await this.flushStorageIfEmpty();
     } catch (error) {
       console.warn(`[proof-worker] prune after failure failed: ${safeErrorMessage(error)}`);
     }
@@ -801,6 +940,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
     job.updatedAt = nowIso();
+
+    // Track individual claim attempt
+    const claimAttempts = job.claimAttempts ?? [];
+    const attempt: ClaimAttempt = {
+      index: claimAttempts.length,
+      startedAt: nowIso(),
+      endedAt: null,
+      outcome: "in_progress",
+      error: null,
+      errorDetail: null,
+      txHash: null,
+    };
+    claimAttempts.push(attempt);
+    job.claimAttempts = claimAttempts;
+
     await this.saveJob(job);
     return job;
   }
@@ -809,6 +963,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     jobId: string,
     reason: string,
     nextRetryAt: string,
+    errorDetail?: string,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || job.status !== "succeeded") {
@@ -822,6 +977,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = reason;
     job.claim.nextRetryAt = nextRetryAt;
     job.updatedAt = nowIso();
+
+    // End current in-progress claim attempt as failed
+    const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+    if (openClaimAttempt) {
+      openClaimAttempt.endedAt = nowIso();
+      openClaimAttempt.outcome = "failed";
+      openClaimAttempt.error = reason;
+      openClaimAttempt.errorDetail = errorDetail ?? null;
+    }
+
     await this.saveJob(job);
     return job;
   }
@@ -841,11 +1006,24 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
     job.updatedAt = nowIso();
+
+    // End current in-progress claim attempt as success
+    const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+    if (openClaimAttempt) {
+      openClaimAttempt.endedAt = nowIso();
+      openClaimAttempt.outcome = "success";
+      openClaimAttempt.txHash = txHash;
+    }
+
     await this.saveJob(job);
     return job;
   }
 
-  async markClaimFailed(jobId: string, reason: string): Promise<ProofJobRecord | null> {
+  async markClaimFailed(
+    jobId: string,
+    reason: string,
+    errorDetail?: string,
+  ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || job.status !== "succeeded") {
       return job;
@@ -854,12 +1032,175 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return job;
     }
 
+    // If a prior attempt already recorded a txHash the transaction landed
+    // on-chain. Promote to succeeded rather than marking failed.
+    if (job.claim.txHash) {
+      console.log("[coordinator] claim has txHash — promoting to succeeded instead of failed", {
+        jobId,
+        txHash: job.claim.txHash,
+        reason,
+      });
+      job.claim.status = "succeeded";
+      job.claim.lastError = null;
+      job.claim.nextRetryAt = null;
+      job.updatedAt = nowIso();
+
+      const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+      if (openClaimAttempt) {
+        openClaimAttempt.endedAt = nowIso();
+        openClaimAttempt.outcome = "success";
+        openClaimAttempt.txHash = job.claim.txHash;
+      }
+
+      await this.saveJob(job);
+      return job;
+    }
+
     job.claim.status = "failed";
     job.claim.lastError = reason;
     job.claim.nextRetryAt = null;
     job.updatedAt = nowIso();
+
+    const openClaimAttempt = (job.claimAttempts ?? []).find((a) => a.outcome === "in_progress");
+    if (openClaimAttempt) {
+      openClaimAttempt.endedAt = nowIso();
+      openClaimAttempt.outcome = "failed";
+      openClaimAttempt.error = reason;
+      openClaimAttempt.errorDetail = errorDetail ?? null;
+    }
+
     await this.saveJob(job);
     return job;
+  }
+
+  /**
+   * Re-queues a claim that previously failed. Only allowed when the proof
+   * succeeded but the on-chain claim exhausted its retries.
+   */
+  async retryFailedClaim(jobId: string): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job) {
+      return null;
+    }
+    if (job.status !== "succeeded") {
+      throw new Error("cannot retry claim: proof has not succeeded");
+    }
+    if (job.claim.status === "succeeded") {
+      throw new Error("claim already succeeded");
+    }
+    if (job.claim.status !== "failed") {
+      throw new Error(`claim is not in failed state (current: ${job.claim.status})`);
+    }
+    if (!job.result?.summary) {
+      throw new Error("cannot retry claim: missing proof result");
+    }
+
+    job.claim.status = "queued";
+    job.claim.lastError = null;
+    job.claim.nextRetryAt = null;
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
+    await this.enqueueClaimJob(jobId);
+    return job;
+  }
+
+  private async recordAttemptEnd(
+    job: ProofJobRecord,
+    outcome: "success" | "failed",
+    error: string | null,
+    enrichment?: {
+      errorDetail?: string | null;
+      errorCode?: string | null;
+      actualCostUsd?: number | null;
+      proverAddress?: string | null;
+      fulfillmentTxHash?: string | null;
+      programCycles?: number | null;
+      totalCycles?: number | null;
+    },
+  ): Promise<void> {
+    const current = job.proverAttempts.find((a) => a.outcome === "in_progress");
+    if (current) {
+      current.endedAt = nowIso();
+      current.outcome = outcome;
+      current.error = error;
+      if (enrichment) {
+        if (enrichment.errorDetail !== undefined) current.errorDetail = enrichment.errorDetail;
+        if (enrichment.errorCode !== undefined) current.errorCode = enrichment.errorCode;
+        if (enrichment.actualCostUsd !== undefined) current.actualCostUsd = enrichment.actualCostUsd;
+        if (enrichment.proverAddress !== undefined) current.proverAddress = enrichment.proverAddress;
+        if (enrichment.fulfillmentTxHash !== undefined) current.fulfillmentTxHash = enrichment.fulfillmentTxHash;
+        if (enrichment.programCycles !== undefined) current.programCycles = enrichment.programCycles;
+        if (enrichment.totalCycles !== undefined) current.totalCycles = enrichment.totalCycles;
+      }
+      await this.saveJob(job);
+    }
+  }
+
+  /**
+   * After a prover attempt fails, enqueue the job to the next backend's queue
+   * instead of submitting directly. Boundless jobs go to PROOF_QUEUE (parallel),
+   * VastAI jobs go to VAST_QUEUE (serial, 1-at-a-time).
+   */
+  private async tryNextProverBackend(
+    jobId: string,
+    job: ProofJobRecord,
+    reason: string,
+  ): Promise<void> {
+    const totalAttempts = job.proverAttempts.filter((a) => a.outcome !== "in_progress").length;
+    if (totalAttempts >= MAX_TOTAL_PROVER_ATTEMPTS) {
+      await this.markFailed(
+        jobId,
+        `all ${MAX_TOTAL_PROVER_ATTEMPTS} prover attempts exhausted. Last: ${reason}`,
+      );
+      return;
+    }
+
+    // Determine next backend (alternate starting from Boundless if available)
+    const lastBackend =
+      job.proverAttempts.filter((a) => a.outcome !== "in_progress").at(-1)?.backend ?? null;
+    const hasBoundless = resolveBoundlessConfig(this.env) !== null;
+    const hasVast = Boolean(this.env.PROVER_BASE_URL?.trim());
+
+    let nextBackend: ProverBackend;
+    if (lastBackend === "boundless" && hasVast) {
+      nextBackend = "vast";
+    } else if (lastBackend === "vast" && hasBoundless) {
+      nextBackend = "boundless";
+    } else if (hasBoundless) {
+      nextBackend = "boundless";
+    } else if (hasVast) {
+      nextBackend = "vast";
+    } else {
+      await this.markFailed(jobId, "no prover backends configured");
+      return;
+    }
+
+    // Clear current prover state and mark as queued for the next backend
+    job.prover.jobId = null;
+    job.prover.status = null;
+    job.prover.statusUrl = null;
+    job.prover.segmentLimitPo2 = null;
+    job.prover.pollingErrors = 0;
+    job.prover.lastPolledAt = null;
+    job.prover.ipfsCid = null;
+    job.status = "queued";
+    job.queue.lastError = reason;
+    job.updatedAt = nowIso();
+    await this.saveJob(job);
+
+    // Enqueue to the appropriate backend queue
+    const queue = nextBackend === "boundless" ? this.env.PROOF_QUEUE : this.env.VAST_QUEUE;
+    try {
+      await queue.send({ jobId }, { contentType: "json" });
+      console.log(
+        `[coordinator] enqueued ${jobId} to ${nextBackend} queue (attempt ${totalAttempts + 1})`,
+      );
+    } catch (error) {
+      await this.markFailed(
+        jobId,
+        `failed enqueueing to ${nextBackend} queue: ${safeErrorMessage(error)}`,
+      );
+    }
   }
 
   /**
@@ -897,22 +1238,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     if (pollResult.type === "success") {
-      let summary: Awaited<ReturnType<typeof summarizeProof>>;
-      try {
-        summary = summarizeProof(pollResult.response);
-      } catch (error) {
-        await this.markFailed(
-          activeJobId,
-          `invalid prover success payload: ${safeErrorMessage(error)}`,
-        );
-        return;
-      }
-
+      const summary = pollResult.summary;
       const artifactStorageKey = resultKey(activeJobId);
       try {
         await this.env.PROOF_ARTIFACTS.put(
           artifactStorageKey,
-          JSON.stringify({ stored_at: nowIso(), prover_response: pollResult.response }, null, 2),
+          JSON.stringify(pollResult.artifact, null, 2),
           {
             httpMetadata: { contentType: "application/json" },
             customMetadata: { jobId: activeJobId },
@@ -934,82 +1265,47 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         return;
       }
 
-      await this.markSucceeded(activeJobId, summary, artifactStorageKey);
+      // Compute actualCostUsd from cached lockPriceWei if available
+      const metadata = { ...(pollResult.metadata ?? { actualCostUsd: null, proverAddress: null, fulfillmentTxHash: null }) };
+      if (metadata.actualCostUsd == null) {
+        const currentAttempt = job.proverAttempts?.find((a) => a.outcome === "in_progress");
+        if (currentAttempt?.lockPriceWei) {
+          try {
+            const boundlessConfig = resolveBoundlessConfig(this.env);
+            if (boundlessConfig) {
+              const ethPrice = await fetchEthPriceUsd(boundlessConfig.rpcUrl, Number(boundlessConfig.chainId));
+              metadata.actualCostUsd = weiToUsd(BigInt(currentAttempt.lockPriceWei), ethPrice);
+            }
+          } catch { /* non-fatal */ }
+        }
+      }
+
+      await this.markSucceeded(activeJobId, summary, artifactStorageKey, metadata);
       return;
     }
 
     if (pollResult.type === "retry") {
+      const retryEnrichment = {
+        errorCode: pollResult.errorCode ?? null,
+        errorDetail: pollResult.errorDetail ?? null,
+      };
+
       if (pollResult.clearProverJob) {
         if (scheduleNext) {
-          // alarm path: attempt recovery re-submit
-          const recoveryAttempts = job.prover.recoveryAttempts;
-          if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
-            await this.markFailed(
+          // Record this attempt as failed and try the next backend
+          if (this.isBoundlessJob(job)) {
+            await this.recordAttemptEnd(job, "failed", pollResult.message, retryEnrichment);
+            await this.tryNextProverBackend(
               activeJobId,
-              `prover recovery exhausted after ${recoveryAttempts} attempt(s): ${pollResult.message}`,
+              job,
+              `boundless failed: ${pollResult.message}`,
             );
             return;
           }
 
-          const nextRecoveryAttempts = recoveryAttempts + 1;
-          const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
-          if (!tapeObject) {
-            await this.markFailed(activeJobId, "missing tape artifact in R2 during re-submit");
-            return;
-          }
-
-          const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-          const fallbackSegmentPo2 = this.segmentFallbackForOom(job, pollResult.message);
-          if (fallbackSegmentPo2 !== null) {
-            console.warn(
-              `[proof-worker] falling back segment_limit_po2 ${job.prover.segmentLimitPo2 ?? "unknown"} -> ${fallbackSegmentPo2} after OOM`,
-            );
-          }
-          const submitResult = await submitToProver(
-            this.env,
-            tapeBytes,
-            fallbackSegmentPo2 !== null ? { segmentLimitPo2: fallbackSegmentPo2 } : {},
-          );
-
-          if (submitResult.type === "success") {
-            await this.markProverAccepted(
-              activeJobId,
-              submitResult.jobId,
-              submitResult.statusUrl,
-              submitResult.segmentLimitPo2,
-              nextRecoveryAttempts,
-            );
-            return;
-          }
-
-          if (submitResult.type === "retry") {
-            if (nextRecoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
-              await this.markFailed(
-                activeJobId,
-                `prover recovery exhausted after ${nextRecoveryAttempts} attempt(s): ${submitResult.message}`,
-              );
-              return;
-            }
-
-            job.prover.jobId = null;
-            job.prover.status = null;
-            job.prover.statusUrl = null;
-            job.prover.segmentLimitPo2 = null;
-            job.prover.lastPolledAt = null;
-            job.prover.pollingErrors += 1;
-            job.prover.recoveryAttempts = nextRecoveryAttempts;
-            job.status = "retrying";
-            job.updatedAt = nowIso();
-            job.queue.lastError = submitResult.message;
-            const delaySec = retryDelaySeconds(job.prover.pollingErrors);
-            job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
-            await this.saveJob(job);
-            await this.scheduleAlarm(delaySec * 1000);
-            return;
-          }
-
-          // fatal re-submit
-          await this.markFailed(activeJobId, submitResult.message);
+          // Vast.ai job failed — try next backend via fallback system
+          await this.recordAttemptEnd(job, "failed", pollResult.message, retryEnrichment);
+          await this.tryNextProverBackend(activeJobId, job, `vast failed: ${pollResult.message}`);
           return;
         }
 
@@ -1019,7 +1315,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         job.prover.statusUrl = null;
         job.prover.lastPolledAt = nowIso();
         job.prover.pollingErrors += 1;
-        job.prover.recoveryAttempts += 1;
         job.status = "retrying";
         job.updatedAt = nowIso();
         job.queue.lastError = pollResult.message;
@@ -1045,146 +1340,237 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     // pollResult.type === "fatal"
-    await this.markFailed(activeJobId, pollResult.message);
-  }
-
-  /**
-   * Lightweight single-shot poll triggered by the GET endpoint.
-   * Unlike alarm(), this does NOT schedule follow-up alarms — it checks the
-   * prover once and writes the state update so the frontend sees progress.
-   */
-  async kickAlarm(): Promise<void> {
-    const activeJobId = await this.getActiveJobId();
-    if (!activeJobId) {
-      return;
-    }
-
-    const job = await this.loadJob(activeJobId);
-    if (!job || isTerminalProofStatus(job.status)) {
-      return;
-    }
-
-    const proverJobId = job.prover.jobId;
-    if (!proverJobId) {
-      // No prover job yet — the queue consumer handles submission.
-      // Just ensure the alarm is scheduled.
-      await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
-      return;
-    }
-
-    let pollResult: ProverPollResult;
-    try {
-      pollResult = await pollProverOnce(this.env, proverJobId);
-    } catch (error) {
-      job.prover.pollingErrors += 1;
-      job.prover.lastPolledAt = nowIso();
-      job.updatedAt = nowIso();
-      job.queue.lastError = `poll error: ${safeErrorMessage(error)}`;
-      await this.saveJob(job);
-      return;
-    }
-
-    await this.applyPollResult(activeJobId, job, pollResult, false);
+    await this.markFailed(activeJobId, pollResult.message, {
+      errorCode: pollResult.errorCode ?? null,
+      errorDetail: pollResult.errorDetail ?? null,
+    });
   }
 
   async alarm(): Promise<void> {
-    const activeJobId = await this.getActiveJobId();
-    if (!activeJobId) {
-      return;
-    }
-
-    const job = await this.loadJob(activeJobId);
-    if (!job || isTerminalProofStatus(job.status)) {
-      return;
-    }
-
+    let activeJobIds = await this.getActiveJobIds();
     const maxWallTimeMs = parseInteger(
       this.env.MAX_JOB_WALL_TIME_MS,
       DEFAULT_MAX_JOB_WALL_TIME_MS,
       60_000,
     );
-    const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
 
-    if (jobAgeMs > maxWallTimeMs) {
-      const ageMin = Math.round(jobAgeMs / 60_000);
-      await this.markFailed(activeJobId, `proof job timed out after ${ageMin} minutes`);
+    if (activeJobIds.length === 0) {
       return;
     }
+    let anyStillActive = false;
 
-    const proverJobId = job.prover.jobId;
-    if (!proverJobId) {
-      const recoveryAttempts = job.prover.recoveryAttempts;
-      if (recoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
-        await this.markFailed(
-          activeJobId,
-          `prover recovery exhausted after ${recoveryAttempts} attempt(s): missing prover job ID`,
-        );
-        return;
+    /* eslint-disable no-await-in-loop */
+    for (const jobId of activeJobIds) {
+      const job = await this.loadJob(jobId);
+      if (!job) {
+        await this.removeActiveJobId(jobId);
+        continue;
+      }
+      if (isTerminalProofStatus(job.status)) {
+        await this.removeActiveJobId(jobId);
+        continue;
       }
 
-      const nextRecoveryAttempts = recoveryAttempts + 1;
-      const tapeObject = await this.env.PROOF_ARTIFACTS.get(job.tape.key);
-      if (!tapeObject) {
-        await this.markFailed(activeJobId, "missing tape artifact in R2 during re-submit");
-        return;
+      const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+      if (jobAgeMs > maxWallTimeMs) {
+        const ageMin = Math.round(jobAgeMs / 60_000);
+        await this.markFailed(jobId, `proof job timed out after ${ageMin} minutes`);
+        continue;
       }
 
-      const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-      const submitResult = await submitToProver(this.env, tapeBytes, {});
-
-      if (submitResult.type === "success") {
-        await this.markProverAccepted(
-          activeJobId,
-          submitResult.jobId,
-          submitResult.statusUrl,
-          submitResult.segmentLimitPo2,
-          nextRecoveryAttempts,
-        );
-        // markProverAccepted already schedules the next alarm
-        return;
+      if (!job.prover.jobId) {
+        // waiting for queue consumer to dispatch
+        anyStillActive = true;
+        continue;
       }
 
-      if (submitResult.type === "retry") {
-        if (nextRecoveryAttempts >= MAX_PROVER_RECOVERY_ATTEMPTS) {
-          await this.markFailed(
-            activeJobId,
-            `prover recovery exhausted after ${nextRecoveryAttempts} attempt(s): ${submitResult.message}`,
+      // Poll prover
+      let pollResult: ProverPollResult;
+      let boundlessConfig: ReturnType<typeof resolveBoundlessConfig> = null;
+      try {
+        if (this.isBoundlessJob(job)) {
+          boundlessConfig = resolveBoundlessConfig(this.env);
+          if (!boundlessConfig) {
+            await this.markFailed(jobId, "boundless config missing during alarm poll");
+            continue;
+          }
+          pollResult = await new BoundlessClient(boundlessConfig).poll(
+            job.prover.jobId,
+            DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
           );
-          return;
+        } else {
+          pollResult = await pollProver(this.env, job.prover.jobId);
         }
-
+      } catch (error) {
         job.prover.pollingErrors += 1;
-        job.prover.recoveryAttempts = nextRecoveryAttempts;
         job.status = "retrying";
         job.updatedAt = nowIso();
-        job.queue.lastError = submitResult.message;
+        job.queue.lastError = `poll error: ${safeErrorMessage(error)}`;
         const delaySec = retryDelaySeconds(job.prover.pollingErrors);
         job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
         await this.saveJob(job);
-        await this.scheduleAlarm(delaySec * 1000);
-        return;
+        anyStillActive = true;
+        continue;
       }
 
-      // fatal
-      await this.markFailed(activeJobId, submitResult.message);
+      // Boundless fallback: two-tier timeout based on lock status.
+      //
+      // Tier 1 — Poll timeout (BOUNDLESS_POLL_TIMEOUT_MS, default 10 min):
+      //   If no prover has locked the order, bail to Vast.ai. No point waiting
+      //   for the full lock window if nobody is interested.
+      //
+      // Tier 2 — Lock deadline (flat period + lock timeout, default 30 min):
+      //   If a prover HAS locked the order, give them until the lock deadline
+      //   to deliver. Only bail if they fail to deliver by then.
+      //
+      // If lock status is unknown (RPC error → undefined), treat as unlocked
+      // and use the poll timeout (tier 1).
+      if (pollResult.type === "running" && boundlessConfig) {
+        const currentAttempt = job.proverAttempts.find((a) => a.outcome === "in_progress");
+        if (currentAttempt) {
+          const attemptAgeMs = Date.now() - new Date(currentAttempt.startedAt).getTime();
+          const isLocked = pollResult.locked === true;
+
+          // Cache the lock price while it's available (contract clears it after payment)
+          if (pollResult.lockPriceWei && !currentAttempt.lockPriceWei) {
+            currentAttempt.lockPriceWei = pollResult.lockPriceWei.toString();
+            await this.saveJob(job);
+          }
+
+          // If locked, extend wait up to the full lock deadline; otherwise use poll timeout
+          const deadlineMs = isLocked
+            ? (boundlessConfig.flatPeriodSec + boundlessConfig.lockTimeoutSec) * 1000
+            : boundlessConfig.pollTimeoutMs;
+
+          if (attemptAgeMs > deadlineMs) {
+            const elapsedSec = Math.round(attemptAgeMs / 1000);
+            const reason = isLocked
+              ? `prover locked order but did not deliver after ${elapsedSec}s`
+              : `no prover locked the order after ${elapsedSec}s`;
+            console.log(
+              `[coordinator] boundless order ${job.prover.jobId} — ${reason}, falling back`,
+            );
+            await this.recordAttemptEnd(job, "failed", reason);
+            await this.tryNextProverBackend(jobId, job, reason);
+            const fallbackJob = await this.loadJob(jobId);
+            if (fallbackJob && !isTerminalProofStatus(fallbackJob.status)) {
+              anyStillActive = true;
+            }
+            continue;
+          }
+        }
+      }
+
+      await this.applyPollResult(jobId, job, pollResult, true);
+
+      const updatedJob = await this.loadJob(jobId);
+      if (updatedJob && !isTerminalProofStatus(updatedJob.status)) {
+        anyStillActive = true;
+      }
+    }
+    /* eslint-enable no-await-in-loop */
+
+    if (anyStillActive) {
+      const pollIntervalMs = parseInteger(
+        this.env.PROVER_POLL_INTERVAL_MS,
+        DEFAULT_POLL_INTERVAL_MS,
+        MIN_PROVER_POLL_INTERVAL_MS,
+      );
+      await this.scheduleAlarm(pollIntervalMs);
+    }
+  }
+
+  async kickAlarm(): Promise<void> {
+    const activeJobIds = await this.getActiveJobIds();
+    if (activeJobIds.length === 0) {
       return;
     }
 
-    let pollResult: ProverPollResult;
-    try {
-      pollResult = await pollProver(this.env, proverJobId);
-    } catch (error) {
-      job.prover.pollingErrors += 1;
-      job.status = "retrying";
-      job.updatedAt = nowIso();
-      job.queue.lastError = `poll error: ${safeErrorMessage(error)}`;
-      const delaySec = retryDelaySeconds(job.prover.pollingErrors);
-      job.queue.nextRetryAt = new Date(Date.now() + delaySec * 1000).toISOString();
-      await this.saveJob(job);
-      await this.scheduleAlarm(delaySec * 1000);
-      return;
-    }
+    /* eslint-disable no-await-in-loop */
+    for (const activeJobId of activeJobIds) {
+      const job = await this.loadJob(activeJobId);
+      if (!job || isTerminalProofStatus(job.status)) {
+        continue;
+      }
 
-    await this.applyPollResult(activeJobId, job, pollResult, true);
+      const proverJobId = job.prover.jobId;
+      if (!proverJobId) {
+        // No prover job yet — the queue consumer handles submission.
+        // Just ensure the alarm is scheduled.
+        await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
+        continue;
+      }
+
+      let pollResult: ProverPollResult;
+      try {
+        if (this.isBoundlessJob(job)) {
+          const boundlessConfig = resolveBoundlessConfig(this.env);
+          if (!boundlessConfig) {
+            job.prover.pollingErrors += 1;
+            job.prover.lastPolledAt = nowIso();
+            job.updatedAt = nowIso();
+            job.queue.lastError = "boundless config missing during poll";
+            await this.saveJob(job);
+            continue;
+          }
+          pollResult = await new BoundlessClient(boundlessConfig).pollOnce(proverJobId);
+        } else {
+          pollResult = await pollProverOnce(this.env, proverJobId);
+        }
+      } catch (error) {
+        job.prover.pollingErrors += 1;
+        job.prover.lastPolledAt = nowIso();
+        job.updatedAt = nowIso();
+        job.queue.lastError = `poll error: ${safeErrorMessage(error)}`;
+        await this.saveJob(job);
+        continue;
+      }
+
+      await this.applyPollResult(activeJobId, job, pollResult, false);
+    }
+    /* eslint-enable no-await-in-loop */
+  }
+
+  async listJobsForClaimant(
+    claimantAddress: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ jobs: ProofJobRecord[]; total: number }> {
+    const all: ProofJobRecord[] = [];
+    const listPageSize = 128;
+    let startAfter: string | undefined;
+
+    /* eslint-disable no-await-in-loop */
+    while (true) {
+      const page = await this.ctx.storage.list<ProofJobRecord>({
+        prefix: JOB_KEY_PREFIX,
+        startAfter,
+        limit: listPageSize,
+      });
+      if (page.size === 0) {
+        break;
+      }
+
+      for (const [, value] of page) {
+        if (value?.claim?.claimantAddress === claimantAddress) {
+          all.push(value);
+        }
+      }
+
+      const pageKeys = Array.from(page.keys());
+      const lastKey = pageKeys[pageKeys.length - 1];
+      if (!lastKey || page.size < listPageSize) {
+        break;
+      }
+      startAfter = lastKey;
+    }
+    /* eslint-enable no-await-in-loop */
+
+    // Sort newest first
+    all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const total = all.length;
+    const jobs = all.slice(offset, offset + limit);
+    return { jobs, total };
   }
 }

@@ -96,15 +96,9 @@ describe("live leaderboard sync against testnet RPC", () => {
     expect(knownEvent.seed).toBe(KNOWN_SEED);
     expect(knownEvent.finalScore).toBe(KNOWN_SCORE);
     expect(knownEvent.frameCount).toBe(14123);
-    expect(knownEvent.finalRngState).toBe(2976778176);
-    expect(knownEvent.tapeChecksum).toBe(3906920886);
-    expect(knownEvent.rulesDigest).toBe(0x41535433);
     expect(knownEvent.previousBest).toBe(0);
     expect(knownEvent.newBest).toBe(KNOWN_SCORE);
     expect(knownEvent.mintedDelta).toBe(KNOWN_SCORE);
-    expect(knownEvent.journalDigest).toBe(
-      "07cbb4da7380feacb3ba27ac63709d1a0fd721efd4d8a71c28f8ee5bd59d335b",
-    );
     expect(knownEvent.txHash).toBe(KNOWN_TX_HASH);
     expect(knownEvent.ledger).toBe(KNOWN_LEDGER);
     expect(knownEvent.source).toBe("rpc");

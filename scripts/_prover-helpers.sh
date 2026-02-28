@@ -77,7 +77,9 @@ if magic != 0x5A4B5450:
     sys.exit(1)
 seed    = struct.unpack_from('<I', data, 8)[0]
 frames  = struct.unpack_from('<I', data, 12)[0]
-score   = struct.unpack_from('<I', data, 16 + frames)[0]
+# v4 tapes are nibble-packed: body_bytes = ceil(frames / 2)
+body_bytes = (frames + 1) >> 1
+score   = struct.unpack_from('<I', data, 16 + body_bytes)[0]
 print(f'{frames} {score} {seed} {len(data)}')
 PYEOF
 }

@@ -13,8 +13,8 @@ replayed deterministically, proven, and settled on Stellar.
 
 ## Canonical Tape Shape
 - Header: magic/version/seed/frameCount
-- Body: one input byte per frame (left/right/thrust/fire)
-- Footer: finalScore/finalRngState/checksum
+- Body: nibble-packed inputs (`ceil(frameCount/2)` bytes, low nibble first)
+- Footer: finalScore/checksum
 
 ## Security Model (Short)
 - Player controls only frame inputs, never direct state values.

@@ -19,6 +19,8 @@ set -uo pipefail
 #   --delay-minutes <n>     How long to wait before delayed retrieval (default: 5)
 #   --fixtures-dir <path>   Fixture directory containing test-medium/short/real-game.tape
 #   --segment-limit-po2 <n> Segment limit used for all test submissions (default: 20)
+#   --seed-id <u32>         seed_id bound into the proof journal (default: 0)
+#   --claimant <addr>       claimant Stellar address (default: GAAAAAAAA...WHF)
 #   --long-phase <mode>     auto|on|off (default: auto)
 #   -h, --help              Show this help
 #
@@ -37,6 +39,8 @@ LONG_TAPE=""
 POLL_INTERVAL=5
 DELAY_MINUTES=5
 SEGMENT_LIMIT_PO2=20
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 LONG_PHASE_MODE="auto" # auto|on|off
 
 set_fixture_paths() {
@@ -53,6 +57,8 @@ Options:
   --delay-minutes <n>     How long to wait before delayed retrieval (default: 5)
   --fixtures-dir <path>   Fixture directory containing test-medium/short/real-game.tape
   --segment-limit-po2 <n> Segment limit used for all test submissions (default: 20)
+  --seed-id <u32>         seed_id bound into the proof journal (default: 0)
+  --claimant <addr>       claimant Stellar address (default: GAAAAAAAA...WHF)
   --long-phase <mode>     auto|on|off (default: auto)
   -h, --help              Show this help
 
@@ -85,6 +91,8 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --segment-limit-po2) SEGMENT_LIMIT_PO2="${2:-}"; shift 2 ;;
+    --seed-id) SEED_ID="${2:-}"; shift 2 ;;
+    --claimant) CLAIMANT="${2:-}"; shift 2 ;;
     --long-phase) LONG_PHASE_MODE="$(echo "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
     -h|--help)
       usage
@@ -104,6 +112,14 @@ if ! [[ "$DELAY_MINUTES" =~ ^[0-9]+$ ]] || [[ "$DELAY_MINUTES" -lt 1 ]]; then
 fi
 if ! [[ "$SEGMENT_LIMIT_PO2" =~ ^[0-9]+$ ]] || [[ "$SEGMENT_LIMIT_PO2" -lt 1 ]]; then
   echo "ERROR: --segment-limit-po2 must be an integer >= 1" >&2
+  exit 1
+fi
+if ! [[ "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --seed-id must be an unsigned integer" >&2
+  exit 1
+fi
+if [[ -z "${CLAIMANT// }" ]]; then
+  echo "ERROR: --claimant cannot be empty" >&2
   exit 1
 fi
 if [[ "$LONG_PHASE_MODE" != "auto" && "$LONG_PHASE_MODE" != "on" && "$LONG_PHASE_MODE" != "off" ]]; then
@@ -172,7 +188,7 @@ submit_garbage_and_wait() {
   dd if=/dev/urandom of="$gfile" bs=128 count=1 2>/dev/null
 
   local query
-  query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy"
+  query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
   local resp_raw http_code body
   resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${query}" \
     --data-binary "@$gfile" -H "content-type: application/octet-stream")
@@ -322,7 +338,7 @@ info "response: $body"
 # Test 2b: Submit empty body → 400
 echo ""
 echo "[2b] POST empty body"
-empty_query=""
+empty_query="seed_id=${SEED_ID}&claimant=${CLAIMANT}"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${empty_query}" \
   -H "content-type: application/octet-stream" -d '')
 http_code=$(echo "$resp_raw" | tail -1)
@@ -400,7 +416,7 @@ fi
 # Test 2f: Out-of-range segment_limit_po2 → 400
 echo ""
 echo "[2f] POST with out-of-range segment_limit_po2"
-bad_segment_query="segment_limit_po2=99&verify_mode=policy"
+bad_segment_query="segment_limit_po2=99&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${bad_segment_query}" \
   --data-binary "@$SHORT_TAPE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
@@ -486,7 +502,7 @@ echo "[4a] Submit medium tape for proving"
 tape_size=$(wc -c < "$TAPE_FILE" | tr -d ' ')
 info "tape: $(basename "$TAPE_FILE") ($tape_size bytes)"
 
-submit_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
+submit_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
 resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${submit_query}" \
   --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream" 2>&1)
 
@@ -525,7 +541,7 @@ for attempt in $(seq 1 10); do
 done
 
 # Now try to submit a second job while the prover is busy
-busy_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
+busy_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
 resp_raw=$(http_status_and_body -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${busy_query}" \
   --data-binary "@$TAPE_FILE" -H "content-type: application/octet-stream")
 http_code=$(echo "$resp_raw" | tail -1)
@@ -660,7 +676,7 @@ if [[ "$RUN_LONG_PHASE" -eq 1 ]]; then
   long_tape_size=$(wc -c < "$LONG_TAPE" | tr -d ' ')
   info "tape: $(basename "$LONG_TAPE") ($long_tape_size bytes)"
 
-  long_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy"
+  long_query="segment_limit_po2=${SEGMENT_LIMIT_PO2}&receipt_kind=groth16&verify_mode=policy&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
   resp=$(curl -sf -X POST "$PROVER_URL/api/jobs/prove-tape/raw?${long_query}" \
     --data-binary "@$LONG_TAPE" -H "content-type: application/octet-stream" 2>&1)
 

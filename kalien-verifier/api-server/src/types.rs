@@ -5,6 +5,10 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Deserialize, Default)]
 pub(crate) struct ProveTapeQuery {
     #[serde(default)]
+    pub(crate) seed_id: Option<u32>,
+    #[serde(default)]
+    pub(crate) claimant: Option<String>,
+    #[serde(default)]
     pub(crate) max_frames: Option<u32>,
     #[serde(default)]
     pub(crate) receipt_kind: Option<ReceiptKind>,

@@ -1,4 +1,4 @@
-# Asteroids Docs Parity Checklist (AST3)
+# Asteroids Docs Parity Checklist (AST4)
 
 Date: 2026-02-11
 
@@ -25,9 +25,9 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 
 ## Parity Checks
 1. Tape contract
-- `magic = 0x5A4B5450`, `version = 2`, `rules_tag = 3 (AST3)`.
-- Header reserved bytes `[6..7]` and input high nibble must be zero.
-- Length is exact (`header + frameCount + footer`), CRC must match.
+- `magic = 0x5A4B5450`, `version = 4`, `rules_tag = 4 (AST4)`.
+- Header reserved bytes `[6..7]` must be zero.
+- Body is nibble-packed: `ceil(frameCount / 2)` bytes. CRC-32 covers header + body.
 
 2. Deterministic gameplay constants
 - `SHIP_RESPAWN_FRAMES = 75`, `SHIP_SPAWN_INVULNERABLE_FRAMES = 120`.
@@ -44,15 +44,16 @@ Code-backed checklist confirming that Asteroids docs match the current TS/Rust/W
 - Ship fire is edge-triggered latch + cooldown (`shipFireLatch`/`ship_fire_latch`), not shift-register.
 
 5. Verifier journal/output
-- Success journal is 24 bytes / 6 fields:
-  - `seed`, `frame_count`, `final_score`, `final_rng_state`, `tape_checksum`, `rules_digest`.
-- Rules digest is `0x4153_5433` (`AST3`).
+- Success journal is 49 bytes / 5 fields:
+  - `seed_id`, `seed`, `frame_count`, `final_score`, `claimant`.
+- Claimant is encoded as fixed bytes (`kind + 32-byte id`) and decoded as `G...`/`C...`.
+- Rules digest is `0x4153_5434` (`AST4`).
 
 6. Gateway/prover/claim path
-- Worker requires `x-claimant-address` on `POST /api/proofs/jobs`.
-- Worker submits prover jobs with `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`.
+- Worker requires `seed_id` + `claimant` query params on `POST /api/proofs/jobs`.
+- Worker submits prover jobs with `receipt_kind=groth16`, `verify_mode=policy`, `segment_limit_po2`, `seed_id`, `claimant`.
 - Prover `proof_mode` is forced from `RISC0_DEV_MODE` (not request-driven).
-- Score contract call remains `submit_score(seal, journal_raw, claimant)`.
+- Score contract call is `submit_score(seal, journal_raw)`.
 
 ## Docs Updated In This Pass
 - `docs/games/asteroids/README.md`

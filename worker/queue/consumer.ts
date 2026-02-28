@@ -1,44 +1,68 @@
-import { DEFAULT_MAX_JOB_WALL_TIME_MS, MAX_QUEUE_RETRIES } from "../constants";
+import {
+  DEFAULT_MAX_JOB_WALL_TIME_MS,
+  MAX_QUEUE_RETRIES,
+  MAX_VAST_QUEUE_RETRIES,
+  VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
+} from "../constants";
 import { submitClaim } from "../claim/submit";
+import { resolveBoundlessConfig } from "../boundless/config";
+import { BoundlessClient } from "../boundless/sdk/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
+import { writeProofTapeMapping } from "../leaderboard-store";
+import { hexToBytes, parseProofArtifactV4, sha256Hex } from "../proof-artifact";
 import { submitToProver } from "../prover/client";
-import type { ClaimQueueMessage, ProofQueueMessage, ProofJournal } from "../types";
+import type { ClaimQueueMessage, ProofJobRecord, ProofQueueMessage, ProofJournal } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
+import { packJournalRaw } from "../../shared/stellar/journal";
+
+/**
+ * Returns true when a fatal claim error actually indicates the score was
+ * already submitted on-chain by a prior attempt. The contract rejects
+ * duplicate journals ("already claimed") and non-improving scores ("score not
+ * improved"), both of which prove the claim landed previously.
+ */
+function isAlreadyClaimedOnChain(message: string, errorDetail?: string): boolean {
+  const combined = (message + " " + (errorDetail ?? "")).toLowerCase();
+  return (
+    combined.includes("already claimed") ||
+    combined.includes("journalalreadyclaimed") ||
+    combined.includes("score not improved") ||
+    combined.includes("scorenotimproved") ||
+    /contract,\s*#(?:3|5)\b/.test(combined) // #3 JournalAlreadyClaimed, #5 ScoreNotImproved
+  );
+}
 
 function journalRawHex(journal: ProofJournal): string {
-  const buf = new Uint8Array(24);
-  const view = new DataView(buf.buffer);
-  view.setUint32(0, journal.seed >>> 0, true);
-  view.setUint32(4, journal.frame_count >>> 0, true);
-  view.setUint32(8, journal.final_score >>> 0, true);
-  view.setUint32(12, journal.final_rng_state >>> 0, true);
-  view.setUint32(16, journal.tape_checksum >>> 0, true);
-  view.setUint32(20, journal.rules_digest >>> 0, true);
-  return Array.from(buf)
+  return Array.from(packJournalRaw(journal))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
 
-async function sha256HexFromHex(hex: string): Promise<string> {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return Array.from(digest)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+// ---------------------------------------------------------------------------
+// Shared pre-submission checks
+// ---------------------------------------------------------------------------
+
+interface PreparedJob {
+  jobId: string;
+  job: ProofJobRecord;
+  tapeBytes: Uint8Array;
 }
 
-async function processQueueMessage(
+/**
+ * Common validation that runs before any prover submission. Returns the job
+ * record and tape bytes if the job is ready for submission, or null if the
+ * message has already been ack'd/retried.
+ */
+async function prepareForSubmission(
   message: Message<ProofQueueMessage>,
   env: WorkerEnv,
-): Promise<void> {
+  _maxRetries: number,
+): Promise<PreparedJob | null> {
   const payload = message.body;
   if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
     message.ack();
-    return;
+    return null;
   }
 
   const jobId = payload.jobId;
@@ -52,20 +76,20 @@ async function processQueueMessage(
   const startedJob = await coordinator.beginQueueAttempt(jobId, message.attempts);
   if (!startedJob || isTerminalProofStatus(startedJob.status)) {
     message.ack();
-    return;
+    return null;
   }
 
   if (startedJob.tape.metadata.finalScore >>> 0 === 0) {
     await coordinator.markFailed(jobId, "zero-score runs are not accepted");
     message.ack();
-    return;
+    return null;
   }
 
   // If the prover job already exists (re-delivered message after crash),
   // beginQueueAttempt ensured the alarm is running. Just ack.
   if (startedJob.prover.jobId) {
     message.ack();
-    return;
+    return null;
   }
 
   const jobAgeMs = Date.now() - new Date(startedJob.createdAt).getTime();
@@ -76,43 +100,35 @@ async function processQueueMessage(
       `proof job timed out after ${ageMin} minutes (attempt ${message.attempts})`,
     );
     message.ack();
-    return;
+    return null;
   }
 
   const tapeObject = await env.PROOF_ARTIFACTS.get(startedJob.tape.key);
   if (!tapeObject) {
     await coordinator.markFailed(jobId, "missing tape artifact in R2");
     message.ack();
-    return;
+    return null;
   }
 
   const tapeBytes = new Uint8Array(await tapeObject.arrayBuffer());
-  let submitResult: Awaited<ReturnType<typeof submitToProver>>;
-  try {
-    submitResult = await submitToProver(env, tapeBytes, {});
-  } catch (error) {
-    const reason = `submit error: ${safeErrorMessage(error)}`;
-    if (message.attempts >= MAX_QUEUE_RETRIES) {
-      await coordinator.markFailed(
-        jobId,
-        `${reason} (exhausted ${message.attempts} delivery attempts)`,
-      );
-      message.ack();
-      return;
-    }
+  return { jobId, job: startedJob, tapeBytes };
+}
 
-    const delaySeconds = retryDelaySeconds(message.attempts);
-    await coordinator.markRetry(
-      jobId,
-      reason,
-      new Date(Date.now() + delaySeconds * 1000).toISOString(),
-    );
-    message.retry({ delaySeconds });
-    return;
-  }
+/**
+ * Handle the result of a prover submission, updating coordinator state and
+ * ack/retrying the queue message.
+ */
+async function handleSubmitResult(
+  submitResult: Awaited<ReturnType<typeof submitToProver>>,
+  jobId: string,
+  message: Message<ProofQueueMessage>,
+  env: WorkerEnv,
+  maxRetries: number,
+): Promise<void> {
+  const coordinator = coordinatorStub(env);
 
   if (submitResult.type === "retry") {
-    if (message.attempts >= MAX_QUEUE_RETRIES) {
+    if (message.attempts >= maxRetries) {
       await coordinator.markFailed(
         jobId,
         `${submitResult.message} (exhausted ${message.attempts} delivery attempts)`,
@@ -140,9 +156,175 @@ async function processQueueMessage(
     submitResult.jobId,
     submitResult.statusUrl,
     submitResult.segmentLimitPo2,
+    submitResult.ipfsCid,
+    submitResult.maxPriceUsd,
   );
   message.ack();
 }
+
+// ---------------------------------------------------------------------------
+// Boundless queue consumer (PROOF_QUEUE — parallel)
+// ---------------------------------------------------------------------------
+
+async function processBoundlessMessage(
+  message: Message<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  const prepared = await prepareForSubmission(message, env, MAX_QUEUE_RETRIES);
+  if (!prepared) return;
+
+  const { jobId, tapeBytes } = prepared;
+  const coordinator = coordinatorStub(env);
+
+  const boundlessConfig = resolveBoundlessConfig(env);
+  if (!boundlessConfig) {
+    // Boundless not configured — this shouldn't happen in normal flow,
+    // but if it does, fail gracefully and let the coordinator handle fallback.
+    await coordinator.markFailed(jobId, "boundless backend not configured");
+    message.ack();
+    return;
+  }
+
+  let submitResult: Awaited<ReturnType<BoundlessClient["submitRequest"]>>;
+  try {
+    submitResult = await new BoundlessClient(boundlessConfig).submitRequest(tapeBytes, {
+      seedId: prepared.job.tape.metadata.seedId >>> 0,
+      claimantAddress: prepared.job.claim.claimantAddress,
+    });
+  } catch (error) {
+    const reason = `boundless submit error: ${safeErrorMessage(error)}`;
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+
+    const delaySeconds = retryDelaySeconds(message.attempts);
+    await coordinator.markRetry(
+      jobId,
+      reason,
+      new Date(Date.now() + delaySeconds * 1000).toISOString(),
+    );
+    message.retry({ delaySeconds });
+    return;
+  }
+
+  await handleSubmitResult(submitResult, jobId, message, env, MAX_QUEUE_RETRIES);
+}
+
+// ---------------------------------------------------------------------------
+// VastAI queue consumer (VAST_QUEUE — serial, 1-at-a-time)
+// ---------------------------------------------------------------------------
+
+async function processVastMessage(
+  message: Message<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  const payload = message.body;
+  if (!payload || typeof payload.jobId !== "string" || payload.jobId.length === 0) {
+    message.ack();
+    return;
+  }
+
+  const coordinator = coordinatorStub(env);
+
+  // Enforce 1-at-a-time: if a VastAI job is already running, re-queue.
+  const slotBusy = await coordinator.hasActiveVastJob();
+  if (slotBusy) {
+    const job = await coordinator.getJob(payload.jobId);
+    if (!job || isTerminalProofStatus(job.status)) {
+      message.ack();
+      return;
+    }
+
+    const maxWallTimeMs = parseInteger(
+      env.MAX_JOB_WALL_TIME_MS,
+      DEFAULT_MAX_JOB_WALL_TIME_MS,
+      60_000,
+    );
+    const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+    if (jobAgeMs > maxWallTimeMs) {
+      const ageMin = Math.round(jobAgeMs / 60_000);
+      await coordinator.markFailed(
+        payload.jobId,
+        `proof job timed out after ${ageMin} minutes while waiting for vast slot`,
+      );
+      message.ack();
+      return;
+    }
+
+    const reason = "vast slot busy; waiting for active prover job to finish";
+    const nextRetryAt = new Date(
+      Date.now() + VAST_SLOT_BUSY_RETRY_DELAY_SECONDS * 1000,
+    ).toISOString();
+    await coordinator.markRetry(payload.jobId, reason, nextRetryAt);
+
+    if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
+      // Reset queue delivery attempts while keeping the same job state.
+      try {
+        await env.VAST_QUEUE.send(
+          { jobId: payload.jobId },
+          {
+            contentType: "json",
+            delaySeconds: VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
+          },
+        );
+        message.ack();
+      } catch (error) {
+        await coordinator.markFailed(
+          payload.jobId,
+          `failed re-enqueueing vast slot wait: ${safeErrorMessage(error)}`,
+        );
+        message.ack();
+      }
+      return;
+    }
+
+    message.retry({ delaySeconds: VAST_SLOT_BUSY_RETRY_DELAY_SECONDS });
+    return;
+  }
+
+  const prepared = await prepareForSubmission(message, env, MAX_VAST_QUEUE_RETRIES);
+  if (!prepared) return;
+
+  const { jobId, tapeBytes } = prepared;
+
+  let submitResult: Awaited<ReturnType<typeof submitToProver>>;
+  try {
+    submitResult = await submitToProver(env, tapeBytes, {
+      seedId: prepared.job.tape.metadata.seedId >>> 0,
+      claimantAddress: prepared.job.claim.claimantAddress,
+    });
+  } catch (error) {
+    const reason = `vast submit error: ${safeErrorMessage(error)}`;
+    if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
+      await coordinator.markFailed(
+        jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+      return;
+    }
+
+    const delaySeconds = retryDelaySeconds(message.attempts);
+    await coordinator.markRetry(
+      jobId,
+      reason,
+      new Date(Date.now() + delaySeconds * 1000).toISOString(),
+    );
+    message.retry({ delaySeconds });
+    return;
+  }
+
+  await handleSubmitResult(submitResult, jobId, message, env, MAX_VAST_QUEUE_RETRIES);
+}
+
+// ---------------------------------------------------------------------------
+// Claim queue
+// ---------------------------------------------------------------------------
 
 async function processClaimQueueMessage(
   message: Message<ClaimQueueMessage>,
@@ -177,6 +359,33 @@ async function processClaimQueueMessage(
     return;
   }
 
+  // Skip claim if a higher-scoring proof already claimed successfully for this
+  // claimant. This prevents the contract rejection in common serial-race cases.
+  const thisScore = job.tape.metadata.finalScore >>> 0;
+  const thisSeedId = job.tape.metadata.seedId >>> 0;
+  const canonicalClaimant = job.result.summary.journal.claimant;
+  const { jobs: claimantJobs } = await coordinator.listJobsForClaimant(
+    canonicalClaimant,
+    100,
+    0,
+  );
+  const superseded = claimantJobs.some(
+    (j) =>
+      j.jobId !== job.jobId &&
+      (j.tape.metadata.seedId >>> 0) === thisSeedId && // same seed_id only
+      j.claim.status === "succeeded" &&
+      (j.tape.metadata.finalScore >>> 0) >= thisScore,
+  );
+  if (superseded) {
+    console.log("[claim-queue] skipping — superseded by higher-scoring claim", {
+      jobId: payload.jobId,
+      score: thisScore,
+    });
+    await coordinator.markClaimSucceeded(payload.jobId, "superseded-by-higher-score");
+    message.ack();
+    return;
+  }
+
   const artifact = await env.PROOF_ARTIFACTS.get(job.result.artifactKey);
   if (!artifact) {
     await coordinator.markClaimFailed(payload.jobId, "missing proof artifact in R2");
@@ -184,9 +393,9 @@ async function processClaimQueueMessage(
     return;
   }
 
-  let artifactJson: { prover_response?: unknown };
+  let artifactJson: unknown;
   try {
-    artifactJson = (await artifact.json()) as { prover_response?: unknown };
+    artifactJson = (await artifact.json()) as unknown;
   } catch (error) {
     await coordinator.markClaimFailed(
       payload.jobId,
@@ -196,24 +405,54 @@ async function processClaimQueueMessage(
     return;
   }
 
-  const journalHex = journalRawHex(job.result.summary.journal);
-  const digestHex = await sha256HexFromHex(journalHex);
+  let parsedArtifact;
+  try {
+    parsedArtifact = parseProofArtifactV4(artifactJson);
+  } catch (error) {
+    await coordinator.markClaimFailed(
+      payload.jobId,
+      `invalid proof artifact payload: ${safeErrorMessage(error)}`,
+    );
+    message.ack();
+    return;
+  }
+
+  const expectedJournalHex = journalRawHex(job.result.summary.journal);
+  if (parsedArtifact.journal_raw_hex !== expectedJournalHex) {
+    await coordinator.markClaimFailed(
+      payload.jobId,
+      "proof artifact journal_raw_hex does not match coordinator summary",
+    );
+    message.ack();
+    return;
+  }
+
+  const computedDigestHex = await sha256Hex(hexToBytes(parsedArtifact.journal_raw_hex, "journal_raw_hex"));
+  if (computedDigestHex !== parsedArtifact.journal_digest_hex) {
+    await coordinator.markClaimFailed(
+      payload.jobId,
+      "proof artifact journal_digest_hex does not match journal_raw_hex",
+    );
+    message.ack();
+    return;
+  }
 
   let relayResult: Awaited<ReturnType<typeof submitClaim>>;
   try {
     relayResult = await submitClaim(env, {
       jobId: payload.jobId,
-      claimantAddress: job.claim.claimantAddress,
-      journalRawHex: journalHex,
-      journalDigestHex: digestHex,
-      proverResponse: artifactJson.prover_response ?? null,
+      journalRawHex: parsedArtifact.journal_raw_hex,
+      journalDigestHex: parsedArtifact.journal_digest_hex,
+      sealHex: parsedArtifact.seal_hex,
     });
   } catch (error) {
     const reason = `claim submit error: ${safeErrorMessage(error)}`;
+    const crashDetail = error instanceof Error ? error.stack ?? error.message : String(error);
     if (message.attempts >= MAX_QUEUE_RETRIES) {
       await coordinator.markClaimFailed(
         payload.jobId,
         `${reason} (exhausted ${message.attempts} delivery attempts)`,
+        crashDetail,
       );
       message.ack();
       return;
@@ -224,6 +463,7 @@ async function processClaimQueueMessage(
       payload.jobId,
       reason,
       new Date(Date.now() + delaySeconds * 1000).toISOString(),
+      crashDetail,
     );
     message.retry({ delaySeconds });
     return;
@@ -236,6 +476,15 @@ async function processClaimQueueMessage(
       txHash: relayResult.txHash,
     });
     await coordinator.markClaimSucceeded(payload.jobId, relayResult.txHash);
+    // Only write the tape mapping for real on-chain tx hashes — synthetic
+    // values like "prior-attempt" and "superseded-by-higher-score" have no tx.
+    if (/^[0-9a-f]{64}$/i.test(relayResult.txHash)) {
+      try {
+        await writeProofTapeMapping(env, relayResult.txHash, payload.jobId);
+      } catch (err) {
+        console.error("[claim-queue] failed to write tape mapping", err);
+      }
+    }
     message.ack();
     return;
   }
@@ -251,6 +500,7 @@ async function processClaimQueueMessage(
       await coordinator.markClaimFailed(
         payload.jobId,
         `${relayResult.message} (exhausted ${message.attempts} delivery attempts)`,
+        relayResult.errorDetail,
       );
       message.ack();
       return;
@@ -261,6 +511,7 @@ async function processClaimQueueMessage(
       payload.jobId,
       relayResult.message,
       new Date(Date.now() + delaySeconds * 1000).toISOString(),
+      relayResult.errorDetail,
     );
     message.retry({ delaySeconds });
     return;
@@ -271,19 +522,52 @@ async function processClaimQueueMessage(
     type: relayResult.type,
     message: relayResult.message,
   });
-  await coordinator.markClaimFailed(payload.jobId, relayResult.message);
+
+  // Contract rejections like "already claimed" or "score not improved" mean a
+  // prior attempt actually landed on-chain. Treat as success rather than failure.
+  if (isAlreadyClaimedOnChain(relayResult.message, relayResult.errorDetail)) {
+    console.log("[claim-queue] fatal error indicates prior on-chain success", {
+      jobId: payload.jobId,
+    });
+    await coordinator.markClaimSucceeded(payload.jobId, "prior-attempt");
+    message.ack();
+    return;
+  }
+
+  await coordinator.markClaimFailed(payload.jobId, relayResult.message, relayResult.errorDetail);
   message.ack();
 }
 
+// ---------------------------------------------------------------------------
+// Batch handlers (exported)
+// ---------------------------------------------------------------------------
+
+/**
+ * Boundless proof queue — processes in parallel (Cloudflare handles concurrency
+ * via max_concurrency in wrangler config).
+ */
 export async function handleQueueBatch(
   batch: MessageBatch<ProofQueueMessage>,
   env: WorkerEnv,
 ): Promise<void> {
-  // Processing one message at a time is intentional. Each message corresponds
-  // to the single active proof slot and must avoid concurrent dispatch/polling.
   /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
-    await processQueueMessage(message, env);
+    await processBoundlessMessage(message, env);
+  }
+  /* eslint-enable no-await-in-loop */
+}
+
+/**
+ * VastAI proof queue — serial, 1-at-a-time (max_concurrency=1 in wrangler).
+ * Consumer checks for an active VastAI slot before submitting.
+ */
+export async function handleVastQueueBatch(
+  batch: MessageBatch<ProofQueueMessage>,
+  env: WorkerEnv,
+): Promise<void> {
+  /* eslint-disable no-await-in-loop */
+  for (const message of batch.messages) {
+    await processVastMessage(message, env);
   }
   /* eslint-enable no-await-in-loop */
 }
@@ -298,7 +582,6 @@ export async function handleDlqBatch(
   batch: MessageBatch<ProofQueueMessage>,
   env: WorkerEnv,
 ): Promise<void> {
-  // Sequential processing is intentional — each message must finish before the next.
   /* eslint-disable no-await-in-loop */
   for (const message of batch.messages) {
     const payload = message.body;
@@ -338,11 +621,13 @@ export async function handleClaimQueueBatch(
       }
 
       const reason = `claim queue consumer crashed: ${safeErrorMessage(error)}`;
+      const crashDetail = error instanceof Error ? error.stack ?? error.message : String(error);
       const coordinator = coordinatorStub(env);
       if (message.attempts >= MAX_QUEUE_RETRIES) {
         await coordinator.markClaimFailed(
           payload.jobId,
           `${reason} (exhausted ${message.attempts} delivery attempts)`,
+          crashDetail,
         );
         message.ack();
       } else {
@@ -351,6 +636,7 @@ export async function handleClaimQueueBatch(
           payload.jobId,
           reason,
           new Date(Date.now() + delaySeconds * 1000).toISOString(),
+          crashDetail,
         );
         message.retry({ delaySeconds });
       }
@@ -373,9 +659,25 @@ export async function handleClaimDlqBatch(
 
     const coordinator = coordinatorStub(env);
     const job = await coordinator.getJob(payload.jobId);
-    const priorError = job?.claim.lastError?.trim();
+    const priorError = job?.claim.lastError?.trim() ?? "";
+    const priorErrorDetail =
+      [...(job?.claimAttempts ?? [])].reverse().find((a) => a.errorDetail != null)
+        ?.errorDetail ?? "";
+
+    // If the last error indicates the claim already landed on-chain via a
+    // prior attempt, treat this as success rather than failure.
+    if (priorError.length > 0 && isAlreadyClaimedOnChain(priorError, priorErrorDetail)) {
+      console.log("[claim-dlq] prior error indicates on-chain success", {
+        jobId: payload.jobId,
+        priorError,
+      });
+      await coordinator.markClaimSucceeded(payload.jobId, "prior-attempt");
+      message.ack();
+      continue;
+    }
+
     const dlqMessage =
-      priorError && priorError.length > 0
+      priorError.length > 0
         ? `${priorError} (dead-letter)`
         : "claim submission failed: all queue delivery attempts exhausted (dead-letter)";
     await coordinator.markClaimFailed(payload.jobId, dlqMessage);

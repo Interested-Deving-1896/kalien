@@ -1,3 +1,11 @@
+import type { GameRunRecord } from "./AsteroidsGame";
+
+export interface CompletedGameRun {
+  record: GameRunRecord;
+  frameCount: number;
+  endedAtMs: number;
+}
+
 export type GameMode = "menu" | "playing" | "paused" | "game-over" | "replay";
 
 export type AsteroidSize = "large" | "medium" | "small";
@@ -82,4 +90,25 @@ export interface Debris {
   maxLife: number;
   size: number;
   vertices: number[];
+}
+
+export interface Shockwave {
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  lineWidth: number;
+}
+
+export interface ScorePopup {
+  text: string;
+  x: number;
+  y: number;
+  life: number;
+  maxLife: number;
+  vy: number;
+  color: string;
 }

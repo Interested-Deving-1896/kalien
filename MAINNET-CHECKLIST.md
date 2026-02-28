@@ -41,12 +41,14 @@ jobs and consume expensive GPU time.
       Alternatively store it as a Wrangler secret.
 - [ ] **Run automated preflight checks** before every deploy:
       ```bash
-      WORKER_CONFIG=wrangler.jsonc \
-      PROVER_ENV=kalien-verifier/api-server/.env \
-      ./scripts/mainnet-security-preflight.sh
+      # Contract + fixture verification (mock + optional Groth16 checks)
+      bash kalien-contract/scripts/deploy-and-test.sh --proof-mode all
+
+      # Prover endpoint smoke check
+      bash scripts/smoke-test-prover.sh --url "$PROVER_BASE_URL"
       ```
       This catches placeholder URLs, insecure transport flags, weak/missing
-      API key config, and dev-mode leaks early.
+      API key config, and prover health regressions early.
 
 ---
 
@@ -64,7 +66,7 @@ Switch all Stellar references from testnet to mainnet.
 - [ ] **Choose a mainnet Soroban RPC provider** and confirm rate limits,
       availability SLAs, and pricing.
 - [ ] **Add frontend environment variables** for mainnet. The client integration
-      spec (`docs/games/asteroids/10-CLIENT-INTEGRATION-SPEC.md:106-112`)
+      spec (`docs/games/asteroids/11-CLIENT-INTEGRATION-SPEC.md:106-112`)
       defines these — they need actual values:
       ```
       VITE_RPC_URL=<mainnet RPC>
@@ -81,29 +83,29 @@ Switch all Stellar references from testnet to mainnet.
       the Groth16 verifier is
       `CB54QOGYJJOSLNHRCHTSVGKJ3D5K6B5YO7DD6CRHRBCRNPF2VX2VCMV7`. These
       may differ on mainnet — verify with the RISC Zero / Stellar teams.
-- [ ] **Update `deploy-and-test.sh`** (or create a separate mainnet deployment
+- [ ] **Update `kalien-contract/scripts/deploy-and-test.sh`** (or create a separate mainnet deployment
       script) to use `NETWORK="mainnet"` and the mainnet router contract ID.
 
 ---
 
-## 3. Score Token Deployment
+## 3. KALIEN Token Deployment
 
-Deploy the SCORE token on mainnet and configure minting authority.
+Deploy the KALIEN token on mainnet and configure minting authority.
 
 - [ ] **Create the mainnet issuer account** with enough XLM for reserves.
-      This account will issue the SCORE Stellar Asset Contract (SAC) token.
+      This account will issue the KALIEN Stellar Asset Contract (SAC) token.
 - [ ] **Deploy the SAC token** on mainnet. The testnet script
-      (`deploy-and-test.sh:176-200`) creates an asset `SCORE:<issuer>` and wraps
+      (`kalien-contract/scripts/deploy-and-test.sh:176-200`) creates an asset `KALIEN:<issuer>` and wraps
       it as a Soroban SAC. Replicate this for mainnet:
       ```bash
       # Create the asset issuer
-      stellar keys generate --global score-issuer --network mainnet --fund
-      ISSUER_ADDR=$(stellar keys address score-issuer)
+      stellar keys generate --global kalien-issuer --network mainnet --fund
+      ISSUER_ADDR=$(stellar keys address kalien-issuer)
 
       # Deploy the SAC
       stellar contract asset deploy \
-        --asset "SCORE:$ISSUER_ADDR" \
-        --source score-issuer \
+        --asset "KALIEN:$ISSUER_ADDR" \
+        --source kalien-issuer \
         --network mainnet
       ```
 - [ ] **Record the mainnet TOKEN_ID** (SAC contract address) — you'll need it
@@ -113,18 +115,18 @@ Deploy the SCORE token on mainnet and configure minting authority.
       ```bash
       stellar contract invoke \
         --id $TOKEN_ID \
-        --source score-issuer \
+        --source kalien-issuer \
         --network mainnet \
         -- set_admin --new_admin $SCORE_CONTRACT_ID
       ```
-- [ ] **Verify minting works** by submitting a real proof and confirming token
+- [ ] **Verify minting works** by submitting a real proof and confirming KALIEN
       balance increases for the player.
 - [ ] **Consider token metadata**: name, symbol, decimals. SAC tokens inherit
-      these from the classic asset. "SCORE" is 12 characters max, 0 decimals
-      (since scores are integers).
+      these from the classic asset. "KALIEN" is 6 characters, 7 decimals
+      (SAC default; contract scales mint amounts by 10^7).
 - [ ] **Decide on token supply governance**: Is there a max supply? Should
       minting be uncapped or should the contract enforce a ceiling? Currently
-      there is no cap — every valid proof mints `final_score` tokens.
+      there is no cap — every valid proof mints `final_score` KALIEN.
 
 ---
 
@@ -142,8 +144,8 @@ Deploy the asteroids_score contract to mainnet.
 - [ ] **Determine the correct `image_id`** for the production RISC0 guest
       program. This is the 32-byte hash that identifies the proving program.
       Get it from the prover build output or `methods/build.rs`. Currently:
-      `755b655c3063e7684eaeb2073ba2a75d6b41e82b1577671bbf29600eca10d83d`
-      (from `.testnet-state.env`). **Any change to the Rust guest code changes
+      `37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111`
+      (from `kalien-contract/.env`). **Any change to the Rust guest code changes
       this value** — rebuild and re-verify.
 - [ ] **Deploy the contract to mainnet:**
       ```bash
@@ -348,7 +350,7 @@ Rust prover core.
       2. Submit to prover and get Groth16 proof
       3. Submit proof to testnet contract with Groth16 verifier
       4. Confirm token minting succeeds
-- [ ] **Validate the `RULES_DIGEST` constant** (`0x4153_5433` / "AST3").
+- [ ] **Validate the `RULES_DIGEST` constant** (`0x4153_5434` / "AST4").
       This is baked into both the guest and contract. It serves as a versioning
       marker — if game rules change, bump this value.
 
@@ -427,8 +429,8 @@ Final verification before flipping the switch.
       - `.gitignore` ignores `.dev.vars` (Cloudflare Worker secrets) — but
         **no `.dev.vars.example`** exists to document expected keys
         (`PROVER_API_KEY`, `PROVER_ACCESS_CLIENT_ID`, etc.)
-      - `kalien-contract/.gitignore` ignores `.testnet-state.env`
-        — but **no `.testnet-state.env.example`** exists
+      - `kalien-contract/.gitignore` ignores `.env`
+        — but **no `kalien-contract/.env.example`** exists
       - `kalien-verifier/api-server/.env.example` exists (good)
       - `kalien-verifier/api-server/.env.example` exists (good)
       - Root `.gitignore` does **not** ignore `.env` — add a catch-all
@@ -473,8 +475,8 @@ anything to mainnet so all deployed config points to the final names.
 ## 13. Documentation & Legal
 
 - [ ] **Update all testnet references** in docs/ to note mainnet equivalents.
-- [ ] **Remove or `.gitignore` testnet state files**
-      (`.testnet-state.env`, test deployer keys).
+- [ ] **Remove or `.gitignore` testnet state values**
+      (`kalien-contract/.env`, test deployer keys).
 - [ ] **Document mainnet contract addresses** for users and integrators.
 - [ ] **Review and update license files**. Currently the only project-owned
       LICENSE file is `kalien-verifier/LICENSE` (Apache 2.0 with

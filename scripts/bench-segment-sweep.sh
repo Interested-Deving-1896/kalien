@@ -27,6 +27,8 @@ POLL_INTERVAL=5
 SEG_FLOOR=19
 SEG_CEILING=22
 VERIFY_MODE="policy"
+SEED_ID=0
+CLAIMANT="GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 REPEAT=1
 TAPES_CSV="short,medium"
 MAX_FRAMES=""
@@ -46,13 +48,15 @@ Options:
                              clamp = clamp to prover health bounds
                              strict = fail when requested range exceeds policy
   --receipts <csv>           Comma-separated receipt kinds to benchmark.
-                             Values: composite|succinct|groth16
+                             Values: groth16
                              Default: groth16
   --tapes <csv>              Comma-separated tape labels to benchmark.
                              Values: short|medium|real|all
                              Default: short,medium
   --repeat <n>               Repetitions per config (default: 1)
   --poll <seconds>           Poll interval while waiting for completion (default: 5)
+  --seed-id <u32>            seed_id bound into the proof journal (default: 0)
+  --claimant <addr>          claimant Stellar address (default: GAAAAAAAA...WHF)
   --max-frames <n>           Optional max_frames query parameter override
   --short-tape <path>        Override short tape path
   --medium-tape <path>       Override medium tape path
@@ -114,6 +118,14 @@ while [[ $# -gt 0 ]]; do
       POLL_INTERVAL="${2:-}"
       shift 2
       ;;
+    --seed-id)
+      SEED_ID="${2:-}"
+      shift 2
+      ;;
+    --claimant)
+      CLAIMANT="${2:-}"
+      shift 2
+      ;;
     --max-frames)
       MAX_FRAMES="${2:-}"
       shift 2
@@ -162,6 +174,14 @@ if [[ ! "$POLL_INTERVAL" =~ ^[0-9]+$ || "$POLL_INTERVAL" -lt 1 ]]; then
   echo "ERROR: --poll must be an integer >= 1" >&2
   exit 1
 fi
+if [[ ! "$SEED_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --seed-id must be an unsigned integer" >&2
+  exit 1
+fi
+if [[ -z "${CLAIMANT// }" ]]; then
+  echo "ERROR: --claimant cannot be empty" >&2
+  exit 1
+fi
 if [[ -n "$MAX_FRAMES" && ! "$MAX_FRAMES" =~ ^[0-9]+$ ]]; then
   echo "ERROR: --max-frames must be an integer" >&2
   exit 1
@@ -183,9 +203,9 @@ for receipt in "${RECEIPTS[@]}"; do
     exit 1
   fi
   case "$receipt" in
-    composite|succinct|groth16) ;;
+    groth16) ;;
     *)
-      echo "ERROR: unsupported receipt kind: $receipt" >&2
+      echo "ERROR: unsupported receipt kind: $receipt (allowed: groth16 only, v4 flow)" >&2
       exit 1
       ;;
   esac
@@ -317,7 +337,7 @@ submit_and_wait() {
   local seg="$8"
   local run_idx="$9"
 
-  local query="receipt_kind=${receipt}&segment_limit_po2=${seg}&verify_mode=${VERIFY_MODE}"
+  local query="receipt_kind=${receipt}&segment_limit_po2=${seg}&verify_mode=${VERIFY_MODE}&seed_id=${SEED_ID}&claimant=${CLAIMANT}"
   if [[ -n "$MAX_FRAMES" ]]; then
     query="${query}&max_frames=${MAX_FRAMES}"
   fi
@@ -378,16 +398,20 @@ submit_and_wait() {
         echo "$jr" | python3 -c '
 import json,sys
 d=json.load(sys.stdin)
-r=d.get("result",{})
-p=r.get("proof",{})
-s=p.get("stats",{})
-print(r.get("elapsed_ms",""),
-      s.get("segments",""),
-      s.get("total_cycles",""),
-      s.get("user_cycles",""),
-      s.get("paging_cycles",""),
-      s.get("reserved_cycles",""),
-      p.get("produced_receipt_kind",""))'
+r=d["result"]
+p=r["proof"]
+s=p["stats"]
+requested=p["requested_receipt_kind"]
+produced=p["produced_receipt_kind"]
+if requested != "groth16" or produced != "groth16":
+    raise SystemExit(f"unexpected receipt kind transition: {requested} -> {produced}")
+print(r["elapsed_ms"],
+      s["segments"],
+      s["total_cycles"],
+      s["user_cycles"],
+      s["paging_cycles"],
+      s["reserved_cycles"],
+      produced)'
       )"
 
       printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,succeeded,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,,\n" \
@@ -433,6 +457,8 @@ echo "Bounds mode:           $BOUNDS_MODE"
 echo "Receipt kinds:         ${RECEIPTS[*]}"
 echo "Tape set:              ${TAPES_CSV}"
 echo "Verify mode:           $VERIFY_MODE"
+echo "Seed ID:               $SEED_ID"
+echo "Claimant:              $CLAIMANT"
 echo "Repeat count:          $REPEAT"
 echo "Poll interval (s):     $POLL_INTERVAL"
 if [[ -n "$MAX_FRAMES" ]]; then

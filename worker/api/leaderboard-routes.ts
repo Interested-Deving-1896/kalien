@@ -44,6 +44,7 @@ const WRITE_RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 60_000;
 
 const rateLimitCounters = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_PRUNE_THRESHOLD = 1_000;
 
 function checkRateLimit(ip: string, limit: number): boolean {
   const now = Date.now();
@@ -52,11 +53,23 @@ function checkRateLimit(ip: string, limit: number): boolean {
 
   if (!entry || now >= entry.resetAt) {
     rateLimitCounters.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    pruneExpiredRateLimits(now);
     return true;
   }
 
   entry.count += 1;
   return entry.count <= limit;
+}
+
+function pruneExpiredRateLimits(now: number): void {
+  if (rateLimitCounters.size <= RATE_LIMIT_PRUNE_THRESHOLD) {
+    return;
+  }
+  for (const [key, entry] of rateLimitCounters) {
+    if (now >= entry.resetAt) {
+      rateLimitCounters.delete(key);
+    }
+  }
 }
 
 function clientIp(c: { req: { raw: Request } }): string {
@@ -108,7 +121,7 @@ function safeLinkUrl(url: string | null | undefined): string | null {
   return trimmed;
 }
 
-export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
+export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
   const router = new Hono<{ Bindings: WorkerEnv }>();
 
   // GET /api/leaderboard
@@ -377,7 +390,8 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
         expiresAt,
       });
 
-      c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
+      // This response includes a one-time challenge and should never be cached.
+      c.header("Cache-Control", "no-store");
       return c.json({
         success: true,
         challenge_id: challengeId,
@@ -541,10 +555,36 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
   });
 
+  return router;
+}
+
+// ---------------------------------------------------------------------------
+// Dev endpoints — gated by DEV_API_KEY (must be set and >= 16 chars).
+// Requests must include "Authorization: Bearer <key>".
+// If key is missing/weak, endpoints return 404 to appear absent.
+// ---------------------------------------------------------------------------
+export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
+  const router = new Hono<{ Bindings: WorkerEnv }>();
+
+  router.use("/*", async (c, next) => {
+    const key = c.env.DEV_API_KEY?.trim();
+    if (!key || key.length < 16) {
+      return jsonError(c, 404, `unknown api route: ${c.req.path}`);
+    }
+
+    const authHeader = c.req.header("authorization") ?? "";
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!match || match[1] !== key) {
+      return jsonError(c, 401, "valid authorization required for dev endpoints");
+    }
+
+    await next();
+  });
+
   // DEV-ONLY: Trigger leaderboard sync (same as cron handler)
   // Pass ?reset_cursor=1 to clear stale RPC cursor.
   // Pass ?from_ledger=N to override the start ledger (skips gaps).
-  router.post("/dev/sync", async (c) => {
+  router.post("/sync", async (c) => {
     const { runLeaderboardSync, runScheduledLeaderboardSync } = await import("../leaderboard-sync");
     const { setLeaderboardIngestionState, getLeaderboardIngestionState: getIngestionState } =
       await import("../leaderboard-store");
@@ -579,7 +619,7 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
   });
 
   // DEV-ONLY: Reset all leaderboard data
-  router.post("/dev/reset", async (c) => {
+  router.post("/reset", async (c) => {
     const db = c.env.LEADERBOARD_DB;
     await db.batch([
       db.prepare("DELETE FROM leaderboard_events"),
@@ -587,12 +627,13 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       db.prepare("DELETE FROM leaderboard_profile_credentials"),
       db.prepare("DELETE FROM leaderboard_profile_auth_challenges"),
       db.prepare("DELETE FROM leaderboard_ingestion_state"),
+      db.prepare("DELETE FROM proof_tape_index"),
     ]);
     return c.json({ success: true, message: "all leaderboard data cleared" });
   });
 
   // DEV-ONLY: Seed test data into the leaderboard
-  router.post("/dev/seed", async (c) => {
+  router.post("/seed", async (c) => {
     let body: { events: unknown[]; profiles?: unknown[] };
     try {
       body = (await c.req.json()) as typeof body;
@@ -613,13 +654,9 @@ export function createLeaderboardRouter(): Hono<{ Bindings: WorkerEnv }> {
       seed: Number(e.seed) >>> 0,
       frameCount: e.frameCount != null ? Number(e.frameCount) : null,
       finalScore: Number(e.finalScore),
-      finalRngState: e.finalRngState != null ? Number(e.finalRngState) : null,
-      tapeChecksum: e.tapeChecksum != null ? Number(e.tapeChecksum) : null,
-      rulesDigest: e.rulesDigest != null ? Number(e.rulesDigest) : null,
       previousBest: Number(e.previousBest ?? 0),
       newBest: Number(e.newBest ?? e.finalScore),
       mintedDelta: Number(e.mintedDelta ?? e.finalScore),
-      journalDigest: e.journalDigest != null ? String(e.journalDigest) : null,
       txHash: e.txHash != null ? String(e.txHash) : null,
       eventIndex: e.eventIndex != null ? Number(e.eventIndex) : null,
       ledger: e.ledger != null ? Number(e.ledger) : null,
