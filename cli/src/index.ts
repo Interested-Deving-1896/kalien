@@ -9,10 +9,14 @@ ${ansi.brightCyan}KALIEN${ansi.reset} - Autonomous Asteroids Farming CLI
 ${ansi.bold}USAGE${ansi.reset}
   kalien run --address <STELLAR_ADDRESS> [options]
   kalien replay <tape-file>
+  kalien ps
+  kalien cleanup [options]
 
 ${ansi.bold}COMMANDS${ansi.reset}
   run       Start autonomous farming (play games + submit tapes)
   replay    ASCII replay of a .tape file in the terminal
+  ps        List active kalien run processes
+  cleanup   Terminate stale kalien run processes
 
 ${ansi.bold}RUN OPTIONS${ansi.reset}
   --address <addr>      Stellar wallet address for claims (required)
@@ -25,11 +29,20 @@ ${ansi.bold}RUN OPTIONS${ansi.reset}
   --contract-id <addr>     Score contract address (default: testnet address; required for mainnet)
   --relayer-api-key <key>  OZ channels relayer API key — materializes/indexes epoch seed if cron hasn't fired yet
 
+${ansi.bold}CLEANUP OPTIONS${ansi.reset}
+  --dry-run             Show matching processes without terminating them
+  --orphan-only         Only target orphaned runs (default unless --all)
+  --all                 Target all matching kalien run processes
+  --older-than <dur>    Minimum process age, e.g. 30s, 10m, 2h, 1d
+
 ${ansi.bold}EXAMPLES${ansi.reset}
   kalien run --address GABC...XYZ
   kalien run --address GABC...XYZ --threads 4 --interval 5
   kalien run --address GABC...XYZ --max
   kalien replay game.tape
+  kalien ps
+  kalien cleanup --dry-run
+  kalien cleanup --orphan-only --older-than 5m
 `;
 
 function parseArgs(argv: string[]): {
@@ -37,6 +50,13 @@ function parseArgs(argv: string[]): {
   args: Record<string, string>;
   positional: string[];
 } {
+  const booleanFlags = new Set([
+    "help",
+    "max",
+    "dry-run",
+    "all",
+    "orphan-only",
+  ]);
   const args: Record<string, string> = {};
   const positional: string[] = [];
   let command = "";
@@ -47,7 +67,7 @@ function parseArgs(argv: string[]): {
       command = arg;
     } else if (arg.startsWith("--")) {
       const key = arg.slice(2);
-      if (key === "help" || key === "max") {
+      if (booleanFlags.has(key)) {
         args[key] = "true";
       } else if (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
         args[key] = argv[++i];
@@ -127,6 +147,24 @@ async function main(): Promise<void> {
 
       const { replayCommand } = await import("./commands/replay");
       await replayCommand(tapePath);
+      break;
+    }
+
+    case "ps": {
+      const { psCommand } = await import("./commands/processes");
+      await psCommand();
+      break;
+    }
+
+    case "cleanup": {
+      const { cleanupCommand } = await import("./commands/processes");
+      await cleanupCommand({
+        all: args["all"] === "true",
+        dryRun: args["dry-run"] === "true",
+        orphanOnly:
+          args["all"] === "true" ? false : args["orphan-only"] !== "false",
+        olderThan: args["older-than"] || null,
+      });
       break;
     }
 
