@@ -7,7 +7,7 @@
 #   - Constants:   RISC0_ROUTER, RISC0_MOCK, NETWORK, HORIZON_URL
 #   - Crypto:      sha256_of_hex
 #   - Keys:        ensure_funded_key
-#   - State:       load_state, save_state
+#   - Env/state:   load_env_chain, load_state, save_state_vars
 #   - Fixtures:    read_image_id
 #   - Mock prover: mock_seal
 #
@@ -22,6 +22,7 @@ CONTRACT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$CONTRACT_DIR/.." && pwd)"
 FIXTURES_DIR="$ROOT_DIR/test-fixtures"
 WASM="$CONTRACT_DIR/target/wasm32v1-none/release/asteroids_score.wasm"
+CONTRACT_ENV_FILE="$CONTRACT_DIR/.env"
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,6 +34,27 @@ HORIZON_URL="https://horizon-testnet.stellar.org"
 
 # CPU instruction limit per Stellar transaction
 CPU_LIMIT=100000000
+
+# ---------------------------------------------------------------------------
+# Env loading
+# ---------------------------------------------------------------------------
+
+# Load env vars in the same precedence order used by top-level scripts:
+#   root/.env -> root/.dev.vars -> kalien-contract/.env
+# Later files override earlier files.
+load_env_chain() {
+  local env_file
+  for env_file in "$ROOT_DIR/.env" "$ROOT_DIR/.dev.vars" "$CONTRACT_ENV_FILE"; do
+    if [[ -f "$env_file" ]]; then
+      # shellcheck disable=SC1090
+      set -a
+      source "$env_file"
+      set +a
+    fi
+  done
+}
+
+load_env_chain
 
 # ---------------------------------------------------------------------------
 # Logging — all output goes to stderr so callers can capture stdout for data
@@ -126,6 +148,50 @@ load_state() {
     # shellcheck disable=SC1090
     source "$state_file"
   fi
+}
+
+# Upsert KEY=VALUE into an env file while preserving other lines.
+# Args: $1 = env file path, $2 = key, $3 = value
+upsert_env_var() {
+  local env_file="$1"
+  local key="$2"
+  local value="${3:-}"
+  local tmp_file
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/kalien-env.XXXXXX")"
+
+  if [[ -f "$env_file" ]]; then
+    awk -v key="$key" -v value="$value" '
+      BEGIN { updated = 0 }
+      index($0, key "=") == 1 {
+        if (updated == 0) {
+          print key "=" value
+          updated = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (updated == 0) {
+          print key "=" value
+        }
+      }
+    ' "$env_file" > "$tmp_file"
+  else
+    printf "%s=%s\n" "$key" "$value" > "$tmp_file"
+  fi
+
+  mv "$tmp_file" "$env_file"
+}
+
+# Save one or more key/value pairs into an env file.
+# Args: $1 = env file path, then repeated: <key> <value>
+save_state_vars() {
+  local env_file="$1"
+  shift
+  while [[ $# -gt 1 ]]; do
+    upsert_env_var "$env_file" "$1" "$2"
+    shift 2
+  done
 }
 
 # ---------------------------------------------------------------------------

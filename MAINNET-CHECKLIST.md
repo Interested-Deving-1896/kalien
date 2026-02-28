@@ -145,7 +145,7 @@ Deploy the asteroids_score contract to mainnet.
       program. This is the 32-byte hash that identifies the proving program.
       Get it from the prover build output or `methods/build.rs`. Currently:
       `37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111`
-      (from `.testnet-state.env`). **Any change to the Rust guest code changes
+      (from `kalien-contract/.env`). **Any change to the Rust guest code changes
       this value** — rebuild and re-verify.
 - [ ] **Deploy the contract to mainnet:**
       ```bash
@@ -429,8 +429,8 @@ Final verification before flipping the switch.
       - `.gitignore` ignores `.dev.vars` (Cloudflare Worker secrets) — but
         **no `.dev.vars.example`** exists to document expected keys
         (`PROVER_API_KEY`, `PROVER_ACCESS_CLIENT_ID`, etc.)
-      - `kalien-contract/.gitignore` ignores `.testnet-state.env`
-        — but **no `.testnet-state.env.example`** exists
+      - `kalien-contract/.gitignore` ignores `.env`
+        — but **no `kalien-contract/.env.example`** exists
       - `kalien-verifier/api-server/.env.example` exists (good)
       - `kalien-verifier/api-server/.env.example` exists (good)
       - Root `.gitignore` does **not** ignore `.env` — add a catch-all
@@ -475,8 +475,8 @@ anything to mainnet so all deployed config points to the final names.
 ## 13. Documentation & Legal
 
 - [ ] **Update all testnet references** in docs/ to note mainnet equivalents.
-- [ ] **Remove or `.gitignore` testnet state files**
-      (`.testnet-state.env`, test deployer keys).
+- [ ] **Remove or `.gitignore` testnet state values**
+      (`kalien-contract/.env`, test deployer keys).
 - [ ] **Document mainnet contract addresses** for users and integrators.
 - [ ] **Review and update license files**. Currently the only project-owned
       LICENSE file is `kalien-verifier/LICENSE` (Apache 2.0 with

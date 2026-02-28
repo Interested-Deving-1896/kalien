@@ -35,8 +35,8 @@ RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-deploy-${RUN_ID}"
 PLAYER_NAME="ast-player-${RUN_ID}"
 
-# State file for persistence across runs
-STATE_FILE="$CONTRACT_DIR/.testnet-state.env"
+# Shared state/env file (also loaded by _helpers.sh env chain)
+STATE_FILE="${KALIEN_CONTRACT_STATE_FILE:-$CONTRACT_ENV_FILE}"
 
 # Test counters
 PASSED=0
@@ -173,13 +173,12 @@ materialize_current_seed() {
 # State persistence
 # ---------------------------------------------------------------------------
 save_state() {
-  cat > "$STATE_FILE" << EOF
-SCORE_CONTRACT_ID=$SCORE_CONTRACT_ID
-TOKEN_ID=$TOKEN_ID
-DEPLOYER_NAME=$DEPLOYER_NAME
-PLAYER_NAME=$PLAYER_NAME
-IMAGE_ID_HEX=$IMAGE_ID_HEX
-EOF
+  save_state_vars "$STATE_FILE" \
+    SCORE_CONTRACT_ID "$SCORE_CONTRACT_ID" \
+    TOKEN_ID "$TOKEN_ID" \
+    DEPLOYER_NAME "$DEPLOYER_NAME" \
+    PLAYER_NAME "$PLAYER_NAME" \
+    IMAGE_ID_HEX "$IMAGE_ID_HEX"
 }
 
 # ---------------------------------------------------------------------------

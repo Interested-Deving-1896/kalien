@@ -31,3 +31,14 @@ bash scripts/deploy-and-test.sh --proof-mode all
 
 `_helpers.sh` centralizes paths, testnet constants, key setup, and journal/hash
 helpers used by all script entry points.
+
+## Environment And State
+
+Contract scripts load env values with this precedence (later wins):
+
+1. repo root `.env`
+2. repo root `.dev.vars`
+3. `kalien-contract/.env`
+
+Reusable deployment state for `deploy-and-test.sh --deploy-mode reuse` and
+`cost-analysis.sh --deploy-mode reuse` is stored in `kalien-contract/.env`.

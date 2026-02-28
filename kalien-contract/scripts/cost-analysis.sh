@@ -31,7 +31,7 @@ RUN_ID=$(date +%s | tail -c 7)
 DEPLOYER_NAME="ast-cost-${RUN_ID}"
 PLAYER_NAME="ast-costp-${RUN_ID}"
 
-STATE_FILE="$CONTRACT_DIR/.cost-analysis-state.env"
+STATE_FILE="${KALIEN_CONTRACT_STATE_FILE:-$CONTRACT_ENV_FILE}"
 
 usage() {
   cat <<'USAGE_EOF'
@@ -78,15 +78,14 @@ fi
 # State persistence (cost-analysis-specific fields)
 # ---------------------------------------------------------------------------
 save_cost_state() {
-  cat > "$STATE_FILE" << EOF
-SCORE_CONTRACT_ID=$SCORE_CONTRACT_ID
-TOKEN_ID=$TOKEN_ID
-DEPLOYER_NAME=$DEPLOYER_NAME
-PLAYER_NAME=$PLAYER_NAME
-IMAGE_ID_HEX=$IMAGE_ID_HEX
-DEPLOY_TX_HASH=${DEPLOY_TX_HASH:-}
-SAC_TX_HASH=${SAC_TX_HASH:-}
-EOF
+  save_state_vars "$STATE_FILE" \
+    SCORE_CONTRACT_ID "$SCORE_CONTRACT_ID" \
+    TOKEN_ID "$TOKEN_ID" \
+    DEPLOYER_NAME "$DEPLOYER_NAME" \
+    PLAYER_NAME "$PLAYER_NAME" \
+    IMAGE_ID_HEX "$IMAGE_ID_HEX" \
+    DEPLOY_TX_HASH "${DEPLOY_TX_HASH:-}" \
+    SAC_TX_HASH "${SAC_TX_HASH:-}"
 }
 
 # ---------------------------------------------------------------------------
