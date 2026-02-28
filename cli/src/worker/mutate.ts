@@ -22,20 +22,28 @@ const BOUNDS: Record<string, ParamBounds> = {
 
 const NUMERIC_KEYS = Object.keys(BOUNDS);
 
+export type MutationRole = "exploit" | "explore";
+
 /**
- * Mutate a config by perturbing 1-3 parameters.
- * scale controls mutation size:
- *   0.5 = fine-tuning (exploit workers: ±5–15% of range)
- *   1.0 = default
- *   1.5 = broad search (explore workers: ±15–45% of range)
+ * Mutate a config by perturbing parameters.
+ *
+ * Exploit (scale ~0.5): tweaks exactly 1 parameter with small perturbation
+ * for clean hill-climbing signal.
+ *
+ * Explore (scale ~1.5): tweaks 2-6 parameters with large perturbation
+ * for broad jumps through config space.
  */
-export function mutateConfig(base: AutopilotConfig, scale = 1.0): AutopilotConfig {
+export function mutateConfig(base: AutopilotConfig, scale = 1.0, role: MutationRole = "explore"): AutopilotConfig {
   const result = { ...base };
 
-  // Pick 1-3 parameters to tweak
-  const tweakCount = 1 + Math.floor(Math.random() * 3);
+  // Exploit: exactly 1 param for clean signal.
+  // Explore: 2-6 params for bigger leaps.
+  const tweakCount = role === "exploit"
+    ? 1
+    : 2 + Math.floor(Math.random() * 5); // 2-6
+
   const shuffled = [...NUMERIC_KEYS].sort(() => Math.random() - 0.5);
-  const toTweak = shuffled.slice(0, tweakCount);
+  const toTweak = shuffled.slice(0, Math.min(tweakCount, NUMERIC_KEYS.length));
 
   for (const key of toTweak) {
     const bounds = BOUNDS[key];
@@ -65,7 +73,7 @@ export function mutateConfig(base: AutopilotConfig, scale = 1.0): AutopilotConfi
   return result;
 }
 
-/** Generate a fully random config within bounds (for explorer restarts). */
+/** Generate a fully random config within bounds. */
 export function randomConfig(): AutopilotConfig {
   const config: any = {};
   for (const key of NUMERIC_KEYS) {
@@ -80,4 +88,31 @@ export function randomConfig(): AutopilotConfig {
   }
 
   return config as AutopilotConfig;
+}
+
+/**
+ * Warm restart: blend 50% of a reference config with 50% random.
+ * Preserves some learned structure while exploring new territory.
+ */
+export function warmRestartConfig(reference: AutopilotConfig): AutopilotConfig {
+  const random = randomConfig();
+  const blended: any = {};
+
+  for (const key of NUMERIC_KEYS) {
+    const refVal = (reference as any)[key] as number;
+    const randVal = (random as any)[key] as number;
+    blended[key] = refVal * 0.5 + randVal * 0.5;
+  }
+
+  // Boolean: 50% chance to inherit from reference, 50% random
+  blended.preferSmallAsteroids = Math.random() < 0.5
+    ? reference.preferSmallAsteroids
+    : random.preferSmallAsteroids;
+
+  // Enforce constraint
+  if (blended.cautionRadius <= blended.dangerRadius + 30) {
+    blended.cautionRadius = blended.dangerRadius + 30;
+  }
+
+  return blended as AutopilotConfig;
 }

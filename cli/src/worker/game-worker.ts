@@ -2,7 +2,7 @@
 import { AsteroidsGame } from "@/game/AsteroidsGame";
 import { Autopilot, type AutopilotConfig } from "@/game/Autopilot";
 import type { MainToWorkerMessage, WorkerRole, WorkerToMainMessage } from "./messages";
-import { mutateConfig, randomConfig } from "./mutate";
+import { mutateConfig, randomConfig, warmRestartConfig } from "./mutate";
 import { fetchSeedFromContract } from "@/chain/seed";
 import { MAX_FRAMES, EXPLORER_RESTART_THRESHOLD, SEED_INTERVAL_SECONDS } from "../constants";
 import { bumpSeedViaRelayer } from "../relayer";
@@ -16,6 +16,7 @@ let relayerApiKey: string | null = null;
 let running = false;
 let bestScore = 0;
 let bestConfig: AutopilotConfig = Autopilot.defaults();
+let globalBestConfig: AutopilotConfig = Autopilot.defaults(); // latest global best for warm restarts
 let gamesWithoutImprovement = 0;
 
 // Active seed_id cache
@@ -71,7 +72,8 @@ async function ensureSeed(): Promise<void> {
     currentSeed = fetched;
     currentSeedId = resolvedSeedId ?? seedId;
   }
-  // If still null, keep using the previous seed_id's seed as fallback.
+  // If still null after retries + relayer bump, runOneGame() will skip and
+  // retry — we never play games with an unmaterialized or stale seed.
 }
 
 function post(msg: WorkerToMainMessage, transfer?: Transferable[]) {
@@ -90,13 +92,12 @@ async function runOneGame(): Promise<void> {
     return;
   }
 
-  // Exploit workers: fine-tune with small mutations.
-  // Explore workers: broad search with large mutations.
   const scale = role === "exploit" ? 0.5 : 1.5;
-  const config = mutateConfig(bestConfig, scale);
+  const config = mutateConfig(bestConfig, scale, role);
 
-  const game = new AsteroidsGame({ headless: true, seed, autopilotConfig: config });
-  game.startNewGame(seed);
+  const seedId = currentSeedId;
+  const game = new AsteroidsGame({ headless: true, seed, seedId, autopilotConfig: config });
+  game.startNewGame(seed, seedId);
   (game as unknown as { autopilot: Autopilot }).autopilot.setEnabled(true);
 
   let frame = 0;
@@ -116,16 +117,17 @@ async function runOneGame(): Promise<void> {
       gamesWithoutImprovement = 0;
       const copy = new Uint8Array(tape);
       post(
-        { type: "new-best", workerId, score, frames: frame, tape: copy, config },
+        { type: "new-best", workerId, score, frames: frame, tape: copy, config, seedId },
         [copy.buffer],
       );
     }
   } else {
     gamesWithoutImprovement++;
 
-    // Explorers: restart from a random config when stuck to escape local maxima
+    // Explorers: warm restart when stuck — blend global best with random
+    // to keep some learned structure while exploring new territory.
     if (role === "explore" && gamesWithoutImprovement >= EXPLORER_RESTART_THRESHOLD) {
-      bestConfig = randomConfig();
+      bestConfig = warmRestartConfig(globalBestConfig);
       bestScore = 0;
       gamesWithoutImprovement = 0;
     }
@@ -167,13 +169,15 @@ self.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
       // Reset seed cache so the next game fetches the current seed_id's seed.
       currentSeedId = -1;
       currentSeed = null;
-      // On epoch reset, explorers restart from a fresh random config so they
-      // search different territory from the exploiter.
+      // On epoch reset, explorers warm-restart from the global best blended
+      // with random so they search new territory with some learned structure.
       if (role === "explore") {
-        bestConfig = randomConfig();
+        bestConfig = warmRestartConfig(globalBestConfig);
       }
       break;
     case "set-config":
+      // Always track the global best config for warm restarts
+      globalBestConfig = msg.config;
       if (msg.force) {
         // Forced update (epoch reset for exploiter): always adopt
         bestConfig = msg.config;

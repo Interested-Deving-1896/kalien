@@ -26,7 +26,7 @@ const data = new Uint8Array(readFileSync(tapePath));
 const tape = deserializeTape(data, DEFAULT_MAX_FRAMES);
 
 console.log(`Tape: ${tapePath}`);
-console.log(`  Seed:       0x${tape.header.seed.toString(16).padStart(8, "0")}`);
+console.log(`  Seed:       0x${tape.header.seed.toString(16).toUpperCase().padStart(8, "0")}`);
 console.log(`  Frames:     ${tape.header.frameCount}`);
 console.log(`  Exp. Score:  ${tape.footer.finalScore}`);
 console.log();

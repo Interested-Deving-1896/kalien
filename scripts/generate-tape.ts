@@ -59,7 +59,7 @@ if (explicitSeed !== null) {
     process.exit(1);
   }
   seed = fetched;
-  console.log(` 0x${seed.toString(16).padStart(8, "0")}`);
+  console.log(` 0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
 }
 
 if (!outputPath) {
@@ -71,7 +71,7 @@ if (!outputPath) {
 }
 
 console.log(`Generating tape:`);
-console.log(`  Seed:       0x${seed.toString(16).padStart(8, "0")}`);
+console.log(`  Seed:       0x${seed.toString(16).toUpperCase().padStart(8, "0")}`);
 console.log(`  Max frames: ${maxFrames}`);
 console.log(`  Output:     ${outputPath}`);
 console.log();

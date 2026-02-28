@@ -54,9 +54,9 @@ export function renderDashboard(stats: DashboardStats): void {
   const epochStr = formatDuration(epochRemainingSec);
   const shortAddr = address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
 
-  const submitted = lastSubmittedScore > 0;
-  const scoreColor = submitted ? ansi.green : ansi.brightGreen;
-  const scoreLabel = submitted ? `${bestScore} (submitted: ${lastSubmittedScore})` : String(bestScore);
+  const hasThreshold = lastSubmittedScore > 0;
+  const scoreColor = hasThreshold ? ansi.green : ansi.brightGreen;
+  const scoreLabel = hasThreshold ? `${bestScore} (to beat: ${lastSubmittedScore})` : String(bestScore);
 
   const budgetColor = epochSubmissions >= maxSubmissionsPerEpoch ? ansi.red
     : epochSubmissions >= maxSubmissionsPerEpoch - 2 ? ansi.yellow

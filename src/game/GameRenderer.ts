@@ -769,7 +769,7 @@ export class GameRenderer {
 
     ctx.font = "500 12px 'Monaspace Krypton', monospace";
     ctx.fillStyle = "#6b7280";
-    ctx.fillText(`SEED ${state.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`, 20, 44);
+    ctx.fillText(`SEED 0x${state.gameSeed.toString(16).toUpperCase().padStart(8, "0")}`, 20, 44);
 
     this.drawShipLives(ctx, 20, WORLD_HEIGHT - 45, state.lives);
 

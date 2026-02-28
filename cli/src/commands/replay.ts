@@ -20,7 +20,7 @@ export async function replayCommand(tapePath: string): Promise<void> {
   const tape = deserializeTape(tapeData);
 
   console.log(`${ansi.color(ansi.brightCyan, "KALIEN Replay")}`);
-  console.log(`  Seed:   0x${tape.header.seed.toString(16).padStart(8, "0")}`);
+  console.log(`  Seed:   0x${tape.header.seed.toString(16).toUpperCase().padStart(8, "0")}`);
   console.log(`  Frames: ${tape.header.frameCount}`);
   console.log(`  Score:  ${tape.footer.finalScore}`);
   console.log("");

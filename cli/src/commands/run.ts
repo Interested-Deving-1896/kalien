@@ -6,7 +6,7 @@ import { submitTape, type SubmitResult } from "../api/submit";
 import { fetchPlayerScore } from "../api/score";
 import type { WorkerToMainMessage } from "../worker/messages";
 import { SEED_INTERVAL_SECONDS, MAX_SUBMISSIONS_PER_EPOCH, SETTLE_DELAY_MS } from "../constants";
-import { fetchSeedFromContract } from "@/chain/seed";
+import { fetchSeedFromContract, fetchBestScoreForSeed } from "@/chain/seed";
 
 const SEED_FETCH_TIMEOUT_MS = 6000;
 const SEED_REFRESH_INTERVAL_MS = 4000;
@@ -50,8 +50,21 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     process.stdout.write(ansi.color(ansi.dim, " none\n"));
   }
 
+  // Fetch on-chain best for the *current seed_id* so we don't submit worse
+  // scores from a previous session or a different client (e.g. the web UI).
+  const initialSeedId = getCurrentEpoch();
+  process.stdout.write(ansi.color(ansi.cyan, "  Fetching seed best score..."));
+  const initialSeedBest = await fetchBestScoreForSeed(
+    opts.contractId, opts.rpcUrl, opts.address, initialSeedId,
+  );
+  if (initialSeedBest > 0) {
+    process.stdout.write(ansi.color(ansi.green, ` ${initialSeedBest}\n`));
+  } else {
+    process.stdout.write(ansi.color(ansi.dim, " none\n"));
+  }
+
   // Epoch tracking
-  let currentEpoch = getCurrentEpoch();
+  let currentEpoch = initialSeedId;
   let epochGamesPlayed = 0;
   let currentSeed: number | null = null;
   let seedRefreshInFlight = false;
@@ -111,7 +124,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   let bestScore = 0;
   let bestTape: Uint8Array | null = null;
   let bestConfig: AutopilotConfig = Autopilot.defaults();
-  let lastSubmittedScore = 0;
+  let lastSubmittedScore = initialSeedBest; // start from on-chain best so we don't submit worse
 
   // Settle tracking: when a new best is found, record the timestamp.
   // Don't submit until SETTLE_DELAY_MS has elapsed (score may still be climbing).
@@ -146,9 +159,10 @@ export async function runCommand(opts: RunOptions): Promise<void> {
         case "game-complete":
           totalGamesPlayed++;
           epochGamesPlayed++;
-          workerBests[msg.workerId] = msg.workerBest;
           break;
         case "new-best":
+          // Discard tapes from a stale epoch (worker hadn't received reset-best yet)
+          if (msg.seedId !== currentEpoch) break;
           if (msg.score > bestScore) {
             bestScore = msg.score;
             bestTape = msg.tape;
@@ -187,13 +201,13 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     workers.push(worker);
   }
 
-  function resetEpoch(): void {
+  function resetEpoch(onChainSeedBest = 0): void {
     const prevBestScore = bestScore;
     const prevBestConfig = bestConfig;
 
     bestScore = 0;
     bestTape = null;
-    lastSubmittedScore = 0;
+    lastSubmittedScore = onChainSeedBest; // start from on-chain best so we don't submit worse
     epochGamesPlayed = 0;
     epochSubmissions = 0;
     bestScoreFoundAt = 0;
@@ -262,20 +276,34 @@ export async function runCommand(opts: RunOptions): Promise<void> {
 
     // Epoch changed — new seed_id interval
     if (epoch !== currentEpoch) {
-      // Wait for any in-flight submit to drain so we don't miss a late best
-      while (submitting) await new Promise(r => setTimeout(r, 100));
-      // Force-submit any unsubmitted improvement from the old epoch
-      if (bestTape && bestScore > lastSubmittedScore) {
-        await doSubmit(true);
+      // Drain loop: during doSubmit(), workers can still post new-best messages
+      // that update bestScore/bestTape. Keep submitting until no unsubmitted
+      // improvements remain so we never lose a late-arriving high score.
+      for (let drain = 0; drain < 10; drain++) {
+        while (submitting) await new Promise(r => setTimeout(r, 100));
+        if (bestTape && bestScore > lastSubmittedScore) {
+          await doSubmit(true);
+        } else {
+          break;
+        }
       }
       currentEpoch = epoch;
       currentSeed = null; // will be updated once the fetch resolves
-      resetEpoch();
+      resetEpoch(); // reset immediately with 0, then backfill from on-chain
       lastSubmitStatus = ansi.color(ansi.cyan, "new seed_id interval — fetching seed...");
       announceSeedResolution = true;
       // Refresh seed and on-chain score in the background
       void refreshCurrentSeed(true);
       fetchPlayerScore(opts.address, opts.apiUrl).then(info => { onChainBestScore = info.bestScore; });
+      // Fetch this player's on-chain best for the new seed so we don't
+      // submit scores worse than what's already claimed.
+      fetchBestScoreForSeed(opts.contractId, opts.rpcUrl, opts.address, epoch).then(seedBest => {
+        // Only apply if we're still in the same epoch and haven't already
+        // submitted something better this session.
+        if (epoch === currentEpoch && seedBest > lastSubmittedScore) {
+          lastSubmittedScore = seedBest;
+        }
+      });
     }
 
     // Initial/current epoch seed may not be materialized immediately.
