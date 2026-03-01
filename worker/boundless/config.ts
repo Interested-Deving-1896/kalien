@@ -53,6 +53,7 @@ export interface BoundlessConfig {
   // USD-denominated pricing — resolved to wei at submission time via Chainlink ETH/USD feed
   maxPriceUsd: number;
   minPriceUsd: number;
+  topUpBufferBps: number;
   pollIntervalMs: number;
   pollTimeoutMs: number;
   // Auction shape (reverse Dutch auction) — all in seconds (contract uses block.timestamp)
@@ -105,6 +106,11 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
   const minPriceUsd = env.BOUNDLESS_MIN_PRICE_USD
     ? Number.parseFloat(env.BOUNDLESS_MIN_PRICE_USD)
     : 0.0002; // ~1% of max — auction floor
+  const topUpBufferBpsRaw = env.BOUNDLESS_TOP_UP_BUFFER_BPS?.trim();
+  const parsedTopUpBufferBps = topUpBufferBpsRaw ? Number.parseInt(topUpBufferBpsRaw, 10) : NaN;
+  const topUpBufferBps = Number.isFinite(parsedTopUpBufferBps)
+    ? Math.min(10_000, Math.max(0, parsedTopUpBufferBps))
+    : 1_500; // 15%
 
   // Auction shape — reverse Dutch auction from minPrice to maxPrice.
   // All timing values are in SECONDS (the contract uses block.timestamp).
@@ -139,6 +145,7 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     imageId: normalizedImageId as `0x${string}`,
     maxPriceUsd,
     minPriceUsd,
+    topUpBufferBps,
     pollIntervalMs,
     pollTimeoutMs,
     flatPeriodSec,

@@ -1,10 +1,14 @@
 import { Hono } from "hono";
+import { createPublicClient, defineChain, formatEther, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { boundlessMarketAbi } from "../boundless/abi";
 import { resolveBoundlessConfig } from "../boundless/config";
 import { EXPECTED_RULES_DIGEST, EXPECTED_RULESET } from "../constants";
 import { HEALTH_CACHE_CONTROL } from "../cache-control";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { describeProverHealthError, getValidatedProverHealth } from "../prover/client";
+import { safeErrorMessage } from "../utils";
 
 export function createHealthRouter(): Hono<{ Bindings: WorkerEnv }> {
   const router = new Hono<{ Bindings: WorkerEnv }>();
@@ -12,7 +16,8 @@ export function createHealthRouter(): Hono<{ Bindings: WorkerEnv }> {
   router.get("/", async (c) => {
     const coordinator = coordinatorStub(c.env);
     const activeSummary = await coordinator.getActiveJobsSummary();
-    const hasBoundless = resolveBoundlessConfig(c.env) !== null;
+    const boundlessConfig = resolveBoundlessConfig(c.env);
+    const hasBoundless = boundlessConfig !== null;
     const hasVast = Boolean(c.env.PROVER_BASE_URL?.trim());
     const expectedImageIdRaw = c.env.PROVER_EXPECTED_IMAGE_ID?.trim() ?? "";
     const expectedImageId = expectedImageIdRaw.length > 0 ? expectedImageIdRaw : null;
@@ -42,6 +47,84 @@ export function createHealthRouter(): Hono<{ Bindings: WorkerEnv }> {
       prover = {
         status: "degraded",
         error: healthError.message,
+      };
+    }
+
+    let boundlessFunding:
+      | {
+          status: "disabled";
+          mode: null;
+          top_up_buffer_bps: null;
+          attached_value_fallback_enabled: null;
+          requestor_address: null;
+          market_balance_wei: null;
+          market_balance_eth: null;
+          error: null;
+        }
+      | {
+          status: "ok" | "degraded";
+          mode: "market_balance_with_attached_value_fallback";
+          top_up_buffer_bps: number;
+          attached_value_fallback_enabled: true;
+          requestor_address: string;
+          market_balance_wei: string | null;
+          market_balance_eth: string | null;
+          error: string | null;
+        };
+
+    if (!boundlessConfig) {
+      boundlessFunding = {
+        status: "disabled",
+        mode: null,
+        top_up_buffer_bps: null,
+        attached_value_fallback_enabled: null,
+        requestor_address: null,
+        market_balance_wei: null,
+        market_balance_eth: null,
+        error: null,
+      };
+    } else {
+      const requestor = privateKeyToAccount(boundlessConfig.privateKey).address;
+      let marketBalanceWei: string | null = null;
+      let marketBalanceEth: string | null = null;
+      let status: "ok" | "degraded" = "ok";
+      let error: string | null = null;
+
+      try {
+        const chain = defineChain({
+          id: Number(boundlessConfig.chainId),
+          name: `chain-${boundlessConfig.chainId}`,
+          nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+          rpcUrls: { default: { http: [boundlessConfig.rpcUrl] } },
+        });
+
+        const client = createPublicClient({
+          chain,
+          transport: http(boundlessConfig.rpcUrl),
+        });
+
+        const balance = await client.readContract({
+          address: boundlessConfig.marketAddress,
+          abi: boundlessMarketAbi,
+          functionName: "balanceOf",
+          args: [requestor],
+        });
+        marketBalanceWei = balance.toString();
+        marketBalanceEth = formatEther(balance);
+      } catch (err) {
+        status = "degraded";
+        error = safeErrorMessage(err);
+      }
+
+      boundlessFunding = {
+        status,
+        mode: "market_balance_with_attached_value_fallback",
+        top_up_buffer_bps: boundlessConfig.topUpBufferBps,
+        attached_value_fallback_enabled: true,
+        requestor_address: requestor,
+        market_balance_wei: marketBalanceWei,
+        market_balance_eth: marketBalanceEth,
+        error,
       };
     }
 
@@ -76,6 +159,7 @@ export function createHealthRouter(): Hono<{ Bindings: WorkerEnv }> {
         boundless: hasBoundless,
         vast: hasVast,
       },
+      boundless_funding: boundlessFunding,
     });
   });
 

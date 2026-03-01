@@ -1,4 +1,5 @@
 export type ProverBackend = "boundless" | "vast";
+export type BoundlessFundingModeUsed = "market_balance" | "attached_value_fallback";
 
 export interface ProverAttempt {
   index: number; // 0-based attempt index
@@ -12,6 +13,11 @@ export interface ProverAttempt {
   proverJobId: string | null;
   statusUrl: string | null; // "boundless:{requestId}" or Vast.ai job URL
   maxPriceUsd?: number | null; // Boundless: max price offered (USD)
+  minPriceWei?: string | null; // Boundless: min price floor offered in wei
+  maxPriceWei?: string | null; // Boundless: max price cap offered in wei
+  fundingModeUsed?: BoundlessFundingModeUsed | null; // Boundless: selected funding path at submit
+  marketBalanceBeforeWei?: string | null; // Boundless: requestor market balance before top-up/submit
+  autoDepositWei?: string | null; // Boundless: auto-deposit amount used before submit
   actualCostUsd: number | null; // Boundless: actual settlement cost in USD
   lockPriceWei?: string | null; // Boundless: lock price in wei (cached while locked, cleared after payment)
   proverAddress: string | null; // Boundless: on-chain prover address from ProofDelivered event
@@ -312,6 +318,11 @@ export type ProverSubmitResult =
       segmentLimitPo2: number;
       ipfsCid?: string;
       maxPriceUsd?: number;
+      minPriceWei?: string;
+      maxPriceWei?: string;
+      fundingModeUsed?: BoundlessFundingModeUsed;
+      marketBalanceBeforeWei?: string;
+      autoDepositWei?: string;
     }
   | { type: "retry"; message: string }
   | { type: "fatal"; message: string };

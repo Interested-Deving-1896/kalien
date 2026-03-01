@@ -32,7 +32,12 @@ import { fetchEthPriceUsd, usdToWei, weiToUsd } from "../pricing";
 import { buildProofArtifactV4 } from "../../proof-artifact";
 import { parseAndValidateTape } from "../../tape";
 import { DEFAULT_MAX_TAPE_BYTES } from "../../constants";
-import type { ProverPollResult, ProverSubmitResult, ProofResultSummary } from "../../types";
+import type {
+  BoundlessFundingModeUsed,
+  ProverPollResult,
+  ProverSubmitResult,
+  ProofResultSummary,
+} from "../../types";
 import type {
   BoundlessClientConfig,
   BoundlessFulfillmentData,
@@ -87,7 +92,9 @@ export class BoundlessClient {
    * Encodes the tape into GuestEnv V1 msgpack format, uploads to IPFS if
    * needed, builds + signs + submits via a strategy queue: on-chain first
    * (up to 3 attempts), then order stream fallback (up to 3 attempts).
-   * Non-retryable errors break immediately to the next strategy.
+   * Funding first tries market-balance top-up (delta + buffer), then falls
+   * back to attached-value submission if needed.
+   * Each transport strategy attempts up to 3 times.
    *
    * Returns a ProverSubmitResult consumed by the coordinator flow.
    */
@@ -248,6 +255,10 @@ export class BoundlessClient {
       chain,
       transport: http(config.rpcUrl),
     });
+    const publicClient = createPublicClient({
+      chain,
+      transport: http(config.rpcUrl),
+    });
 
     let signature: Hex;
     try {
@@ -264,89 +275,185 @@ export class BoundlessClient {
       };
     }
 
-    // 5. Submit via strategy queue: on-chain first, order stream fallback
-    const strategies = [
-      {
-        name: "on-chain",
-        maxAttempts: 3,
-        fn: () =>
-          walletClient.writeContract({
-            address: config.marketAddress,
-            abi: boundlessMarketAbi,
-            functionName: "submitRequest",
-            args: [proofRequest, signature],
-            value: maxPrice,
-          }),
-      },
-      {
-        name: "order-stream",
-        maxAttempts: 3,
-        fn: async () => {
-          await this.submitToOrderStream(proofRequest, signature, domain);
-        },
-      },
-    ];
-
     const requestIdHex = requestIdToHex(requestId);
-    let successStrategy: string | undefined;
-    let lastError: string | undefined;
-    let lastErrorRetryable = false;
+    const onchainSubmit = (value: bigint) =>
+      walletClient.writeContract({
+        address: config.marketAddress,
+        abi: boundlessMarketAbi,
+        functionName: "submitRequest",
+        args: [proofRequest, signature],
+        value,
+      });
 
-    for (const strategy of strategies) {
-      for (let attempt = 1; attempt <= strategy.maxAttempts; attempt++) {
-        try {
-          await strategy.fn();
-          successStrategy = strategy.name;
-          break;
-        } catch (error) {
-          const msg = safeErrorMessage(error);
-          lastError = `${strategy.name}: ${msg}`;
-          lastErrorRetryable = isRetryableSubmitError(msg);
+    // Funding plans:
+    // 1) market-balance path: delta + buffer top-up (3 attempts)
+    // 2) attached-value fallback: submit with maxPrice attached (3 attempts)
+    const fundingPlans: Array<{
+      mode: BoundlessFundingModeUsed;
+      submitValueWei: bigint;
+      marketBalanceBeforeWei?: bigint;
+      autoDepositWei?: bigint;
+    }> = [];
 
-          if (lastErrorRetryable && attempt < strategy.maxAttempts) {
-            const delaySec = retryDelaySeconds(attempt);
-            console.log(
-              `[boundless] ${strategy.name} attempt ${attempt}/${strategy.maxAttempts} failed (retrying in ${delaySec}s): ${msg}`,
-            );
-            await sleep(delaySec * 1000);
-            continue;
+    let marketFundingError: string | undefined;
+    let marketFundingErrorRetryable = false;
+    let marketFundingPrepared = false;
+    let preparedMarketBalanceBeforeWei: bigint | undefined;
+    let preparedAutoDepositWei: bigint | undefined;
+
+    /* eslint-disable no-await-in-loop */
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const marketBalanceBeforeWei = await publicClient.readContract({
+          address: config.marketAddress,
+          abi: boundlessMarketAbi,
+          functionName: "balanceOf",
+          args: [account.address],
+        });
+
+        let autoDepositWei: bigint | undefined;
+        if (marketBalanceBeforeWei < maxPrice) {
+          const deficitWei = maxPrice - marketBalanceBeforeWei;
+          const bufferWei =
+            config.topUpBufferBps > 0
+              ? (deficitWei * BigInt(config.topUpBufferBps) + 9_999n) / 10_000n
+              : 0n;
+          autoDepositWei = deficitWei + bufferWei;
+
+          if (autoDepositWei > 0n) {
+            await walletClient.writeContract({
+              address: config.marketAddress,
+              abi: boundlessMarketAbi,
+              functionName: "deposit",
+              args: [],
+              value: autoDepositWei,
+            });
           }
-          break; // non-retryable or last attempt — move to next strategy
+        }
+
+        preparedMarketBalanceBeforeWei = marketBalanceBeforeWei;
+        preparedAutoDepositWei = autoDepositWei;
+        marketFundingPrepared = true;
+        break;
+      } catch (error) {
+        const msg = safeErrorMessage(error);
+        marketFundingError = msg;
+        marketFundingErrorRetryable = isRetryableSubmitError(msg);
+        if (attempt < 3) {
+          const delaySec = retryDelaySeconds(attempt);
+          console.log(
+            `[boundless] market-balance funding prep attempt ${attempt}/3 failed (retrying in ${delaySec}s): ${msg}`,
+          );
+          await sleep(delaySec * 1000);
         }
       }
-      if (successStrategy) break;
     }
 
-    if (successStrategy) {
-      const isOffchain = successStrategy === "order-stream";
-      console.log(
-        isOffchain
-          ? "[boundless] submitted via order stream (offchain fallback)"
-          : "[boundless] submitted proof request on-chain",
+    if (marketFundingPrepared) {
+      fundingPlans.push({
+        mode: "market_balance",
+        submitValueWei: 0n,
+        marketBalanceBeforeWei: preparedMarketBalanceBeforeWei,
+        autoDepositWei: preparedAutoDepositWei,
+      });
+    } else {
+      console.log("[boundless] market-balance funding prep exhausted; using attached-value fallback", {
+        requestId: requestIdHex,
+        maxPriceWei: maxPrice.toString(),
+        error: marketFundingError ?? "unknown funding prep error",
+      });
+    }
+
+    fundingPlans.push({
+      mode: "attached_value_fallback",
+      submitValueWei: maxPrice,
+    });
+
+    // Submit via strategy queue for each funding plan:
+    // on-chain first (3 attempts), then off-chain order stream (3 attempts).
+    let lastError: string | undefined;
+    let sawRetryableError = false;
+    for (const fundingPlan of fundingPlans) {
+      const strategies = [
         {
-          requestId: requestIdHex,
-          explorerUrl: this.explorerUrl(requestId),
-          stdinBytes: stdinBytes.length,
-          inputType: inputType === 1 ? "url" : "inline",
-          maxPriceWei: maxPrice.toString(),
-          maxPriceUsd: config.maxPriceUsd,
-          chainId: config.chainId.toString(),
+          name: "on-chain",
+          maxAttempts: 3,
+          fn: () => onchainSubmit(fundingPlan.submitValueWei),
         },
-      );
+        {
+          name: "order-stream",
+          maxAttempts: 3,
+          fn: async () => {
+            await this.submitToOrderStream(proofRequest, signature, domain);
+          },
+        },
+      ] as const;
 
-      return {
-        type: "success",
-        jobId: requestIdHex,
-        statusUrl: `boundless:${requestIdHex}`,
-        segmentLimitPo2: 0,
-        ipfsCid,
-        maxPriceUsd: config.maxPriceUsd,
-      };
+      for (const strategy of strategies) {
+        for (let attempt = 1; attempt <= strategy.maxAttempts; attempt++) {
+          try {
+            await strategy.fn();
+            const isOffchain = strategy.name === "order-stream";
+            console.log(
+              isOffchain
+                ? "[boundless] submitted via order stream (offchain fallback)"
+                : "[boundless] submitted proof request on-chain",
+              {
+                requestId: requestIdHex,
+                explorerUrl: this.explorerUrl(requestId),
+                stdinBytes: stdinBytes.length,
+                inputType: inputType === 1 ? "url" : "inline",
+                minPriceWei: minPrice.toString(),
+                maxPriceWei: maxPrice.toString(),
+                maxPriceUsd: config.maxPriceUsd,
+                fundingMode: fundingPlan.mode,
+                marketBalanceBeforeWei: fundingPlan.marketBalanceBeforeWei?.toString() ?? null,
+                autoDepositWei: fundingPlan.autoDepositWei?.toString() ?? null,
+                submitValueWei: fundingPlan.submitValueWei.toString(),
+                chainId: config.chainId.toString(),
+              },
+            );
+
+            return {
+              type: "success",
+              jobId: requestIdHex,
+              statusUrl: `boundless:${requestIdHex}`,
+              segmentLimitPo2: 0,
+              ipfsCid,
+              maxPriceUsd: config.maxPriceUsd,
+              minPriceWei: minPrice.toString(),
+              maxPriceWei: maxPrice.toString(),
+              fundingModeUsed: fundingPlan.mode,
+              marketBalanceBeforeWei: fundingPlan.marketBalanceBeforeWei?.toString(),
+              autoDepositWei: fundingPlan.autoDepositWei?.toString(),
+            };
+          } catch (error) {
+            const msg = safeErrorMessage(error);
+            lastError = `${fundingPlan.mode}/${strategy.name}: ${msg}`;
+            const retryable = isRetryableSubmitError(msg);
+            sawRetryableError = sawRetryableError || retryable;
+
+            if (attempt < strategy.maxAttempts) {
+              const delaySec = retryDelaySeconds(attempt);
+              console.log(
+                `[boundless] ${fundingPlan.mode} ${strategy.name} attempt ${attempt}/${strategy.maxAttempts} failed (retrying in ${delaySec}s): ${msg}`,
+              );
+              await sleep(delaySec * 1000);
+            }
+          }
+        }
+      }
+    }
+    /* eslint-enable no-await-in-loop */
+
+    if (!marketFundingPrepared && marketFundingError) {
+      lastError = `${lastError ?? "submission failed"} (market funding prep exhausted: ${marketFundingError})`;
+      sawRetryableError = sawRetryableError || marketFundingErrorRetryable;
     }
 
-    // Both strategies exhausted
+    // All funding + transport strategies exhausted
     return {
-      type: lastErrorRetryable ? "retry" : "fatal",
+      type: sawRetryableError ? "retry" : "fatal",
       message: `all submission strategies failed: ${lastError}`,
     };
   }

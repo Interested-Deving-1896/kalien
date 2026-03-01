@@ -31,6 +31,7 @@ PROVER_ACCESS_CLIENT_SECRET=
 # in wrangler.jsonc "vars". Defaults target Base Mainnet (chain 8453).
 # Set BOUNDLESS_CHAIN_ID in wrangler.jsonc to use a testnet instead.
 # BOUNDLESS_PRIVATE_KEY=0x...
+# BOUNDLESS_TOP_UP_BUFFER_BPS=1500
 
 # ── IPFS (Pinata) ────────────────────────────────────────────────────────
 # Used by Boundless to upload stdin input when inline data exceeds order
