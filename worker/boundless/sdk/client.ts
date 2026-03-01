@@ -9,9 +9,8 @@
  *   2. Upload to IPFS (Pinata) if stdin > MAX_INLINE_STDIN_BYTES
  *   3. Build a ProofRequest with a reverse Dutch auction offer
  *   4. Sign the request with EIP-712
- *   5. Submit on-chain (createWalletClient.writeContract)
- *   6. Also POST to the off-chain order stream so provers discover it faster
- *   7. Poll `requestIsFulfilled` until true, then fetch the ProofDelivered event
+ *   5. Submit via strategy queue: on-chain first (3 attempts), order stream fallback (3 attempts)
+ *   6. Poll `requestIsFulfilled` until true, then fetch the ProofDelivered event
  */
 
 import {
@@ -24,7 +23,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { safeErrorMessage, sleep } from "../../utils";
+import { retryDelaySeconds, safeErrorMessage, sleep } from "../../utils";
 import { BOUNDLESS_INDEXER_URLS, MAX_INLINE_STDIN_BYTES } from "../config";
 import { boundlessMarketAbi, eip712Types } from "../abi";
 import { encodeStdin } from "../stdin";
@@ -63,6 +62,16 @@ const PREDICATE_TYPE_NAMES: Record<number, string> = {
 };
 const INPUT_TYPE_NAMES: Record<number, string> = { 0: "Inline", 1: "Url" };
 
+function isRetryableSubmitError(msg: string): boolean {
+  return (
+    msg.includes("nonce") ||
+    msg.includes("timeout") ||
+    msg.includes("429") ||
+    msg.includes("502") ||
+    msg.includes("503")
+  );
+}
+
 export class BoundlessClient {
   private readonly config: BoundlessClientConfig;
 
@@ -76,8 +85,9 @@ export class BoundlessClient {
    * Submit a tape to Boundless for proving.
    *
    * Encodes the tape into GuestEnv V1 msgpack format, uploads to IPFS if
-   * needed, builds + signs + submits the on-chain ProofRequest, and also
-   * posts to the order stream for faster prover discovery.
+   * needed, builds + signs + submits via a strategy queue: on-chain first
+   * (up to 3 attempts), then order stream fallback (up to 3 attempts).
+   * Non-retryable errors break immediately to the next strategy.
    *
    * Returns a ProverSubmitResult consumed by the coordinator flow.
    */
@@ -254,61 +264,90 @@ export class BoundlessClient {
       };
     }
 
-    // 5. Submit on-chain
-    let txHash: Hex;
-    try {
-      txHash = await walletClient.writeContract({
-        address: config.marketAddress,
-        abi: boundlessMarketAbi,
-        functionName: "submitRequest",
-        args: [proofRequest, signature],
-        value: maxPrice,
-      });
-    } catch (error) {
-      const msg = safeErrorMessage(error);
-      const retryable =
-        msg.includes("nonce") ||
-        msg.includes("timeout") ||
-        msg.includes("429") ||
-        msg.includes("502") ||
-        msg.includes("503");
+    // 5. Submit via strategy queue: on-chain first, order stream fallback
+    const strategies = [
+      {
+        name: "on-chain",
+        maxAttempts: 3,
+        fn: () =>
+          walletClient.writeContract({
+            address: config.marketAddress,
+            abi: boundlessMarketAbi,
+            functionName: "submitRequest",
+            args: [proofRequest, signature],
+            value: maxPrice,
+          }),
+      },
+      {
+        name: "order-stream",
+        maxAttempts: 3,
+        fn: async () => {
+          await this.submitToOrderStream(proofRequest, signature, domain);
+        },
+      },
+    ];
+
+    const requestIdHex = requestIdToHex(requestId);
+    let successStrategy: string | undefined;
+    let lastError: string | undefined;
+    let lastErrorRetryable = false;
+
+    for (const strategy of strategies) {
+      for (let attempt = 1; attempt <= strategy.maxAttempts; attempt++) {
+        try {
+          await strategy.fn();
+          successStrategy = strategy.name;
+          break;
+        } catch (error) {
+          const msg = safeErrorMessage(error);
+          lastError = `${strategy.name}: ${msg}`;
+          lastErrorRetryable = isRetryableSubmitError(msg);
+
+          if (lastErrorRetryable && attempt < strategy.maxAttempts) {
+            const delaySec = retryDelaySeconds(attempt);
+            console.log(
+              `[boundless] ${strategy.name} attempt ${attempt}/${strategy.maxAttempts} failed (retrying in ${delaySec}s): ${msg}`,
+            );
+            await sleep(delaySec * 1000);
+            continue;
+          }
+          break; // non-retryable or last attempt — move to next strategy
+        }
+      }
+      if (successStrategy) break;
+    }
+
+    if (successStrategy) {
+      const isOffchain = successStrategy === "order-stream";
+      console.log(
+        isOffchain
+          ? "[boundless] submitted via order stream (offchain fallback)"
+          : "[boundless] submitted proof request on-chain",
+        {
+          requestId: requestIdHex,
+          explorerUrl: this.explorerUrl(requestId),
+          stdinBytes: stdinBytes.length,
+          inputType: inputType === 1 ? "url" : "inline",
+          maxPriceWei: maxPrice.toString(),
+          maxPriceUsd: config.maxPriceUsd,
+          chainId: config.chainId.toString(),
+        },
+      );
+
       return {
-        type: retryable ? "retry" : "fatal",
-        message: `failed submitting proof request on-chain: ${msg}`,
+        type: "success",
+        jobId: requestIdHex,
+        statusUrl: `boundless:${requestIdHex}`,
+        segmentLimitPo2: 0,
+        ipfsCid,
+        maxPriceUsd: config.maxPriceUsd,
       };
     }
 
-    const requestIdHex = requestIdToHex(requestId);
-    console.log("[boundless] submitted proof request on-chain", {
-      requestId: requestIdHex,
-      explorerUrl: this.explorerUrl(requestId),
-      txHash,
-      stdinBytes: stdinBytes.length,
-      inputType: inputType === 1 ? "url" : "inline",
-      maxPriceWei: maxPrice.toString(),
-      maxPriceUsd: config.maxPriceUsd,
-      predicateData: predicateDataHex,
-      chainId: config.chainId.toString(),
-    });
-
-    // 6. Submit to off-chain order stream (best-effort)
-    try {
-      await this.submitToOrderStream(proofRequest, signature, domain);
-      console.log("[boundless] submitted to order stream");
-    } catch (error) {
-      console.log(
-        "[boundless] order stream submission failed (non-fatal):",
-        safeErrorMessage(error),
-      );
-    }
-
+    // Both strategies exhausted
     return {
-      type: "success",
-      jobId: requestIdHex,
-      statusUrl: `boundless:${requestIdHex}`,
-      segmentLimitPo2: 0,
-      ipfsCid,
-      maxPriceUsd: config.maxPriceUsd,
+      type: lastErrorRetryable ? "retry" : "fatal",
+      message: `all submission strategies failed: ${lastError}`,
     };
   }
 
