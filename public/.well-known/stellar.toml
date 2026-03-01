@@ -1,14 +1,9 @@
 # KALIEN Stellar domain metadata (SEP-0001)
 # Endpoint: https://kalien.xyz/.well-known/stellar.toml
-#
-# When mainnet is launched, update:
-# 1) NETWORK_PASSPHRASE
-# 2) ACCOUNTS and [[CURRENCIES]].issuer
-# 3) [[CURRENCIES]].status
 
 VERSION = "2.7.0"
-NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
-ACCOUNTS = ["GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB"]
+NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015"
+ACCOUNTS = ["GB53F5Y2DC5ZNRVMTVNUECM5DVTGY2SFJMHE3DWO53CGL62OXKKALIEN"]
 
 [DOCUMENTATION]
 ORG_NAME = "KALIEN"
@@ -24,13 +19,13 @@ email = "support@kalien.xyz"
 
 [[CURRENCIES]]
 code = "KALIEN"
-issuer = "GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB"
+issuer = "GB53F5Y2DC5ZNRVMTVNUECM5DVTGY2SFJMHE3DWO53CGL62OXKKALIEN"
 name = "KALIEN"
-image = "https://pub-b2eaaee2bbe74d70820bacb7298958f5.r2.dev/kalien.png"
+image = "https://kalien.xyz/kalien-token.jpg"
 desc = "Reward token minted for score improvements proven on-chain by the KALIEN score contract."
-status = "test"
+status = "live"
 display_decimals = 7
 is_asset_anchored = false
 anchor_asset_type = "crypto"
 is_unlimited = true
-conditions = "Testnet asset for gameplay rewards. Not redeemable for fiat."
+conditions = "Minted as rewards for ZK-proven Asteroids gameplay. Not redeemable for fiat."
