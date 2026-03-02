@@ -20,9 +20,12 @@ export const DEFAULT_PROVER_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_POLL_BUDGET_MS = 45_000;
 export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
 export const OPPORTUNISTIC_POLL_STALE_MS = 5_000;
-// End-to-end job lifetime cap in the gateway (includes queue + polling + storage).
-// Keep slightly above the prover timeout to allow status propagation + artifact writes.
-export const DEFAULT_MAX_JOB_WALL_TIME_MS = 6 * 60 * 60_000; // 6 hours
+// End-to-end job lifetime cap in the gateway (queue + proving + storage writes).
+// Also used as the max time a queued VAST fallback job can wait for a slot.
+export const DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS = 65 * 60_000; // 65 minutes
+// Max time a single active prover run should occupy the slot in the gateway.
+// Keep slightly above the prover API timeout so status propagation can finish.
+export const DEFAULT_MAX_PROVER_RUN_TIME_MS = 11 * 60_000; // 11 minutes
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
 export const MAX_TOTAL_PROVER_ATTEMPTS = 4; // 2 Boundless + 2 Vast.ai interleaved

@@ -1,5 +1,6 @@
 export type ProverBackend = "boundless" | "vast";
 export type BoundlessFundingModeUsed = "market_balance" | "attached_value_fallback";
+export type ProofTimeoutPhase = "vast_wait" | "prover_run" | "total_wall";
 
 export interface ProverAttempt {
   index: number; // 0-based attempt index
@@ -113,6 +114,8 @@ export interface QueueTracking {
   lastAttemptAt: string | null;
   lastError: string | null;
   nextRetryAt: string | null;
+  waitStartedAt?: string | null;
+  waitElapsedMs?: number | null;
 }
 
 export interface ProverTracking {
@@ -123,6 +126,8 @@ export interface ProverTracking {
   lastPolledAt: string | null;
   pollingErrors: number;
   ipfsCid?: string | null;
+  runStartedAt?: string | null;
+  runElapsedMs?: number | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -152,6 +157,8 @@ export interface ProofJobRecord {
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
+  errorCode?: string | null;
+  timeoutPhase?: ProofTimeoutPhase | null;
 }
 
 export type LeaderboardWindow = "10m" | "day" | "all";
@@ -243,6 +250,8 @@ export interface PublicProofJob {
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
+  errorCode?: string | null;
+  timeoutPhase?: ProofTimeoutPhase | null;
 }
 
 export interface CreateJobAccepted {

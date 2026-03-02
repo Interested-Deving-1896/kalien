@@ -32,6 +32,8 @@ export interface QueueTracking {
   lastAttemptAt: string | null;
   lastError: string | null;
   nextRetryAt: string | null;
+  waitStartedAt?: string | null;
+  waitElapsedMs?: number | null;
 }
 
 export type ProverBackend = "boundless" | "vast";
@@ -72,6 +74,8 @@ export interface ProverTracking {
   lastPolledAt: string | null;
   pollingErrors: number;
   ipfsCid: string | null;
+  runStartedAt?: string | null;
+  runElapsedMs?: number | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -128,6 +132,8 @@ export interface ProofJobPublic {
   result: ProofResultInfo | null;
   claim: ClaimTracking;
   error: string | null;
+  errorCode?: string | null;
+  timeoutPhase?: "vast_wait" | "prover_run" | "total_wall" | null;
   proverAttempts: ProverAttempt[];
   claimAttempts: ClaimAttempt[];
 }
@@ -303,6 +309,21 @@ export async function listProofJobs(
 export async function retryFailedClaim(jobId: string): Promise<GetProofJobResponse> {
   const response = await fetchWithTimeout(
     `/api/proofs/jobs/${jobId}/retry-claim`,
+    { method: "POST" },
+    API_TIMEOUT_GET_PROOF_MS,
+  );
+  if (!response.ok) throw await parseError(response);
+  return parseJson<GetProofJobResponse>(response);
+}
+
+export async function retryFailedProof(
+  jobId: string,
+  backend: "auto" | "boundless" | "vast" = "auto",
+): Promise<GetProofJobResponse> {
+  const params = new URLSearchParams();
+  params.set("backend", backend);
+  const response = await fetchWithTimeout(
+    `/api/proofs/jobs/${jobId}/retry-proof?${params.toString()}`,
     { method: "POST" },
     API_TIMEOUT_GET_PROOF_MS,
   );
