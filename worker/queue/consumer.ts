@@ -46,6 +46,121 @@ function journalRawHex(journal: ProofJournal): string {
     .join("");
 }
 
+function readSupersedeInputs(job: ProofJobRecord): {
+  claimantAddress: string;
+  seedId: number;
+  score: number;
+} | null {
+  const claimantAddress = job.claim?.claimantAddress;
+  if (typeof claimantAddress !== "string" || claimantAddress.length === 0) {
+    return null;
+  }
+
+  const seedId = job.tape?.metadata?.seedId;
+  const score = job.tape?.metadata?.finalScore;
+  if (
+    typeof seedId !== "number" ||
+    !Number.isFinite(seedId) ||
+    typeof score !== "number" ||
+    !Number.isFinite(score)
+  ) {
+    return null;
+  }
+
+  return {
+    claimantAddress,
+    seedId: seedId >>> 0,
+    score: score >>> 0,
+  };
+}
+
+async function findSupersedingClaimedJob(
+  coordinator: ReturnType<typeof coordinatorStub>,
+  job: ProofJobRecord,
+): Promise<ProofJobRecord | null> {
+  const inputs = readSupersedeInputs(job);
+  if (!inputs) {
+    return null;
+  }
+
+  const { jobs: claimantJobs } = await coordinator.listJobsForClaimant(
+    inputs.claimantAddress,
+    100,
+    0,
+  );
+  let winner: ProofJobRecord | null = null;
+  for (const candidate of claimantJobs) {
+    if (candidate.jobId === job.jobId) continue;
+    const candidateSeedIdRaw = candidate.tape?.metadata?.seedId;
+    if (typeof candidateSeedIdRaw !== "number" || !Number.isFinite(candidateSeedIdRaw)) continue;
+    const candidateSeedId = candidateSeedIdRaw >>> 0;
+    if (candidateSeedId !== inputs.seedId) continue;
+    if (candidate.claim?.status !== "succeeded") continue;
+    const candidateScoreRaw = candidate.tape?.metadata?.finalScore;
+    if (typeof candidateScoreRaw !== "number" || !Number.isFinite(candidateScoreRaw)) continue;
+    const candidateScore = candidateScoreRaw >>> 0;
+    if (candidateScore < inputs.score) continue;
+    const winnerScoreRaw = winner?.tape?.metadata?.finalScore;
+    const winnerScore =
+      typeof winnerScoreRaw === "number" && Number.isFinite(winnerScoreRaw)
+        ? winnerScoreRaw >>> 0
+        : -1;
+    if (!winner || candidateScore > winnerScore) {
+      winner = candidate;
+    }
+  }
+
+  return winner;
+}
+
+async function maybeSkipSupersededProofSubmission(
+  coordinator: ReturnType<typeof coordinatorStub>,
+  jobId: string,
+  job: ProofJobRecord,
+  message: Message<ProofQueueMessage>,
+): Promise<boolean> {
+  const inputs = readSupersedeInputs(job);
+  if (!inputs) {
+    return false;
+  }
+
+  let supersedingJob: ProofJobRecord | null = null;
+  try {
+    supersedingJob = await findSupersedingClaimedJob(coordinator, job);
+  } catch (error) {
+    console.warn(
+      `[proof-queue] failed supersede precheck for ${jobId}: ${safeErrorMessage(error)}`,
+    );
+    return false;
+  }
+
+  if (!supersedingJob) {
+    return false;
+  }
+
+  const winnerScoreRaw = supersedingJob.tape?.metadata?.finalScore;
+  const winnerScore =
+    typeof winnerScoreRaw === "number" && Number.isFinite(winnerScoreRaw)
+      ? winnerScoreRaw >>> 0
+      : 0;
+  console.log("[proof-queue] skipping prover submission — superseded by claimed score", {
+    jobId,
+    seedId: inputs.seedId,
+    score: inputs.score,
+    supersedingJobId: supersedingJob.jobId,
+    supersedingScore: winnerScore,
+  });
+  await coordinator.markFailed(
+    jobId,
+    `proof skipped: superseded by claimed score ${winnerScore} for seed_id ${inputs.seedId}`,
+    {
+      errorCode: "superseded_by_higher_score",
+    },
+  );
+  message.ack();
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Shared pre-submission checks
 // ---------------------------------------------------------------------------
@@ -104,6 +219,10 @@ async function prepareForSubmission(
   // beginQueueAttempt ensured the alarm is running. Just ack.
   if (startedJob.prover.jobId) {
     message.ack();
+    return null;
+  }
+
+  if (await maybeSkipSupersededProofSubmission(coordinator, jobId, startedJob, message)) {
     return null;
   }
 
@@ -330,6 +449,10 @@ async function processVastMessage(
     const job = await coordinator.getJob(payload.jobId);
     if (!job || isTerminalProofStatus(job.status)) {
       message.ack();
+      return;
+    }
+
+    if (await maybeSkipSupersededProofSubmission(coordinator, payload.jobId, job, message)) {
       return;
     }
 

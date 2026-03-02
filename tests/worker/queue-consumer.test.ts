@@ -196,6 +196,59 @@ describe("handleQueueBatch (Boundless)", () => {
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
+  it("skips proof submission when a higher score is already claimed for the same seed_id", async () => {
+    const claimant = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const coordinator = makeCoordinator({
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100, seedId: 1 },
+        },
+        prover: { jobId: null },
+        claim: { claimantAddress: claimant },
+        createdAt: new Date().toISOString(),
+      }),
+      listJobsForClaimant: async () => ({
+        jobs: [
+          {
+            jobId: "job-winner",
+            tape: { metadata: { finalScore: 150, seedId: 1 } },
+            claim: { status: "succeeded" },
+          },
+        ],
+        total: 1,
+      }),
+      markFailed: async () => null,
+    });
+    let tapeReads = 0;
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      PROOF_ARTIFACTS: {
+        get: async () => {
+          tapeReads += 1;
+          return {
+            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+          };
+        },
+      },
+    });
+    await handleQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    expect(tapeReads).toBe(0);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+      args: unknown[];
+    }>;
+    const failedCall = calls.find((c) => c.method === "markFailed");
+    expect(failedCall).toBeDefined();
+    expect(String(failedCall!.args[1])).toContain("superseded by claimed score");
+    expect(calls.some((c) => c.method === "markProverAccepted")).toBe(false);
+    expect(calls.some((c) => c.method === "markDispatchFailedAndTryNextBackend")).toBe(false);
+  });
+
   it("marks prover accepted (not succeeded) on successful boundless submission", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
@@ -407,6 +460,46 @@ describe("handleVastQueueBatch (VastAI)", () => {
       method: string;
     }>;
     expect(calls.some((c) => c.method === "markRetry")).toBe(true);
+  });
+
+  it("skips waiting for vast slot when a higher score is already claimed for the same seed_id", async () => {
+    const claimant = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => true,
+      getJob: async () => ({
+        jobId: "job-1",
+        status: "queued",
+        createdAt: new Date().toISOString(),
+        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        claim: { claimantAddress: claimant },
+      }),
+      listJobsForClaimant: async () => ({
+        jobs: [
+          {
+            jobId: "job-winner",
+            tape: { metadata: { finalScore: 150, seedId: 1 } },
+            claim: { status: "succeeded" },
+          },
+        ],
+        total: 1,
+      }),
+      markFailed: async () => null,
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    await handleVastQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    expect((msg as unknown as { _retried: boolean })._retried).toBe(false);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+      args: unknown[];
+    }>;
+    const failedCall = calls.find((c) => c.method === "markFailed");
+    expect(failedCall).toBeDefined();
+    expect(String(failedCall!.args[1])).toContain("superseded by claimed score");
+    expect(calls.some((c) => c.method === "markRetry")).toBe(false);
   });
 
   it("recovers stale vast slot before retrying queued job", async () => {
