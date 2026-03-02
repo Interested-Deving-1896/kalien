@@ -3,7 +3,7 @@
 #
 # Quick on-chain verification of existing Groth16 proof fixtures.
 # No deployment, no prover needed — just reads fixture files and calls
-# the RISC Zero router's `verify` on testnet (read-only, no tx).
+# the RISC Zero verifier's `verify` on testnet (read-only, no tx).
 #
 # Usage:
 #   ./scripts/verify-proofs.sh
@@ -61,7 +61,7 @@ verify_fixture() {
   echo "  Image ID: $image_id_hex"
   echo "  Journal digest: $journal_digest_hex"
 
-  # Call router verify (read-only, --send=no)
+  # Call verifier verify (read-only, --send=no)
   TOTAL=$((TOTAL + 1))
   local result
   result=$(stellar contract invoke \

@@ -11,7 +11,7 @@ Scripts for fixture verification, fixture regeneration, and testnet deployment.
 ## Scripts
 
 - `verify-proofs.sh`
-  - Verifies existing Groth16 fixtures against the router (read-only invocation).
+  - Verifies existing Groth16 fixtures against the verifier (read-only invocation).
 - `regenerate-proofs.sh [prover-url]`
   - Rebuilds fixture proofs from tapes and re-verifies them on-chain.
 - `deploy-and-test.sh`

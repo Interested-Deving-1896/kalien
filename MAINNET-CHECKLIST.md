@@ -46,9 +46,9 @@ This is the active, execution-oriented checklist for current architecture.
 ## 4. Contract + Token Readiness
 
 - [ ] Create/use a true mainnet contract deploy path (not testnet-default scripts/config).
-- [ ] Confirm and pin mainnet RISC0 router/verifier addresses.
+- [ ] Confirm and pin mainnet RISC0 verifier addresses.
 - [ ] Deploy mainnet SAC `KALIEN`; record canonical `TOKEN_ID`.
-- [ ] Deploy score contract with correct router/image/token IDs; record canonical contract ID.
+- [ ] Deploy score contract with correct verifier/image/token IDs; record canonical contract ID.
 - [ ] Transfer token admin to score contract and verify mint authority works.
 - [ ] Move admin control to multisig/cold custody and document emergency admin operations.
 - [ ] Finalize and document token governance/supply policy.

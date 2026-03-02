@@ -3,12 +3,12 @@
 #
 # Regenerate mintable Groth16 proof fixtures from source tapes.
 # The prover is single-flight, so tapes are submitted sequentially.
-# Each generated proof is verified on-chain via the router.
+# Each generated proof is verified on-chain via the RISC Zero verifier.
 #
 # Usage:
 #   ./scripts/regenerate-proofs.sh [prover-url]
 #   ./scripts/regenerate-proofs.sh
-#   ./scripts/regenerate-proofs.sh https://<vast-host>:<port>
+#   ./scripts/regenerate-proofs.sh https://<prover-host>:<port>
 #
 # Prerequisites:
 #   - `bun` installed
@@ -45,7 +45,7 @@ Defaults:
 
 Examples:
   ./scripts/regenerate-proofs.sh
-  ./scripts/regenerate-proofs.sh https://<vast-host>:<port>
+  ./scripts/regenerate-proofs.sh https://<prover-host>:<port>
   ./scripts/regenerate-proofs.sh --seed-id 0 --claimant GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
 USAGE_EOF
 }

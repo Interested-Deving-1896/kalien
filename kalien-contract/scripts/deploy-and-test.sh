@@ -5,9 +5,9 @@
 # Deploys contracts, submits proof fixtures via the mock verifier path,
 # and verifies token minting + replay protection.
 #
-# Uses the mock verifier (registered in the RISC Zero router) to generate
-# valid seals without requiring Groth16 proof compatibility. This tests
-# the full contract logic: auth, journal parsing, replay protection, minting.
+# Uses the mock verifier to generate valid seals without requiring Groth16
+# proof compatibility. This tests the full contract logic: auth, journal
+# parsing, replay protection, minting.
 #
 # Prerequisites:
 #   - `stellar` CLI v25+
@@ -297,15 +297,15 @@ test_read_functions() {
   img_result=$(echo "$img_result" | tr -d '"')
   assert_eq "image_id matches fixture" "${IMAGE_ID_HEX}" "$img_result"
 
-  local router_result
-  router_result=$(stellar contract invoke -q \
+  local verifier_result
+  verifier_result=$(stellar contract invoke -q \
     --id "$SCORE_CONTRACT_ID" \
     --source "$DEPLOYER_NAME" \
     --network "$NETWORK" \
     -- \
     verifier_id 2>&1) || true
-  router_result=$(echo "$router_result" | tr -d '"')
-  assert_eq "verifier_id matches" "$RISC0_VERIFIER" "$router_result"
+  verifier_result=$(echo "$verifier_result" | tr -d '"')
+  assert_eq "verifier_id matches" "$RISC0_VERIFIER" "$verifier_result"
 
   local token_result
   token_result=$(stellar contract invoke -q \
