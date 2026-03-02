@@ -383,7 +383,7 @@ where
 
     for (idx, run) in order.into_iter().take(count).enumerate() {
         let rank = idx + 1;
-        let safe_bot = run.metrics.bot_id.replace('_', "-");
+        let safe_bot = sanitize_filename_component(&run.metrics.bot_id);
         let base = format!(
             "rank{rank:02}-{safe_bot}-seed{:08x}-score{}-frames{}",
             run.metrics.seed, run.metrics.final_score, run.metrics.frame_count
@@ -442,9 +442,9 @@ fn write_runs_csv(path: &Path, rows: &[RunRecord]) -> Result<()> {
     for row in rows {
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            row.bot_id,
-            row.bot_fingerprint,
-            row.seed_hex,
+            csv_escape(&row.bot_id),
+            csv_escape(&row.bot_fingerprint),
+            csv_escape(&row.seed_hex),
             row.seed,
             row.frame_count,
             row.final_score,
@@ -469,8 +469,8 @@ fn write_rankings_csv(path: &Path, rows: &[BotAggregate]) -> Result<()> {
         csv.push_str(&format!(
             "{},{},{},{},{:.2},{},{:.2},{},{:.2},{},{:.4},{:.4},{:.2},{:.2},{:.2},{:.2}\n",
             idx + 1,
-            row.bot_id,
-            row.bot_fingerprint,
+            csv_escape(&row.bot_id),
+            csv_escape(&row.bot_fingerprint),
             row.runs,
             row.avg_score,
             row.max_score,
@@ -487,4 +487,29 @@ fn write_rankings_csv(path: &Path, rows: &[BotAggregate]) -> Result<()> {
         ));
     }
     fs::write(path, csv).with_context(|| format!("failed writing {}", path.display()))
+}
+
+fn sanitize_filename_component(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "bot".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }

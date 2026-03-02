@@ -167,9 +167,10 @@ fn main() -> Result<()> {
             let seed = parse_seed(&seed)?;
             let artifact = run_bot(&bot, seed, max_frames)?;
             let output_path = output.unwrap_or_else(|| {
+                let safe_bot = sanitize_filename_component(&bot);
                 PathBuf::from(format!(
                     "checkpoints/{}-{}-score{}-frames{}.tape",
-                    bot,
+                    safe_bot,
                     seed_to_hex(seed).replace("0x", "seed"),
                     artifact.metrics.final_score,
                     artifact.metrics.frame_count
@@ -467,6 +468,23 @@ fn resolve_seeds(
         cur = cur.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     }
     Ok(out)
+}
+
+fn sanitize_filename_component(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "bot".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn timestamp_suffix() -> String {
