@@ -259,14 +259,6 @@ export interface CreateJobAccepted {
   job: ProofJobRecord;
 }
 
-export interface CreateJobRejected {
-  accepted: false;
-  message: string;
-  activeJob: ProofJobRecord;
-}
-
-export type CreateJobResult = CreateJobAccepted | CreateJobRejected;
-
 export interface ProverCreateJobResponse {
   success: boolean;
   job_id: string;

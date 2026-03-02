@@ -66,7 +66,7 @@ export function createHealthRouter(): Hono<{ Bindings: WorkerEnv }> {
           mode: "market_balance_with_attached_value_fallback";
           top_up_buffer_bps: number;
           attached_value_fallback_enabled: true;
-          requestor_address: string;
+          requestor_address: string | null;
           market_balance_wei: string | null;
           market_balance_eth: string | null;
           error: string | null;
@@ -84,36 +84,45 @@ export function createHealthRouter(): Hono<{ Bindings: WorkerEnv }> {
         error: null,
       };
     } else {
-      const requestor = privateKeyToAccount(boundlessConfig.privateKey).address;
+      let requestor: `0x${string}` | null = null;
       let marketBalanceWei: string | null = null;
       let marketBalanceEth: string | null = null;
       let status: "ok" | "degraded" = "ok";
       let error: string | null = null;
 
       try {
-        const chain = defineChain({
-          id: Number(boundlessConfig.chainId),
-          name: `chain-${boundlessConfig.chainId}`,
-          nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-          rpcUrls: { default: { http: [boundlessConfig.rpcUrl] } },
-        });
-
-        const client = createPublicClient({
-          chain,
-          transport: http(boundlessConfig.rpcUrl),
-        });
-
-        const balance = await client.readContract({
-          address: boundlessConfig.marketAddress,
-          abi: boundlessMarketAbi,
-          functionName: "balanceOf",
-          args: [requestor],
-        });
-        marketBalanceWei = balance.toString();
-        marketBalanceEth = formatEther(balance);
+        requestor = privateKeyToAccount(boundlessConfig.privateKey).address;
       } catch (err) {
         status = "degraded";
-        error = safeErrorMessage(err);
+        error = `invalid BOUNDLESS_PRIVATE_KEY: ${safeErrorMessage(err)}`;
+      }
+
+      if (!error && requestor) {
+        try {
+          const chain = defineChain({
+            id: Number(boundlessConfig.chainId),
+            name: `chain-${boundlessConfig.chainId}`,
+            nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+            rpcUrls: { default: { http: [boundlessConfig.rpcUrl] } },
+          });
+
+          const client = createPublicClient({
+            chain,
+            transport: http(boundlessConfig.rpcUrl),
+          });
+
+          const balance = await client.readContract({
+            address: boundlessConfig.marketAddress,
+            abi: boundlessMarketAbi,
+            functionName: "balanceOf",
+            args: [requestor],
+          });
+          marketBalanceWei = balance.toString();
+          marketBalanceEth = formatEther(balance);
+        } catch (err) {
+          status = "degraded";
+          error = safeErrorMessage(err);
+        }
       }
 
       boundlessFunding = {

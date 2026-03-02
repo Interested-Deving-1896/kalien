@@ -148,13 +148,12 @@ export function ProofJobCard({
 
   // Keep in sync with parent prop updates — only if parent is strictly newer
   // to avoid overwriting local state after a retry API response.
-  if (
-    new Date(initialJob.updatedAt) > new Date(job.updatedAt) &&
-    !claimRetrying &&
-    !proofRetrying
-  ) {
-    setJob(initialJob);
-  }
+  useEffect(() => {
+    if (claimRetrying || proofRetrying) return;
+    if (new Date(initialJob.updatedAt) > new Date(job.updatedAt)) {
+      setJob(initialJob);
+    }
+  }, [initialJob, job.updatedAt, claimRetrying, proofRetrying]);
 
   // Fast-poll this specific job after a manual retry until the target phase settles.
   useEffect(() => {

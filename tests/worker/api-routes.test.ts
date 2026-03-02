@@ -270,6 +270,49 @@ describe("API routes", () => {
     expect(payload.prover.status).toBe("degraded");
   });
 
+  it("GET /health returns degraded boundless funding when private key is malformed", async () => {
+    const response = await requestApi(
+      "/health",
+      undefined,
+      makeEnv({
+        PROVER_BASE_URL: "",
+        BOUNDLESS_RPC_URL: "https://rpc.boundless.test",
+        BOUNDLESS_PRIVATE_KEY: "malformed-private-key",
+        BOUNDLESS_IMAGE_URL: "https://example.com/image",
+        BOUNDLESS_IMAGE_ID: "0x" + "11".repeat(32),
+        __boundlessConfig: {
+          rpcUrl: "https://rpc.boundless.test",
+          privateKey: "0xmalformed-private-key",
+          imageUrl: "https://example.com/image",
+          imageId: ("0x" + "11".repeat(32)) as `0x${string}`,
+          maxPriceUsd: 0.02,
+          minPriceUsd: 0.0002,
+          topUpBufferBps: 1500,
+          pollIntervalMs: 5000,
+          pollTimeoutMs: 60000,
+          flatPeriodSec: 60,
+          rampPeriodSec: 660,
+          lockTimeoutSec: 1740,
+          timeoutSec: 3540,
+          chainId: 8453n,
+          marketAddress: "0xfd152dadc5183870710fe54f939eae3ab9f0fe82" as `0x${string}`,
+          orderStreamUrl: "https://base-mainnet.boundless.network",
+          deploymentBlock: 1n,
+          pinataJwt: null,
+        },
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      boundless_funding: { status: string; error: string | null };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.boundless_funding.status).toBe("degraded");
+    expect(payload.boundless_funding.error).not.toBeNull();
+  });
+
   it("GET /health reports active job summary from coordinator", async () => {
     const response = await requestApi(
       "/health",

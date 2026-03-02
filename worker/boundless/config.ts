@@ -114,7 +114,8 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
 
   // Auction shape — reverse Dutch auction from minPrice to maxPrice.
   // All timing values are in SECONDS (the contract uses block.timestamp).
-  // Defaults: 1m flat → 11m ramp → 18m lock → 30m expiry (after lock) = 60m total
+  // Defaults: 1m flat + 11m ramp + 18m at maxPrice = 29m lock from rampUpStart,
+  // then 30m expiry window for secondary provers = 59m from rampUpStart = 60m total
   const flatPeriodSec = env.BOUNDLESS_FLAT_PERIOD_SEC
     ? Math.max(0, Number.parseInt(env.BOUNDLESS_FLAT_PERIOD_SEC, 10))
     : 60; // 1 minute

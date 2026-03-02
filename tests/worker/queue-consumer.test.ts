@@ -185,7 +185,7 @@ describe("handleQueueBatch (Boundless)", () => {
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
-  it("marks job succeeded on successful boundless submission", async () => {
+  it("marks prover accepted (not succeeded) on successful boundless submission", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -221,6 +221,7 @@ describe("handleQueueBatch (Boundless)", () => {
       method: string;
     }>;
     expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
+    expect(calls.some((c) => c.method === "markSucceeded")).toBe(false);
   });
 
   it("retries when boundless returns retry and attempts not exhausted", async () => {
@@ -474,6 +475,52 @@ describe("handleVastQueueBatch (VastAI)", () => {
     );
     expect(staleFailCall).toBeDefined();
     expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
+  });
+
+  it("does not mark stale vast slot failed when stale job statusUrl is null", async () => {
+    const staleVastJob = {
+      jobId: "job-active-vast",
+      status: "prover_running",
+      createdAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      updatedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      prover: {
+        jobId: "vast-prover-1",
+        statusUrl: null,
+        lastPolledAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      },
+    };
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => true,
+      getActiveVastJob: async () => staleVastJob,
+      kickAlarm: async () => undefined,
+      getJob: async (jobId: string) => {
+        if (jobId === "job-active-vast") {
+          return staleVastJob;
+        }
+        return {
+          jobId: "job-1",
+          status: "queued",
+          createdAt: new Date().toISOString(),
+        };
+      },
+    });
+
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    await handleVastQueueBatch(
+      makeBatch([msg]),
+      makeEnv({ __coordinator: coordinator }),
+    );
+
+    expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+      args: unknown[];
+    }>;
+    const staleFailCall = calls.find(
+      (c) => c.method === "markFailed" && c.args[0] === "job-active-vast",
+    );
+    expect(staleFailCall).toBeUndefined();
+    expect(calls.some((c) => c.method === "markRetry")).toBe(true);
   });
 
   it("re-enqueues a fresh queue message when vast slot busy retries are exhausted", async () => {

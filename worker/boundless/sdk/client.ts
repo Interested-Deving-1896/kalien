@@ -9,7 +9,7 @@
  *   2. Upload to IPFS (Pinata) if stdin > MAX_INLINE_STDIN_BYTES
  *   3. Build a ProofRequest with a reverse Dutch auction offer
  *   4. Sign the request with EIP-712
- *   5. Submit via strategy queue: on-chain first (3 attempts), order stream fallback (3 attempts)
+ *   5. Submit on-chain (up to 3 attempts) and optionally broadcast to order stream
  *   6. Poll `requestIsFulfilled` until true, then fetch the ProofDelivered event
  */
 
@@ -68,12 +68,13 @@ const PREDICATE_TYPE_NAMES: Record<number, string> = {
 const INPUT_TYPE_NAMES: Record<number, string> = { 0: "Inline", 1: "Url" };
 
 function isRetryableSubmitError(msg: string): boolean {
+  const normalized = msg.toLowerCase();
   return (
-    msg.includes("nonce") ||
-    msg.includes("timeout") ||
-    msg.includes("429") ||
-    msg.includes("502") ||
-    msg.includes("503")
+    normalized.includes("nonce") ||
+    normalized.includes("timeout") ||
+    normalized.includes("429") ||
+    normalized.includes("502") ||
+    normalized.includes("503")
   );
 }
 
@@ -90,8 +91,8 @@ export class BoundlessClient {
    * Submit a tape to Boundless for proving.
    *
    * Encodes the tape into GuestEnv V1 msgpack format, uploads to IPFS if
-   * needed, builds + signs + submits via a strategy queue: on-chain first
-   * (up to 3 attempts), then order stream fallback (up to 3 attempts).
+   * needed, builds + signs + submits on-chain (up to 3 attempts), then
+   * optionally broadcasts to order stream (best-effort only).
    * Funding first tries market-balance top-up (delta + buffer), then falls
    * back to attached-value submission if needed.
    * Each transport strategy attempts up to 3 times.
@@ -370,7 +371,8 @@ export class BoundlessClient {
     });
 
     // Submit via strategy queue for each funding plan:
-    // on-chain first (3 attempts), then off-chain order stream (3 attempts).
+    // on-chain first (3 attempts), then off-chain order stream broadcast (3 attempts).
+    // Only on-chain submission is treated as authoritative success.
     let lastError: string | undefined;
     let sawRetryableError = false;
     for (const fundingPlan of fundingPlans) {
@@ -393,26 +395,41 @@ export class BoundlessClient {
         for (let attempt = 1; attempt <= strategy.maxAttempts; attempt++) {
           try {
             await strategy.fn();
-            const isOffchain = strategy.name === "order-stream";
-            console.log(
-              isOffchain
-                ? "[boundless] submitted via order stream (offchain fallback)"
-                : "[boundless] submitted proof request on-chain",
-              {
-                requestId: requestIdHex,
-                explorerUrl: this.explorerUrl(requestId),
-                stdinBytes: stdinBytes.length,
-                inputType: inputType === 1 ? "url" : "inline",
-                minPriceWei: minPrice.toString(),
-                maxPriceWei: maxPrice.toString(),
-                maxPriceUsd: config.maxPriceUsd,
-                fundingMode: fundingPlan.mode,
-                marketBalanceBeforeWei: fundingPlan.marketBalanceBeforeWei?.toString() ?? null,
-                autoDepositWei: fundingPlan.autoDepositWei?.toString() ?? null,
-                submitValueWei: fundingPlan.submitValueWei.toString(),
-                chainId: config.chainId.toString(),
-              },
-            );
+            if (strategy.name === "order-stream") {
+              console.log(
+                "[boundless] submitted to order stream (advisory only; waiting for on-chain submit)",
+                {
+                  requestId: requestIdHex,
+                  explorerUrl: this.explorerUrl(requestId),
+                  stdinBytes: stdinBytes.length,
+                  inputType: inputType === 1 ? "url" : "inline",
+                  minPriceWei: minPrice.toString(),
+                  maxPriceWei: maxPrice.toString(),
+                  maxPriceUsd: config.maxPriceUsd,
+                  fundingMode: fundingPlan.mode,
+                  marketBalanceBeforeWei: fundingPlan.marketBalanceBeforeWei?.toString() ?? null,
+                  autoDepositWei: fundingPlan.autoDepositWei?.toString() ?? null,
+                  submitValueWei: fundingPlan.submitValueWei.toString(),
+                  chainId: config.chainId.toString(),
+                },
+              );
+              break;
+            }
+
+            console.log("[boundless] submitted proof request on-chain", {
+              requestId: requestIdHex,
+              explorerUrl: this.explorerUrl(requestId),
+              stdinBytes: stdinBytes.length,
+              inputType: inputType === 1 ? "url" : "inline",
+              minPriceWei: minPrice.toString(),
+              maxPriceWei: maxPrice.toString(),
+              maxPriceUsd: config.maxPriceUsd,
+              fundingMode: fundingPlan.mode,
+              marketBalanceBeforeWei: fundingPlan.marketBalanceBeforeWei?.toString() ?? null,
+              autoDepositWei: fundingPlan.autoDepositWei?.toString() ?? null,
+              submitValueWei: fundingPlan.submitValueWei.toString(),
+              chainId: config.chainId.toString(),
+            });
 
             return {
               type: "success",

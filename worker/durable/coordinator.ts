@@ -118,7 +118,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   private updateRunElapsed(job: ProofJobRecord): void {
-    const startedAt = this.timestampMs(job.prover.runStartedAt ?? job.createdAt);
+    const startedAt = this.timestampMs(job.prover.runStartedAt ?? null);
     if (startedAt <= 0) {
       job.prover.runElapsedMs = null;
       return;
@@ -719,7 +719,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.queue.lastAttemptAt = now;
     job.queue.nextRetryAt = null;
     if (job.prover.jobId && !job.prover.runStartedAt) {
-      job.prover.runStartedAt = job.createdAt;
+      // Legacy backfill for pre-runStartedAt records: use "now" so we don't
+      // incorrectly inherit long queue age as prover runtime.
+      job.prover.runStartedAt = now;
     }
     if (!job.prover.jobId && !job.queue.waitStartedAt) {
       job.queue.waitStartedAt = job.createdAt;
@@ -1578,7 +1580,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
       this.updateRunElapsed(job);
       const runElapsedMs = job.prover.runElapsedMs ?? 0;
-      if (runElapsedMs > maxProverRunTimeMs) {
+      if (!this.isBoundlessJob(job) && runElapsedMs > maxProverRunTimeMs) {
         const runMin = Math.round(runElapsedMs / 60_000);
         await this.markFailed(
           jobId,

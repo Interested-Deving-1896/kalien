@@ -262,7 +262,11 @@ async function tryRecoverStaleVastSlot(
     return true;
   }
 
-  const stillVast = Boolean(refreshed.prover.jobId) && !refreshed.prover.statusUrl?.startsWith("boundless:");
+  const stillVast =
+    Boolean(refreshed.prover.jobId) &&
+    typeof refreshed.prover.statusUrl === "string" &&
+    refreshed.prover.statusUrl.length > 0 &&
+    !refreshed.prover.statusUrl.startsWith("boundless:");
   if (stillVast) {
     const runMin = Math.round(runAgeMs / 60_000);
     await coordinator.markFailed(
