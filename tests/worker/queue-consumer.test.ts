@@ -122,6 +122,8 @@ function makeCoordinator(
     markClaimRetry: async () => null,
     markClaimSucceeded: async () => null,
     hasActiveVastJob: async () => false,
+    getActiveVastJob: async () => null,
+    kickAlarm: async () => undefined,
     listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
   };
 
@@ -395,6 +397,85 @@ describe("handleVastQueueBatch (VastAI)", () => {
     expect(calls.some((c) => c.method === "markRetry")).toBe(true);
   });
 
+  it("recovers stale vast slot before retrying queued job", async () => {
+    let slotBusy = true;
+    const staleVastJob = {
+      jobId: "job-active-vast",
+      status: "prover_running",
+      createdAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      updatedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      prover: {
+        jobId: "vast-prover-1",
+        statusUrl: "https://prover.test/api/jobs/vast-prover-1",
+        lastPolledAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+      },
+    };
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => slotBusy,
+      getActiveVastJob: async () => (slotBusy ? staleVastJob : null),
+      kickAlarm: async () => undefined,
+      getJob: async (jobId: string) => {
+        if (jobId === "job-active-vast") {
+          return slotBusy ? staleVastJob : null;
+        }
+        return {
+          jobId: "job-1",
+          status: "queued",
+          createdAt: new Date().toISOString(),
+          tape: { key: "tapes/job-1", metadata: { finalScore: 100, seedId: 1 } },
+          prover: { jobId: null },
+          claim: { claimantAddress: "GABC" },
+        };
+      },
+      markFailed: async (jobId: string) => {
+        if (jobId === "job-active-vast") {
+          slotBusy = false;
+        }
+        return null;
+      },
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100, seedId: 1 },
+        },
+        prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
+        createdAt: new Date().toISOString(),
+      }),
+      markProverAccepted: async () => null,
+    });
+
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    const env = makeEnv({
+      __coordinator: coordinator,
+      __submitResult: {
+        type: "success",
+        jobId: "vast-job-1",
+        statusUrl: "https://prover.test/api/jobs/vast-job-1",
+        segmentLimitPo2: 21,
+      },
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        }),
+      },
+    });
+
+    await handleVastQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+      args: unknown[];
+    }>;
+    const staleFailCall = calls.find(
+      (c) => c.method === "markFailed" && c.args[0] === "job-active-vast",
+    );
+    expect(staleFailCall).toBeDefined();
+    expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
+  });
+
   it("re-enqueues a fresh queue message when vast slot busy retries are exhausted", async () => {
     const coordinator = makeCoordinator({
       hasActiveVastJob: async () => true,
@@ -441,7 +522,7 @@ describe("handleVastQueueBatch (VastAI)", () => {
       makeBatch([msg]),
       makeEnv({
         __coordinator: coordinator,
-        MAX_JOB_WALL_TIME_MS: "60000",
+        MAX_PROOF_TOTAL_WALL_TIME_MS: "60000",
       }),
     );
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);

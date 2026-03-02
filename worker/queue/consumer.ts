@@ -1,5 +1,6 @@
 import {
-  DEFAULT_MAX_JOB_WALL_TIME_MS,
+  DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
+  DEFAULT_MAX_PROVER_RUN_TIME_MS,
   MAX_QUEUE_RETRIES,
   MAX_VAST_QUEUE_RETRIES,
   VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
@@ -49,6 +50,14 @@ interface PreparedJob {
   tapeBytes: Uint8Array;
 }
 
+function resolveMaxProofTotalWallTimeMs(env: WorkerEnv): number {
+  return parseInteger(env.MAX_PROOF_TOTAL_WALL_TIME_MS, DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS, 60_000);
+}
+
+function resolveMaxProverRunTimeMs(env: WorkerEnv): number {
+  return parseInteger(env.MAX_PROVER_RUN_TIME_MS, DEFAULT_MAX_PROVER_RUN_TIME_MS, 60_000);
+}
+
 /**
  * Common validation that runs before any prover submission. Returns the job
  * record and tape bytes if the job is ready for submission, or null if the
@@ -66,11 +75,7 @@ async function prepareForSubmission(
   }
 
   const jobId = payload.jobId;
-  const maxWallTimeMs = parseInteger(
-    env.MAX_JOB_WALL_TIME_MS,
-    DEFAULT_MAX_JOB_WALL_TIME_MS,
-    60_000,
-  );
+  const maxWallTimeMs = resolveMaxProofTotalWallTimeMs(env);
 
   const coordinator = coordinatorStub(env);
   const startedJob = await coordinator.beginQueueAttempt(jobId, message.attempts);
@@ -98,6 +103,10 @@ async function prepareForSubmission(
     await coordinator.markFailed(
       jobId,
       `proof job timed out after ${ageMin} minutes (attempt ${message.attempts})`,
+      {
+        errorCode: "job_total_wall_timeout",
+        timeoutPhase: "total_wall",
+      },
     );
     message.ack();
     return null;
@@ -224,6 +233,51 @@ async function processBoundlessMessage(
 // VastAI queue consumer (VAST_QUEUE — serial, 1-at-a-time)
 // ---------------------------------------------------------------------------
 
+async function tryRecoverStaleVastSlot(
+  coordinator: ReturnType<typeof coordinatorStub>,
+  env: WorkerEnv,
+): Promise<boolean> {
+  const activeVastJob = await coordinator.getActiveVastJob();
+  if (!activeVastJob || isTerminalProofStatus(activeVastJob.status) || !activeVastJob.prover.jobId) {
+    return false;
+  }
+
+  const maxProverRunTimeMs = resolveMaxProverRunTimeMs(env);
+  const nowMs = Date.now();
+  const runStartMs = new Date(
+    activeVastJob.prover.runStartedAt ?? activeVastJob.updatedAt ?? activeVastJob.createdAt,
+  ).getTime();
+  const lastPolledAtMs = activeVastJob.prover.lastPolledAt
+    ? new Date(activeVastJob.prover.lastPolledAt).getTime()
+    : runStartMs;
+  const runAgeMs = Number.isFinite(runStartMs) ? Math.max(0, nowMs - runStartMs) : 0;
+  const lastPollAgeMs = Number.isFinite(lastPolledAtMs) ? Math.max(0, nowMs - lastPolledAtMs) : 0;
+  if (runAgeMs <= maxProverRunTimeMs && lastPollAgeMs <= maxProverRunTimeMs) {
+    return false;
+  }
+
+  await coordinator.kickAlarm();
+  const refreshed = await coordinator.getJob(activeVastJob.jobId);
+  if (!refreshed || isTerminalProofStatus(refreshed.status)) {
+    return true;
+  }
+
+  const stillVast = Boolean(refreshed.prover.jobId) && !refreshed.prover.statusUrl?.startsWith("boundless:");
+  if (stillVast) {
+    const runMin = Math.round(runAgeMs / 60_000);
+    await coordinator.markFailed(
+      refreshed.jobId,
+      `vast prover slot watchdog timed out after ${runMin} minutes`,
+      {
+        errorCode: "prover_run_timeout",
+        timeoutPhase: "prover_run",
+      },
+    );
+  }
+
+  return true;
+}
+
 async function processVastMessage(
   message: Message<ProofQueueMessage>,
   env: WorkerEnv,
@@ -237,7 +291,16 @@ async function processVastMessage(
   const coordinator = coordinatorStub(env);
 
   // Enforce 1-at-a-time: if a VastAI job is already running, re-queue.
-  const slotBusy = await coordinator.hasActiveVastJob();
+  let slotBusy = await coordinator.hasActiveVastJob();
+  if (slotBusy) {
+    try {
+      await tryRecoverStaleVastSlot(coordinator, env);
+      slotBusy = await coordinator.hasActiveVastJob();
+    } catch (error) {
+      console.warn(`[vast-queue] stale slot recovery failed: ${safeErrorMessage(error)}`);
+      slotBusy = await coordinator.hasActiveVastJob();
+    }
+  }
   if (slotBusy) {
     const job = await coordinator.getJob(payload.jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -245,17 +308,17 @@ async function processVastMessage(
       return;
     }
 
-    const maxWallTimeMs = parseInteger(
-      env.MAX_JOB_WALL_TIME_MS,
-      DEFAULT_MAX_JOB_WALL_TIME_MS,
-      60_000,
-    );
+    const maxWallTimeMs = resolveMaxProofTotalWallTimeMs(env);
     const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
     if (jobAgeMs > maxWallTimeMs) {
       const ageMin = Math.round(jobAgeMs / 60_000);
       await coordinator.markFailed(
         payload.jobId,
         `proof job timed out after ${ageMin} minutes while waiting for vast slot`,
+        {
+          errorCode: "vast_slot_wait_timeout",
+          timeoutPhase: "vast_wait",
+        },
       );
       message.ack();
       return;

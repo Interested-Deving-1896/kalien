@@ -20,7 +20,8 @@ export interface WorkerEnv {
   PROVER_REQUEST_TIMEOUT_MS?: string;
   PROVER_POLL_BUDGET_MS?: string;
   MAX_TAPE_BYTES?: string;
-  MAX_JOB_WALL_TIME_MS?: string;
+  MAX_PROOF_TOTAL_WALL_TIME_MS?: string;
+  MAX_PROVER_RUN_TIME_MS?: string;
   MAX_COMPLETED_JOBS?: string;
   COMPLETED_JOB_RETENTION_MS?: string;
   ALLOW_INSECURE_PROVER_URL?: string;

@@ -180,6 +180,8 @@ function makeCoordinatorStub(
     createJob: async () => ({ accepted: false, activeJob: null }),
     kickAlarm: async () => undefined,
     listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    retryFailedProof: async () => null,
+    retryFailedClaim: async () => null,
     ...overrides,
   };
 }
@@ -520,6 +522,57 @@ describe("API routes", () => {
       }),
     );
     expect(response.status).toBe(200);
+  });
+
+  it("POST /proofs/jobs/:jobId/retry-proof validates backend query param", async () => {
+    const response = await requestApi(
+      "/proofs/jobs/job-1/retry-proof?backend=unknown",
+      {
+        method: "POST",
+      },
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("POST /proofs/jobs/:jobId/retry-proof returns 404 when job does not exist", async () => {
+    const response = await requestApi(
+      "/proofs/jobs/job-missing/retry-proof",
+      {
+        method: "POST",
+      },
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          retryFailedProof: async () => null,
+        }),
+      }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("POST /proofs/jobs/:jobId/retry-proof requeues failed proof", async () => {
+    const response = await requestApi(
+      "/proofs/jobs/job-1/retry-proof?backend=vast",
+      {
+        method: "POST",
+      },
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          retryFailedProof: async () => ({
+            jobId: "job-1",
+            status: "queued",
+          }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      success: boolean;
+      job: { jobId: string; status: string };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.job.jobId).toBe("job-1");
+    expect(payload.job.status).toBe("queued");
   });
 
   // ── Dev endpoint auth guard ────────────────────────────────────────────────

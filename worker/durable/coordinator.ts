@@ -4,7 +4,8 @@ import {
   COORDINATOR_OBJECT_NAME,
   DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
   DEFAULT_COMPLETED_JOB_RETENTION_MS,
-  DEFAULT_MAX_JOB_WALL_TIME_MS,
+  DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
+  DEFAULT_MAX_PROVER_RUN_TIME_MS,
   DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
   MIN_PROVER_POLL_INTERVAL_MS,
@@ -27,6 +28,7 @@ import type {
   ProverAttempt,
   ProverBackend,
   ProverPollResult,
+  ProofTimeoutPhase,
   PublicProofJob,
   ProofTapeInfo,
 } from "../types";
@@ -79,6 +81,8 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     result: job.result,
     claim: job.claim,
     error: job.error,
+    errorCode: job.errorCode ?? null,
+    timeoutPhase: job.timeoutPhase ?? null,
   };
 }
 
@@ -90,6 +94,36 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     const parsed = new Date(value).getTime();
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private resolveMaxProofTotalWallTimeMs(): number {
+    return parseInteger(this.env.MAX_PROOF_TOTAL_WALL_TIME_MS, DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS, 60_000);
+  }
+
+  private resolveMaxProverRunTimeMs(): number {
+    return parseInteger(
+      this.env.MAX_PROVER_RUN_TIME_MS,
+      DEFAULT_MAX_PROVER_RUN_TIME_MS,
+      60_000,
+    );
+  }
+
+  private updateQueueWaitElapsed(job: ProofJobRecord): void {
+    const startedAt = this.timestampMs(job.queue.waitStartedAt ?? job.createdAt);
+    if (startedAt <= 0) {
+      job.queue.waitElapsedMs = null;
+      return;
+    }
+    job.queue.waitElapsedMs = Math.max(0, Date.now() - startedAt);
+  }
+
+  private updateRunElapsed(job: ProofJobRecord): void {
+    const startedAt = this.timestampMs(job.prover.runStartedAt ?? job.createdAt);
+    if (startedAt <= 0) {
+      job.prover.runElapsedMs = null;
+      return;
+    }
+    job.prover.runElapsedMs = Math.max(0, Date.now() - startedAt);
   }
 
   private async deleteArtifact(key: string | null | undefined): Promise<void> {
@@ -381,6 +415,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         lastAttemptAt: null,
         lastError: null,
         nextRetryAt: null,
+        waitStartedAt: now,
+        waitElapsedMs: 0,
       },
       prover: {
         jobId: null,
@@ -389,6 +425,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         segmentLimitPo2: null,
         lastPolledAt: null,
         pollingErrors: 0,
+        runStartedAt: null,
+        runElapsedMs: null,
       },
       proverAttempts: [],
       claimAttempts: [],
@@ -404,6 +442,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         txHash: null,
       },
       error: null,
+      errorCode: null,
+      timeoutPhase: null,
     };
 
     await this.saveJob(job);
@@ -612,6 +652,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
    * being polled). Used by the VastAI queue consumer to enforce 1-at-a-time.
    */
   async hasActiveVastJob(): Promise<boolean> {
+    return (await this.getActiveVastJob()) !== null;
+  }
+
+  async getActiveVastJob(): Promise<ProofJobRecord | null> {
     const activeJobIds = await this.getActiveJobIds();
     for (const jobId of activeJobIds) {
       // eslint-disable-next-line no-await-in-loop -- sequential DO storage reads
@@ -622,10 +666,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         job.prover.jobId &&
         !this.isBoundlessJob(job)
       ) {
-        return true;
+        return job;
       }
     }
-    return false;
+    return null;
   }
 
   async listSucceededJobs(): Promise<ProofJobRecord[]> {
@@ -674,6 +718,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.queue.attempts = Math.max(job.queue.attempts, attempts);
     job.queue.lastAttemptAt = now;
     job.queue.nextRetryAt = null;
+    if (job.prover.jobId && !job.prover.runStartedAt) {
+      job.prover.runStartedAt = job.createdAt;
+    }
+    if (!job.prover.jobId && !job.queue.waitStartedAt) {
+      job.queue.waitStartedAt = job.createdAt;
+    }
+    this.updateQueueWaitElapsed(job);
+    this.updateRunElapsed(job);
     await this.saveJob(job);
 
     // Re-delivered queue message after crash: prover job already exists,
@@ -705,6 +757,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.updatedAt = nowIso();
     job.queue.lastError = reason;
     job.queue.nextRetryAt = nextRetryAt;
+    this.updateQueueWaitElapsed(job);
+    this.updateRunElapsed(job);
     if (clearProverJob) {
       job.prover.jobId = null;
       job.prover.status = null;
@@ -712,6 +766,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.prover.segmentLimitPo2 = null;
       job.prover.lastPolledAt = null;
       job.prover.pollingErrors = 0;
+      job.prover.runStartedAt = null;
+      job.prover.runElapsedMs = null;
     }
     await this.saveJob(job);
     return job;
@@ -739,11 +795,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.updatedAt = nowIso();
     job.queue.lastError = null;
     job.queue.nextRetryAt = null;
+    this.updateQueueWaitElapsed(job);
     job.prover.jobId = proverJobId;
     job.prover.status = "queued";
     job.prover.statusUrl = statusUrl;
     job.prover.segmentLimitPo2 = segmentLimitPo2;
     job.prover.pollingErrors = 0;
+    job.prover.runStartedAt = nowIso();
+    job.prover.runElapsedMs = 0;
+    job.errorCode = null;
+    job.timeoutPhase = null;
     if (ipfsCid) {
       job.prover.ipfsCid = ipfsCid;
     }
@@ -832,6 +893,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.queue.nextRetryAt = null;
     job.prover.status = "succeeded";
     job.prover.lastPolledAt = now;
+    this.updateRunElapsed(job);
     job.result = {
       artifactKey,
       summary,
@@ -842,6 +904,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.status = "queued";
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
+    job.errorCode = null;
+    job.timeoutPhase = null;
 
     await this.saveJob(job);
     await this.recordAttemptEnd(job, "success", null, enrichment);
@@ -863,6 +927,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     enrichment?: {
       errorDetail?: string | null;
       errorCode?: string | null;
+      timeoutPhase?: ProofTimeoutPhase | null;
     },
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
@@ -887,8 +952,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.updatedAt = now;
     job.completedAt = now;
     job.error = reason;
+    job.errorCode = enrichment?.errorCode ?? null;
+    job.timeoutPhase = enrichment?.timeoutPhase ?? null;
     job.queue.lastError = reason;
     job.queue.nextRetryAt = null;
+    this.updateQueueWaitElapsed(job);
+    this.updateRunElapsed(job);
     if (job.prover.status !== "succeeded") {
       job.prover.status = "failed";
       job.prover.lastPolledAt = now;
@@ -1120,6 +1189,86 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return job;
   }
 
+  /**
+   * Re-queues a proof that previously failed.
+   *
+   * backend:
+   * - auto: prefer Boundless when configured, otherwise Vast
+   * - boundless|vast: force a specific queue, if configured
+   */
+  async retryFailedProof(
+    jobId: string,
+    backend: "auto" | "boundless" | "vast" = "auto",
+  ): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job) {
+      return null;
+    }
+    if (job.status === "succeeded") {
+      throw new Error("cannot retry proof: proof already succeeded");
+    }
+    if (job.status !== "failed") {
+      throw new Error(`proof is not in failed state (current: ${job.status})`);
+    }
+    if (job.result?.summary) {
+      throw new Error("cannot retry proof: proof result already exists");
+    }
+
+    const hasBoundless = resolveBoundlessConfig(this.env) !== null;
+    const hasVast = Boolean(this.env.PROVER_BASE_URL?.trim());
+
+    let nextBackend: "boundless" | "vast" | null = null;
+    if (backend === "boundless") {
+      nextBackend = hasBoundless ? "boundless" : null;
+    } else if (backend === "vast") {
+      nextBackend = hasVast ? "vast" : null;
+    } else if (hasBoundless) {
+      nextBackend = "boundless";
+    } else if (hasVast) {
+      nextBackend = "vast";
+    }
+    if (!nextBackend) {
+      throw new Error(`requested backend is not configured: ${backend}`);
+    }
+
+    job.status = "queued";
+    job.updatedAt = nowIso();
+    job.completedAt = null;
+    job.error = null;
+    job.errorCode = null;
+    job.timeoutPhase = null;
+    job.queue.lastError = null;
+    job.queue.nextRetryAt = null;
+    job.queue.waitStartedAt = nowIso();
+    job.queue.waitElapsedMs = 0;
+    job.prover.jobId = null;
+    job.prover.status = null;
+    job.prover.statusUrl = null;
+    job.prover.segmentLimitPo2 = null;
+    job.prover.lastPolledAt = null;
+    job.prover.pollingErrors = 0;
+    job.prover.ipfsCid = null;
+    job.prover.runStartedAt = null;
+    job.prover.runElapsedMs = null;
+    job.claim.status = "queued";
+    job.claim.lastError = null;
+    job.claim.nextRetryAt = null;
+    await this.saveJob(job);
+    await this.addActiveJobId(jobId);
+
+    const queue = nextBackend === "boundless" ? this.env.PROOF_QUEUE : this.env.VAST_QUEUE;
+    try {
+      await queue.send({ jobId }, { contentType: "json" });
+    } catch (error) {
+      await this.markFailed(jobId, `failed enqueueing retry proof: ${safeErrorMessage(error)}`, {
+        errorCode: "retry_enqueue_failed",
+      });
+    }
+
+    const refreshed = await this.loadJob(jobId);
+    return refreshed ?? job;
+  }
+
   private async recordAttemptEnd(
     job: ProofJobRecord,
     outcome: "success" | "failed",
@@ -1204,9 +1353,15 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.pollingErrors = 0;
     job.prover.lastPolledAt = null;
     job.prover.ipfsCid = null;
+    job.prover.runStartedAt = null;
+    job.prover.runElapsedMs = null;
     job.status = "queued";
     job.queue.lastError = reason;
+    job.queue.waitStartedAt = nowIso();
+    job.queue.waitElapsedMs = 0;
     job.updatedAt = nowIso();
+    job.errorCode = null;
+    job.timeoutPhase = null;
     await this.saveJob(job);
 
     // Enqueue to the appropriate backend queue
@@ -1248,6 +1403,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.prover.pollingErrors = 0;
       job.prover.status = pollResult.status;
       job.prover.lastPolledAt = nowIso();
+      this.updateRunElapsed(job);
       job.updatedAt = nowIso();
       job.queue.lastError = null;
       job.queue.nextRetryAt = null;
@@ -1347,6 +1503,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         job.prover.statusUrl = null;
         job.prover.lastPolledAt = nowIso();
         job.prover.pollingErrors += 1;
+        job.prover.runStartedAt = null;
+        job.prover.runElapsedMs = null;
         job.status = "retrying";
         job.updatedAt = nowIso();
         job.queue.lastError = pollResult.message;
@@ -1380,11 +1538,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   async alarm(): Promise<void> {
     let activeJobIds = await this.getActiveJobIds();
-    const maxWallTimeMs = parseInteger(
-      this.env.MAX_JOB_WALL_TIME_MS,
-      DEFAULT_MAX_JOB_WALL_TIME_MS,
-      60_000,
-    );
+    const maxWallTimeMs = this.resolveMaxProofTotalWallTimeMs();
+    const maxProverRunTimeMs = this.resolveMaxProverRunTimeMs();
 
     if (activeJobIds.length === 0) {
       return;
@@ -1406,13 +1561,33 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
       if (jobAgeMs > maxWallTimeMs) {
         const ageMin = Math.round(jobAgeMs / 60_000);
-        await this.markFailed(jobId, `proof job timed out after ${ageMin} minutes`);
+        await this.markFailed(jobId, `proof job timed out after ${ageMin} minutes`, {
+          errorCode: "job_total_wall_timeout",
+          timeoutPhase: "total_wall",
+        });
         continue;
       }
 
       if (!job.prover.jobId) {
         // waiting for queue consumer to dispatch
+        this.updateQueueWaitElapsed(job);
+        await this.saveJob(job);
         anyStillActive = true;
+        continue;
+      }
+
+      this.updateRunElapsed(job);
+      const runElapsedMs = job.prover.runElapsedMs ?? 0;
+      if (runElapsedMs > maxProverRunTimeMs) {
+        const runMin = Math.round(runElapsedMs / 60_000);
+        await this.markFailed(
+          jobId,
+          `proof run timed out after ${runMin} minutes while occupying prover slot`,
+          {
+            errorCode: "prover_run_timeout",
+            timeoutPhase: "prover_run",
+          },
+        );
         continue;
       }
 

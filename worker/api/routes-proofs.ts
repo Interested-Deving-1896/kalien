@@ -599,6 +599,32 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
     }
   });
 
+  router.post("/jobs/:jobId/retry-proof", async (c) => {
+    const jobId = c.req.param("jobId");
+    if (!jobId) {
+      return jsonError(c, 400, "invalid job id in path");
+    }
+
+    const backendRaw = (c.req.query("backend") ?? "auto").trim().toLowerCase();
+    if (backendRaw !== "auto" && backendRaw !== "boundless" && backendRaw !== "vast") {
+      return jsonError(c, 400, "invalid backend query param: expected auto|boundless|vast");
+    }
+
+    const coordinator = coordinatorStub(c.env);
+    try {
+      const job = await coordinator.retryFailedProof(
+        jobId,
+        backendRaw as "auto" | "boundless" | "vast",
+      );
+      if (!job) {
+        return jsonError(c, 404, `job not found: ${jobId}`);
+      }
+      return c.json({ success: true, job: asPublicJob(job) });
+    } catch (error) {
+      return jsonError(c, 409, safeErrorMessage(error));
+    }
+  });
+
   router.get(
     "/jobs/:jobId/result",
     cache({

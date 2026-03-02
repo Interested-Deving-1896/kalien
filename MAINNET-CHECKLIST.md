@@ -38,7 +38,8 @@ Legacy detailed checklist is preserved at:
   - `RUNNING_JOB_TIMEOUT_SECS`
   - `TIMED_OUT_PROOF_KILL_SECS`
   - `PROVER_POLL_*`
-  - `MAX_JOB_WALL_TIME_MS`
+  - `MAX_PROOF_TOTAL_WALL_TIME_MS`
+  - `MAX_PROVER_RUN_TIME_MS`
 - [ ] Verify queue retry ceilings and DO alarm polling behavior in production config.
 - [ ] Verify retention cleanup:
   - DO pruning (`MAX_COMPLETED_JOBS`, `COMPLETED_JOB_RETENTION_MS`)
@@ -100,4 +101,3 @@ Legacy detailed checklist is preserved at:
 - [ ] Ops signoff
 - [ ] Product signoff
 - [ ] Launch window + rollback owner assigned
-
