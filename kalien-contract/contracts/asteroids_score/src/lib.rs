@@ -40,6 +40,7 @@ const JOURNAL_CLAIMANT_END_USIZE: usize =
 
 const INSTANCE_TTL_THRESHOLD: u32 = 120_960; // 7 days  (at ~5s/ledger: 17280 ledgers/day)
 const INSTANCE_TTL_BUMP: u32 = 172_800; // 10 days (at ~5s/ledger)
+const TEMP_TTL: u32 = 17_280; // 24h (at ~5s/ledger: 17280 ledgers/day)
 const TOKEN_DECIMALS_SCALE: i128 = 10_000_000;
 const SEED_INTERVAL_SECONDS: u64 = 600; // 10 minutes in seconds
                                         // 24h fixed-window policy: now + previous 143 windows = 144 × 10 min.
@@ -167,7 +168,13 @@ impl AsteroidsScoreContract {
         env.storage().temporary().set(&claimed_key, &());
         env.storage()
             .temporary()
+            .extend_ttl(&claimed_key, TEMP_TTL, TEMP_TTL);
+        env.storage()
+            .temporary()
             .set(&best_key, &parsed.final_score);
+        env.storage()
+            .temporary()
+            .extend_ttl(&best_key, TEMP_TTL, TEMP_TTL);
 
         let verifier_client = risc0_verifier::Client::new(&env, &verifier_id);
         verifier_client.verify(&seal, &image_id, &journal_digest);
@@ -327,9 +334,9 @@ fn get_or_materialize_current_seed(env: &Env) -> CurrentSeed {
     }
 
     let seed = env.prng().gen_range::<u64>(0..=u32::MAX as u64) as u32;
-    env.storage()
-        .temporary()
-        .set(&DataKey::SeedById(seed_id), &seed);
+    let key = DataKey::SeedById(seed_id);
+    env.storage().temporary().set(&key, &seed);
+    env.storage().temporary().extend_ttl(&key, TEMP_TTL, TEMP_TTL);
 
     CurrentSeed { seed_id, seed }
 }
