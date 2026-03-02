@@ -5,6 +5,11 @@ export const SEED_INTERVAL_SECONDS = 600; // 10 minutes
 const TESTNET_NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 const SEED_FETCH_TIMEOUT_MS = 6_000;
 
+function resolveNetworkPassphrase(): string {
+  const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  return viteEnv?.VITE_NETWORK_PASSPHRASE ?? TESTNET_NETWORK_PASSPHRASE;
+}
+
 /**
  * Read the materialized seed for a specific `seed_id` by directly reading
  * the `SeedById(seed_id)` ledger entry from the contract's temporary storage.
@@ -97,7 +102,7 @@ export async function fetchBestScoreForSeed(
     const client = new ScoreClient({
       contractId,
       rpcUrl,
-      networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
+      networkPassphrase: resolveNetworkPassphrase(),
     });
     const tx = await client.best_score({ claimant, seed_id: seedId });
     return tx.result;

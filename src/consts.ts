@@ -28,4 +28,8 @@ export const HIGH_SCORE_THRESHOLD = 5_000;
 export const AUTO_REFRESH_PROOFS_MS = 15_000;
 export const AUTO_REFRESH_LEADERBOARD_MS = 60_000;
 export const RELATIVE_TIME_REFRESH_MS = 15_000;
-export const STELLAR_EXPLORER_TESTNET_BASE = "https://stellar.expert/explorer/testnet";
+export const STELLAR_EXPLORER_BASE = (import.meta.env.VITE_NETWORK_PASSPHRASE ?? "").includes(
+  "Public Global",
+)
+  ? "https://stellar.expert/explorer/public"
+  : "https://stellar.expert/explorer/testnet";

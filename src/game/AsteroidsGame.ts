@@ -288,11 +288,13 @@ export class AsteroidsGame {
     if (document.hidden && this.mode === "playing") {
       this.mode = "paused";
       this.pauseFromHidden = true;
+      this.audio.pauseMusic();
     } else if (!document.hidden && this.mode === "paused" && this.pauseFromHidden) {
       this.mode = "playing";
       this.pauseFromHidden = false;
       this.lastTimeMs = 0;
       this.accumulator = 0;
+      this.audio.resumeMusic();
     }
   };
 
@@ -302,6 +304,7 @@ export class AsteroidsGame {
       this.startNewGame();
     } else if (this.mode === "paused" && !this.pauseFromHidden) {
       this.mode = "playing";
+      this.audio.resumeMusic();
     }
   };
 
@@ -358,6 +361,7 @@ export class AsteroidsGame {
 
   dispose(): void {
     this.running = false;
+    this.audio.stopMusic();
 
     if (this.rafId !== null) {
       window.cancelAnimationFrame(this.rafId);
@@ -478,15 +482,22 @@ export class AsteroidsGame {
       } else if (this.mode === "paused") {
         this.mode = "playing";
         this.pauseFromHidden = false;
+        this.audio.resumeMusic();
       }
+    }
+
+    if (this.input.consumePress("KeyM")) {
+      this.audio.toggleMute();
     }
 
     if (this.input.consumePress("KeyP")) {
       if (this.mode === "playing") {
         this.mode = "paused";
         this.pauseFromHidden = false;
+        this.audio.pauseMusic();
       } else if (this.mode === "paused" && !this.pauseFromHidden) {
         this.mode = "playing";
+        this.audio.resumeMusic();
       }
     }
 
@@ -534,6 +545,7 @@ export class AsteroidsGame {
     // Return to menu with Escape
     if (this.input.consumePress("Escape") && this.mode !== "menu") {
       this.mode = "menu";
+      this.audio.stopMusic();
       this.waitingForSeed = false;
       this.asteroids = [];
       this.bullets = [];
@@ -583,6 +595,7 @@ export class AsteroidsGame {
     setGameSeed(this.gameSeed);
 
     this.mode = "playing";
+    this.audio.playMusic();
     this.score = 0;
     this.lives = STARTING_LIVES;
     this.wave = 0;
@@ -658,6 +671,7 @@ export class AsteroidsGame {
     // 10-minute hard cap (36000 frames at 60fps)
     if (this.frameCount > MAX_GAME_FRAMES && this.mode !== "replay") {
       this.mode = "game-over";
+      this.audio.stopMusic();
       this.ship.canControl = false;
       this.ship.respawnTimer = 99999;
       if (this.renderer) {
@@ -1467,6 +1481,7 @@ export class AsteroidsGame {
     if (this.lives <= 0) {
       if (this.mode !== "replay") {
         this.mode = "game-over";
+        this.audio.stopMusic();
       }
       this.ship.canControl = false;
       this.ship.respawnTimer = 99999;

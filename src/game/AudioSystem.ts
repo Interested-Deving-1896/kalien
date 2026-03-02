@@ -1,7 +1,13 @@
+const MUSIC_URL = "https://api.smol.xyz/song/a956a62b-6862-4276-816d-45d7cbda35f8.mp3";
+const MUSIC_VOLUME = 0.15;
+
 export class AudioSystem {
   private ctx: AudioContext | null = null;
   private enabled = true;
   private volume = 0.4;
+
+  private musicEl: HTMLAudioElement | null = null;
+  private muted = false;
 
   enable(): void {
     if (!this.ctx) {
@@ -111,6 +117,53 @@ export class AudioSystem {
       osc.start(ctx.currentTime + i * 0.08);
       osc.stop(ctx.currentTime + i * 0.08 + 0.2);
     });
+  }
+
+  /** Start (or restart) the background music track. */
+  playMusic(): void {
+    if (!this.musicEl) {
+      this.musicEl = new Audio(MUSIC_URL);
+      this.musicEl.loop = true;
+      this.musicEl.volume = MUSIC_VOLUME;
+    }
+    this.musicEl.currentTime = 0;
+    this.musicEl.muted = this.muted;
+    this.musicEl.play().catch(() => {});
+  }
+
+  /** Resume background music from current position. */
+  resumeMusic(): void {
+    if (this.musicEl) {
+      this.musicEl.muted = this.muted;
+      this.musicEl.play().catch(() => {});
+    }
+  }
+
+  /** Pause background music (keeps position). */
+  pauseMusic(): void {
+    this.musicEl?.pause();
+  }
+
+  /** Stop music and reset to beginning. */
+  stopMusic(): void {
+    if (this.musicEl) {
+      this.musicEl.pause();
+      this.musicEl.currentTime = 0;
+    }
+  }
+
+  /** Toggle mute for both SFX and music. Returns new muted state. */
+  toggleMute(): boolean {
+    this.muted = !this.muted;
+    this.enabled = !this.muted;
+    if (this.musicEl) {
+      this.musicEl.muted = this.muted;
+    }
+    return this.muted;
+  }
+
+  isMuted(): boolean {
+    return this.muted;
   }
 
   private createNoiseBuffer(duration: number): AudioBuffer {

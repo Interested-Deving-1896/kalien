@@ -18,7 +18,7 @@ import { boundlessExplorerUrl, getActiveBackend } from "@/proof/helpers";
 import { formatBytes, formatCycles, formatDuration, formatHex32 } from "@/lib/format";
 import { timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import { STELLAR_EXPLORER_TESTNET_BASE } from "@/consts";
+import { STELLAR_EXPLORER_BASE } from "@/consts";
 import { navigate } from "@/hooks/useLocation";
 import { ProofStatusBadge } from "./ProofStatusBadge";
 import { BackendBadge } from "./BackendBadge";
@@ -334,7 +334,7 @@ export function ProofJobCard({
 
   const stellarTxUrl =
     job.claim.txHash && /^[0-9a-f]{64}$/i.test(job.claim.txHash)
-      ? `${STELLAR_EXPLORER_TESTNET_BASE}/tx/${job.claim.txHash}`
+      ? `${STELLAR_EXPLORER_BASE}/tx/${job.claim.txHash}`
       : null;
   const isClaimed = job.claim.status === "succeeded";
   const canRetryClaim = job.status === "succeeded" && job.claim.status === "failed";
@@ -656,7 +656,7 @@ export function ProofJobCard({
                       )}
                       {attempt.txHash && /^[0-9a-f]{64}$/i.test(attempt.txHash) && (
                         <a
-                          href={`${STELLAR_EXPLORER_TESTNET_BASE}/tx/${attempt.txHash}`}
+                          href={`${STELLAR_EXPLORER_BASE}/tx/${attempt.txHash}`}
                           target="_blank"
                           rel="noreferrer"
                           className="ml-auto inline-flex items-center gap-1 text-secondary no-underline hover:underline"

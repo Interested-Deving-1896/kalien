@@ -13,6 +13,7 @@ const GAME_KEYS = new Set([
   "Digit1", // Replay speed 1x
   "Digit2", // Replay speed 2x
   "Digit4", // Replay speed 4x
+  "KeyM", // Mute toggle
 ]);
 
 function isEditableTarget(target: EventTarget | null): boolean {

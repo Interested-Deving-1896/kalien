@@ -22,6 +22,8 @@ export function ControlsHint({ className }: { className?: string }) {
         <Sep />
         <Kbd>R</Kbd> restart
         <Sep />
+        <Kbd>M</Kbd> mute
+        <Sep />
         <Kbd>D</Kbd> save tape
         <Sep />
         <Kbd>Esc</Kbd> menu
