@@ -144,12 +144,34 @@ export default {
     if (!controller.cron || controller.cron === SEED_REFRESH_CRON) {
       // Materialize/index the on-chain seed for the current 10-min window so
       // players don't need to trigger seed creation themselves.
-      const seedResult = await ensureCurrentEpochSeed(env).catch((error) => ({
-        success: false,
-        message: safeErrorMessage(error),
-      }));
-      if (!seedResult.success) {
-        console.warn(`[seed-refresh] scheduled refresh failed: ${seedResult.message ?? "unknown"}`);
+      // Retry up to 5 times with 10s gaps to ride out transient failures.
+      let seedRefreshSucceeded = false;
+      let lastSeedRefreshFailure: string | null = null;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential retry with backoff
+        const seedResult = await ensureCurrentEpochSeed(env).catch((error) => ({
+          success: false,
+          message: safeErrorMessage(error),
+        }));
+        if (seedResult.success) {
+          seedRefreshSucceeded = true;
+          break;
+        }
+        lastSeedRefreshFailure = seedResult.message ?? "unknown";
+        console.warn(
+          `[seed-refresh] attempt ${attempt}/5 failed: ${seedResult.message ?? "unknown"}`,
+        );
+        if (attempt < 5) {
+          // eslint-disable-next-line no-await-in-loop -- intentional sequential retry with backoff
+          await new Promise((r) => setTimeout(r, 10_000));
+        }
+      }
+      if (!seedRefreshSucceeded) {
+        console.warn(
+          `[seed-refresh] scheduled refresh failed after 5 attempts: ${
+            lastSeedRefreshFailure ?? "unknown"
+          }`,
+        );
       }
     }
 

@@ -92,6 +92,7 @@ async function triggerSeedRefresh(seedId: number): Promise<void> {
           Math.ceil(data.retry_after_seconds * 1000),
         );
       }
+      scheduleMissingSeedRetry();
       return;
     }
 
@@ -109,7 +110,19 @@ async function triggerSeedRefresh(seedId: number): Promise<void> {
       };
       missingSeedRetryMs = NULL_SEED_RETRY_MS;
       notify();
+      return;
     }
+
+    if (
+      typeof data.retry_after_seconds === "number" &&
+      Number.isFinite(data.retry_after_seconds)
+    ) {
+      missingSeedRetryMs = Math.max(
+        missingSeedRetryMs,
+        Math.ceil(data.retry_after_seconds * 1000),
+      );
+    }
+    scheduleMissingSeedRetry();
   } finally {
     refreshPending = false;
   }
@@ -169,14 +182,24 @@ async function refreshSeed(): Promise<void> {
       missingSeedRetryMs = NULL_SEED_RETRY_MS;
       notify();
     } else {
-      state = { seed: null, seedId: null, secondsLeft: getSecondsUntilNext() };
+      const hasCurrentEpochSeed = state.seed !== null && state.seedId === seedId;
+      if (hasCurrentEpochSeed) {
+        state = { ...state, secondsLeft: getSecondsUntilNext() };
+      } else {
+        state = { seed: null, seedId: null, secondsLeft: getSecondsUntilNext() };
+        void triggerSeedRefresh(seedId);
+      }
       notify();
-      void triggerSeedRefresh(seedId);
       scheduleMissingSeedRetry();
     }
   } catch {
-    // Network error — leave seed unchanged, retry after the same interval
-    state = { ...state, secondsLeft: getSecondsUntilNext() };
+    // Network error — invalidate stale seed if the epoch changed
+    const currentEpochSeedId = currentSeedId();
+    if (state.seedId !== null && state.seedId !== currentEpochSeedId) {
+      state = { seed: null, seedId: null, secondsLeft: getSecondsUntilNext() };
+    } else {
+      state = { ...state, secondsLeft: getSecondsUntilNext() };
+    }
     notify();
     scheduleMissingSeedRetry();
   } finally {
