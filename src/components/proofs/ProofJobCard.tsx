@@ -12,7 +12,7 @@ import {
   RotateCw,
 } from "lucide-react";
 import type { ClaimAttempt, ProofJobPublic, ProverAttempt } from "@/proof/api";
-import { getTapeDownloadUrl, retryFailedClaim, getProofJob } from "@/proof/api";
+import { getTapeDownloadUrl, retryFailedClaim, retryFailedProof, getProofJob } from "@/proof/api";
 import { ErrorDetailDialog } from "./ErrorDetailDialog";
 import { boundlessExplorerUrl, getActiveBackend } from "@/proof/helpers";
 import { formatBytes, formatCycles, formatDuration, formatHex32 } from "@/lib/format";
@@ -137,22 +137,28 @@ export function ProofJobCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [job, setJob] = useState(initialJob);
-  const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
-  const [fastPolling, setFastPolling] = useState(false);
+  const [claimRetrying, setClaimRetrying] = useState(false);
+  const [claimRetryError, setClaimRetryError] = useState<string | null>(null);
+  const [proofRetrying, setProofRetrying] = useState(false);
+  const [proofRetryError, setProofRetryError] = useState<string | null>(null);
+  const [fastPollingMode, setFastPollingMode] = useState<"claim" | "proof" | null>(null);
   const onJobUpdateRef = useRef(onJobUpdate);
   onJobUpdateRef.current = onJobUpdate;
   const cycleBackfillInFlightRef = useRef(false);
 
   // Keep in sync with parent prop updates — only if parent is strictly newer
   // to avoid overwriting local state after a retry API response.
-  if (new Date(initialJob.updatedAt) > new Date(job.updatedAt) && !retrying) {
+  if (
+    new Date(initialJob.updatedAt) > new Date(job.updatedAt) &&
+    !claimRetrying &&
+    !proofRetrying
+  ) {
     setJob(initialJob);
   }
 
-  // Fast-poll this specific job after a manual retry until the claim settles.
+  // Fast-poll this specific job after a manual retry until the target phase settles.
   useEffect(() => {
-    if (!fastPolling) return;
+    if (!fastPollingMode) return;
 
     const INTERVAL_MS = 2_500;
     const TIMEOUT_MS = 60_000;
@@ -160,7 +166,7 @@ export function ProofJobCard({
 
     const timerId = setInterval(() => {
       if (Date.now() - startedAt > TIMEOUT_MS) {
-        setFastPolling(false);
+        setFastPollingMode(null);
         return;
       }
       void (async () => {
@@ -169,8 +175,14 @@ export function ProofJobCard({
           const updated = response.job;
           setJob(updated);
           onJobUpdateRef.current?.(updated);
-          if (updated.claim.status === "succeeded" || updated.claim.status === "failed") {
-            setFastPolling(false);
+          if (fastPollingMode === "claim") {
+            if (updated.claim.status === "succeeded" || updated.claim.status === "failed") {
+              setFastPollingMode(null);
+            }
+            return;
+          }
+          if (updated.status === "succeeded" || updated.status === "failed") {
+            setFastPollingMode(null);
           }
         } catch {
           // ignore transient poll errors
@@ -179,7 +191,7 @@ export function ProofJobCard({
     }, INTERVAL_MS);
 
     return () => clearInterval(timerId);
-  }, [fastPolling, job.jobId]);
+  }, [fastPollingMode, job.jobId]);
 
   const score = job.tape.metadata.finalScore;
   const backend = getActiveBackend(job);
@@ -327,6 +339,9 @@ export function ProofJobCard({
       : null;
   const isClaimed = job.claim.status === "succeeded";
   const canRetryClaim = job.status === "succeeded" && job.claim.status === "failed";
+  const canRetryProof = job.status === "failed" && !job.result;
+  const hasProverAttempts = (job.proverAttempts?.length ?? 0) > 0;
+  const showProverAttempts = hasProverAttempts || canRetryProof || proofRetryError != null;
 
   // Synthesize a single legacy attempt from aggregate tracking when
   // claimAttempts[] is empty but claim work has been done.
@@ -355,17 +370,32 @@ export function ProofJobCard({
   const detailsId = `proof-job-details-${job.jobId}`;
 
   async function handleRetryClaim() {
-    setRetrying(true);
-    setRetryError(null);
+    setClaimRetrying(true);
+    setClaimRetryError(null);
     try {
       const response = await retryFailedClaim(job.jobId);
       setJob(response.job);
       onJobUpdate?.(response.job);
-      setFastPolling(true);
+      setFastPollingMode("claim");
     } catch (err) {
-      setRetryError(err instanceof Error ? err.message : "retry failed");
+      setClaimRetryError(err instanceof Error ? err.message : "retry failed");
     } finally {
-      setRetrying(false);
+      setClaimRetrying(false);
+    }
+  }
+
+  async function handleRetryProof() {
+    setProofRetrying(true);
+    setProofRetryError(null);
+    try {
+      const response = await retryFailedProof(job.jobId);
+      setJob(response.job);
+      onJobUpdate?.(response.job);
+      setFastPollingMode("proof");
+    } catch (err) {
+      setProofRetryError(err instanceof Error ? err.message : "retry failed");
+    } finally {
+      setProofRetrying(false);
     }
   }
 
@@ -466,77 +496,102 @@ export function ProofJobCard({
           )}
 
           {/* Attempt history */}
-          {job.proverAttempts && job.proverAttempts.length > 0 && (
+          {showProverAttempts && (
             <div>
               <h4 className="m-0 mb-2 font-display text-[0.65rem] uppercase tracking-[0.08em] text-muted-foreground">
                 Prover Attempts ({job.proverAttempts.length})
+                {canRetryProof && (
+                  <button
+                    type="button"
+                    onClick={handleRetryProof}
+                    disabled={proofRetrying}
+                    className={cn(
+                      "ml-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-0.5 text-[0.65rem] normal-case tracking-normal text-primary transition-colors hover:bg-primary/10",
+                      proofRetrying && "cursor-not-allowed opacity-50",
+                    )}
+                  >
+                    <RotateCw className={cn("size-3", proofRetrying && "animate-spin")} />
+                    {proofRetrying ? "Retrying…" : "Retry"}
+                  </button>
+                )}
               </h4>
-              <div className="grid gap-1.5">
-                {job.proverAttempts.map((attempt) => {
-                  const explorerUrl = attempt.statusUrl
-                    ? boundlessExplorerUrl(attempt.statusUrl)
-                    : null;
-                  return (
-                    <div
-                      key={attempt.index}
-                      className="flex flex-wrap items-center gap-2 rounded-lg border border-border/15 bg-[rgba(8,16,29,0.4)] px-3 py-2 text-xs"
-                    >
-                      <span className="tabular-nums text-muted-foreground">
-                        #{attempt.index + 1}
-                      </span>
-                      <BackendBadge backend={attempt.backend} />
-                      <span
-                        className={cn(
-                          "font-display uppercase tracking-wide",
-                          attempt.outcome === "success" && "text-secondary",
-                          attempt.outcome === "failed" && "text-destructive",
-                          attempt.outcome === "in_progress" && "text-primary",
-                        )}
+              {proofRetryError && (
+                <p className="m-0 mb-2 text-xs text-destructive/80">
+                  Retry failed. Refresh and try again: {proofRetryError}
+                </p>
+              )}
+              {hasProverAttempts ? (
+                <div className="grid gap-1.5">
+                  {job.proverAttempts.map((attempt) => {
+                    const explorerUrl = attempt.statusUrl
+                      ? boundlessExplorerUrl(attempt.statusUrl)
+                      : null;
+                    return (
+                      <div
+                        key={attempt.index}
+                        className="flex flex-wrap items-center gap-2 rounded-lg border border-border/15 bg-[rgba(8,16,29,0.4)] px-3 py-2 text-xs"
                       >
-                        {attemptOutcomeLabel(attempt.outcome)}
-                      </span>
-                      {attempt.endedAt && (
-                        <span className="text-muted-foreground">{timeAgo(attempt.endedAt)}</span>
-                      )}
-                      {attempt.fulfillmentTxHash && (
-                        <a
-                          href={`https://basescan.org/tx/${attempt.fulfillmentTxHash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-secondary no-underline hover:underline"
-                          onClick={(e) => e.stopPropagation()}
+                        <span className="tabular-nums text-muted-foreground">
+                          #{attempt.index + 1}
+                        </span>
+                        <BackendBadge backend={attempt.backend} />
+                        <span
+                          className={cn(
+                            "font-display uppercase tracking-wide",
+                            attempt.outcome === "success" && "text-secondary",
+                            attempt.outcome === "failed" && "text-destructive",
+                            attempt.outcome === "in_progress" && "text-primary",
+                          )}
                         >
-                          Tx
-                          <ExternalLink className="size-3" aria-hidden="true" />
-                        </a>
-                      )}
-                      {explorerUrl && (
-                        <a
-                          href={explorerUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ml-auto inline-flex items-center gap-1 text-primary no-underline hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Explorer
-                          <ExternalLink className="size-3" aria-hidden="true" />
-                        </a>
-                      )}
-                      {attempt.error && (
-                        <ErrorDetailDialog error={attempt.errorDetail ?? attempt.error}>
-                          <button
-                            type="button"
-                            className="m-0 w-full cursor-pointer truncate bg-transparent text-left text-xs text-destructive/80 hover:text-destructive"
+                          {attemptOutcomeLabel(attempt.outcome)}
+                        </span>
+                        {attempt.endedAt && (
+                          <span className="text-muted-foreground">{timeAgo(attempt.endedAt)}</span>
+                        )}
+                        {attempt.fulfillmentTxHash && (
+                          <a
+                            href={`https://basescan.org/tx/${attempt.fulfillmentTxHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-secondary no-underline hover:underline"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {attempt.error}
-                          </button>
-                        </ErrorDetailDialog>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                            Tx
+                            <ExternalLink className="size-3" aria-hidden="true" />
+                          </a>
+                        )}
+                        {explorerUrl && (
+                          <a
+                            href={explorerUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ml-auto inline-flex items-center gap-1 text-primary no-underline hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            Explorer
+                            <ExternalLink className="size-3" aria-hidden="true" />
+                          </a>
+                        )}
+                        {attempt.error && (
+                          <ErrorDetailDialog error={attempt.errorDetail ?? attempt.error}>
+                            <button
+                              type="button"
+                              className="m-0 w-full cursor-pointer truncate bg-transparent text-left text-xs text-destructive/80 hover:text-destructive"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {attempt.error}
+                            </button>
+                          </ErrorDetailDialog>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="m-0 text-xs text-muted-foreground">
+                  No prover attempts are recorded for this failed proof yet.
+                </p>
+              )}
             </div>
           )}
 
@@ -557,20 +612,20 @@ export function ProofJobCard({
                   <button
                     type="button"
                     onClick={handleRetryClaim}
-                    disabled={retrying}
+                    disabled={claimRetrying}
                     className={cn(
                       "ml-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-0.5 text-[0.65rem] normal-case tracking-normal text-primary transition-colors hover:bg-primary/10",
-                      retrying && "cursor-not-allowed opacity-50",
+                      claimRetrying && "cursor-not-allowed opacity-50",
                     )}
                   >
-                    <RotateCw className={cn("size-3", retrying && "animate-spin")} />
-                    {retrying ? "Retrying…" : "Retry"}
+                    <RotateCw className={cn("size-3", claimRetrying && "animate-spin")} />
+                    {claimRetrying ? "Retrying…" : "Retry"}
                   </button>
                 )}
               </h4>
-              {retryError && (
+              {claimRetryError && (
                 <p className="m-0 mb-2 text-xs text-destructive/80">
-                  Retry failed. Refresh and try again: {retryError}
+                  Retry failed. Refresh and try again: {claimRetryError}
                 </p>
               )}
               {claimAttempts.length === 0 ? (
