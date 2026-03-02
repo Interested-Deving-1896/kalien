@@ -22,7 +22,10 @@ export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
 export const OPPORTUNISTIC_POLL_STALE_MS = 5_000;
 // End-to-end job lifetime cap in the gateway (queue + proving + storage writes).
 // Also used as the max time a queued VAST fallback job can wait for a slot.
-export const DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS = 65 * 60_000; // 65 minutes
+// Keep this above the full four-attempt fallback chain budget
+// (Boundless + Vast + Boundless + Vast) so wall timeout does not preempt
+// backend assurance under normal operation.
+export const DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS = 180 * 60_000; // 3 hours
 // Max time a single active prover run should occupy the slot in the gateway.
 // Keep slightly above the prover API timeout so status propagation can finish.
 export const DEFAULT_MAX_PROVER_RUN_TIME_MS = 11 * 60_000; // 11 minutes
