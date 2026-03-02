@@ -311,23 +311,35 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
         return jsonError(c, 400, "missing credential_id");
       }
 
-      // Verify credential belongs to claimant address via indexer
+      let verifiedByIndexer = false;
       try {
         await assertCredentialBelongsToClaimantContract({
           claimantAddress: address,
           credentialIdBase64Url: credentialId,
           indexerBaseUrl: c.env.SMART_ACCOUNT_INDEXER_URL,
         });
+        verifiedByIndexer = true;
       } catch (error) {
         if (error instanceof LeaderboardCredentialBindingError) {
-          return jsonError(c, error.statusCode, error.message);
+          const shouldFallbackToChain =
+            error.statusCode === 503 ||
+            error.message === "credential is not linked to claimant address in smart-account indexer";
+
+          if (!shouldFallbackToChain) {
+            return jsonError(c, error.statusCode, error.message);
+          }
+
+          console.warn(
+            `[leaderboard] indexer verification bypassed (reason: ${error.message}); falling back to on-chain signer verification`,
+          );
+        } else {
+          throw error;
         }
-        throw error;
       }
 
-      // Check D1 cache for public key; if not found, fetch from chain
       let credential = await getLeaderboardProfileCredential(c.env, credentialId);
-      if (!credential) {
+      const requireOnChainVerification = !verifiedByIndexer;
+      if (!credential || requireOnChainVerification) {
         const rpcUrl = c.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.org";
         const networkPassphrase =
           c.env.CLAIM_NETWORK_PASSPHRASE || "Test SDF Network ; September 2015";
@@ -348,11 +360,20 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
           return jsonError(c, 503, "failed to fetch credential public key from chain");
         }
 
-        credential = await upsertLeaderboardProfileCredential(c.env, {
-          claimantAddress: address,
-          credentialId,
-          publicKey: rawPublicKeyBase64Url,
-        });
+        if (!credential) {
+          credential = await upsertLeaderboardProfileCredential(c.env, {
+            claimantAddress: address,
+            credentialId,
+            publicKey: rawPublicKeyBase64Url,
+          });
+        } else {
+          if (credential.claimantAddress !== address) {
+            return jsonError(c, 403, "credential is already bound to another claimant address");
+          }
+          if (credential.publicKey !== rawPublicKeyBase64Url) {
+            return jsonError(c, 403, "credential public key mismatch");
+          }
+        }
       }
 
       // Derive origin and RP ID from request URL
