@@ -1582,14 +1582,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       const runElapsedMs = job.prover.runElapsedMs ?? 0;
       if (!this.isBoundlessJob(job) && runElapsedMs > maxProverRunTimeMs) {
         const runMin = Math.round(runElapsedMs / 60_000);
-        await this.markFailed(
-          jobId,
-          `proof run timed out after ${runMin} minutes while occupying prover slot`,
-          {
-            errorCode: "prover_run_timeout",
-            timeoutPhase: "prover_run",
-          },
-        );
+        const reason = `proof run timed out after ${runMin} minutes while occupying prover slot`;
+        console.log(`[coordinator] vast job ${jobId} — ${reason}, falling back`);
+        await this.recordAttemptEnd(job, "failed", reason, {
+          errorCode: "prover_run_timeout",
+        });
+        await this.tryNextProverBackend(jobId, job, reason);
+        const fallbackJob = await this.loadJob(jobId);
+        if (fallbackJob && !isTerminalProofStatus(fallbackJob.status)) {
+          anyStillActive = true;
+        }
         continue;
       }
 
