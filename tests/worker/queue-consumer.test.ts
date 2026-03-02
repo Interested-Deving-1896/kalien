@@ -114,6 +114,7 @@ function makeCoordinator(
     beginQueueAttempt: async () => null,
     getJob: async () => null,
     markFailed: async () => null,
+    markDispatchFailedAndTryNextBackend: async () => null,
     markRetry: async () => null,
     markProverAccepted: async () => null,
     markSucceeded: async () => null,
@@ -255,7 +256,7 @@ describe("handleQueueBatch (Boundless)", () => {
     expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
   });
 
-  it("marks failed when boundless returns fatal", async () => {
+  it("falls back to the next backend when boundless returns fatal", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -287,10 +288,10 @@ describe("handleQueueBatch (Boundless)", () => {
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
     }>;
-    expect(calls.some((c) => c.method === "markFailed")).toBe(true);
+    expect(calls.some((c) => c.method === "markDispatchFailedAndTryNextBackend")).toBe(true);
   });
 
-  it("marks permanently failed when max retries exceeded", async () => {
+  it("falls back to the next backend when boundless delivery retries are exhausted", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -322,10 +323,10 @@ describe("handleQueueBatch (Boundless)", () => {
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
     }>;
-    expect(calls.some((c) => c.method === "markFailed")).toBe(true);
+    expect(calls.some((c) => c.method === "markDispatchFailedAndTryNextBackend")).toBe(true);
   });
 
-  it("marks failed when boundless config is missing", async () => {
+  it("falls back to the next backend when boundless config is missing", async () => {
     const coordinator = makeCoordinator({
       beginQueueAttempt: async () => ({
         jobId: "job-1",
@@ -355,9 +356,9 @@ describe("handleQueueBatch (Boundless)", () => {
       method: string;
       args: unknown[];
     }>;
-    const failCall = calls.find((c) => c.method === "markFailed");
+    const failCall = calls.find((c) => c.method === "markDispatchFailedAndTryNextBackend");
     expect(failCall).toBeDefined();
-    expect(String(failCall!.args[1])).toContain(
+    expect(String(failCall!.args[2])).toContain(
       "boundless backend not configured",
     );
   });
@@ -619,6 +620,42 @@ describe("handleVastQueueBatch (VastAI)", () => {
       method: string;
     }>;
     expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
+  });
+
+  it("falls back to the next backend when vast returns fatal", async () => {
+    const coordinator = makeCoordinator({
+      hasActiveVastJob: async () => false,
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100, seedId: 1 },
+        },
+        prover: { jobId: null },
+        claim: { claimantAddress: "GABC" },
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      __submitResult: {
+        type: "fatal",
+        message: "prover health check failed",
+      },
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        }),
+      },
+    });
+    await handleVastQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markDispatchFailedAndTryNextBackend")).toBe(true);
   });
 });
 
