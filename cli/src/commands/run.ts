@@ -1,16 +1,19 @@
 import { cpus } from "os";
+import { Client as ScoreClient } from "asteroids-score";
 import { Autopilot, type AutopilotConfig } from "@/game/Autopilot";
 import { renderDashboard, type DashboardStats } from "../display/dashboard";
 import * as ansi from "../display/ansi";
 import { submitTape, type SubmitResult } from "../api/submit";
 import { fetchPlayerScore } from "../api/score";
-import type { WorkerToMainMessage } from "../worker/messages";
+import type { MainToWorkerMessage, WorkerToMainMessage } from "../worker/messages";
 import {
+  type NetworkName,
   SEED_INTERVAL_SECONDS,
   MAX_SUBMISSIONS_PER_EPOCH,
   SETTLE_DELAY_MS,
 } from "../constants";
-import { fetchSeedFromContract, fetchBestScoreForSeed } from "@/chain/seed";
+import { fetchSeedFromContract } from "@/chain/seed";
+import { runCliPreflight } from "../preflight";
 
 const SEED_FETCH_TIMEOUT_MS = 6000;
 const SEED_REFRESH_INTERVAL_MS = 4000;
@@ -24,13 +27,43 @@ function epochEndMs(epoch: number): number {
 }
 
 export interface RunOptions {
+  network: NetworkName;
+  networkPassphrase: string;
   address: string;
   threads: number;
   apiUrl: string;
   rpcUrl: string;
   contractId: string;
+  tokenContractId: string;
   relayerBaseUrl: string;
   relayerApiKey: string | null;
+}
+
+/**
+ * Read claimant best score for a specific seed_id against the selected
+ * network passphrase. Returns 0 for transient RPC/simulation failures.
+ */
+async function fetchBestScoreForSeedOnNetwork(
+  contractId: string,
+  rpcUrl: string,
+  networkPassphrase: string,
+  claimant: string,
+  seedId: number,
+): Promise<number> {
+  try {
+    const client = new ScoreClient({
+      contractId,
+      rpcUrl,
+      networkPassphrase,
+    });
+    const tx = await client.best_score({
+      claimant,
+      seed_id: seedId >>> 0,
+    });
+    return tx.result;
+  } catch {
+    return 0;
+  }
 }
 
 export async function runCommand(opts: RunOptions): Promise<void> {
@@ -46,6 +79,23 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     ansi.color(ansi.dim, ` (${pct}%)\n`),
   );
 
+  process.stdout.write(ansi.color(ansi.cyan, "  Running preflight checks..."));
+  const preflight = await runCliPreflight({
+    network: opts.network,
+    networkPassphrase: opts.networkPassphrase,
+    address: opts.address,
+    apiUrl: opts.apiUrl,
+    rpcUrl: opts.rpcUrl,
+    contractId: opts.contractId,
+    tokenContractId: opts.tokenContractId,
+  });
+  process.stdout.write(ansi.color(ansi.green, " ok\n"));
+  for (const warning of preflight.warnings) {
+    process.stdout.write(
+      ansi.color(ansi.yellow, `  Warning: ${warning}\n`),
+    );
+  }
+
   // Fetch on-chain high score before starting workers
   process.stdout.write(ansi.color(ansi.cyan, "  Fetching on-chain score..."));
   const playerInfo = await fetchPlayerScore(opts.address, opts.apiUrl);
@@ -60,9 +110,10 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   // scores from a previous session or a different client (e.g. the web UI).
   const initialSeedId = getCurrentEpoch();
   process.stdout.write(ansi.color(ansi.cyan, "  Fetching seed best score..."));
-  const initialSeedBest = await fetchBestScoreForSeed(
+  const initialSeedBest = await fetchBestScoreForSeedOnNetwork(
     opts.contractId,
     opts.rpcUrl,
+    opts.networkPassphrase,
     opts.address,
     initialSeedId,
   );
@@ -162,11 +213,31 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   // For `bun run` (dev), use import.meta.url so the path resolves from the source file.
   const isCompiled = import.meta.url.includes("$bunfs");
   const workers: Worker[] = [];
+  const workerAlive: boolean[] = Array.from({ length: threadCount }, () => false);
+
+  function safePostToWorker(index: number, msg: MainToWorkerMessage): void {
+    const worker = workers[index];
+    if (!worker || !workerAlive[index]) {
+      return;
+    }
+    try {
+      worker.postMessage(msg);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (/Worker has been terminated|InvalidStateError/i.test(detail)) {
+        workerAlive[index] = false;
+        return;
+      }
+      throw error;
+    }
+  }
+
   for (let i = 0; i < threadCount; i++) {
     const role = i === 0 ? "exploit" : "explore";
     const worker = isCompiled
       ? new Worker("./worker/game-worker.ts")
       : new Worker(new URL("../worker/game-worker.ts", import.meta.url));
+    workerAlive[i] = true;
     worker.onmessage = (event: MessageEvent<WorkerToMainMessage>) => {
       const msg = event.data;
       switch (msg.type) {
@@ -186,7 +257,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
             // Immediately share the new global best with the exploiter (worker 0)
             // so it can start refining this region right away.
             if (msg.workerId !== 0) {
-              workers[0]?.postMessage({
+              safePostToWorker(0, {
                 type: "set-config",
                 config: msg.config,
                 globalScore: msg.score,
@@ -197,7 +268,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
             // based on their own threshold logic (>10% improvement required).
             for (let j = 1; j < workers.length; j++) {
               if (j !== msg.workerId) {
-                workers[j]?.postMessage({
+                safePostToWorker(j, {
                   type: "set-config",
                   config: msg.config,
                   globalScore: msg.score,
@@ -208,10 +279,20 @@ export async function runCommand(opts: RunOptions): Promise<void> {
           workerBests[msg.workerId] = msg.score;
           break;
         case "stopped":
+          workerAlive[msg.workerId] = false;
           break;
       }
     };
-    worker.postMessage({
+    worker.onerror = (event) => {
+      workerAlive[i] = false;
+      const detail =
+        event instanceof ErrorEvent && typeof event.message === "string"
+          ? event.message
+          : "unknown worker error";
+      lastSubmitStatus = ansi.color(ansi.red, `worker ${i} crashed: ${detail}`);
+    };
+    workers.push(worker);
+    safePostToWorker(i, {
       type: "start",
       workerId: i,
       role,
@@ -220,7 +301,6 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       relayerBaseUrl: opts.relayerBaseUrl,
       relayerApiKey: opts.relayerApiKey,
     });
-    workers.push(worker);
   }
 
   function resetEpoch(onChainSeedBest = 0): void {
@@ -241,11 +321,10 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     bestConfig = seedConfig;
 
     for (let i = 0; i < workers.length; i++) {
-      const w = workers[i];
-      w.postMessage({ type: "reset-best" });
+      safePostToWorker(i, { type: "reset-best" });
       if (i === 0) {
         // Exploiter gets the carried-forward best config
-        w.postMessage({
+        safePostToWorker(i, {
           type: "set-config",
           config: seedConfig,
           globalScore: 0,
@@ -344,9 +423,10 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       });
       // Fetch this player's on-chain best for the new seed so we don't
       // submit scores worse than what's already claimed.
-      fetchBestScoreForSeed(
+      fetchBestScoreForSeedOnNetwork(
         opts.contractId,
         opts.rpcUrl,
+        opts.networkPassphrase,
         opts.address,
         epoch,
       ).then((seedBest) => {
@@ -419,8 +499,8 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     console.log(ansi.color(ansi.brightCyan, "  Shutting down..."));
 
     // Stop workers
-    for (const w of workers) {
-      w.postMessage({ type: "stop" });
+    for (let i = 0; i < workers.length; i++) {
+      safePostToWorker(i, { type: "stop" });
     }
 
     // Drain any in-flight submit before the final one

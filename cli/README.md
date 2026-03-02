@@ -29,6 +29,20 @@ bun run src/index.ts cleanup --dry-run
 bun run src/index.ts cleanup --orphan-only --older-than 5m
 ```
 
+## Network Defaults And Preflight
+
+- Default network is `testnet`.
+- Per-network defaults are applied for API URL, RPC URL, score contract, and token contract.
+- Current defaults:
+  - testnet API: `https://testnet.kalien.xyz`
+  - mainnet API: `https://kalien.xyz`
+  - mainnet score contract: `CDDAYXNY6MMA47Q54VSHG2WV445ZUOJ354NOLSFRC7ZUDTD6OTS4A7PE`
+- `kalien run` performs preflight checks before workers start:
+  - `C...` claimant must exist as a deployed contract on the selected network.
+  - `G...` claimant must exist as an account on the selected network and have the KALIEN trustline for that network’s token contract.
+  - Score contract must be readable on the selected network.
+  - API seed must match RPC seed for the same `seed_id`.
+
 ## Build
 
 From `cli/`:

@@ -2,7 +2,7 @@
 
 import { cpus } from "os";
 import * as ansi from "./display/ansi";
-import { NETWORKS, DEFAULT_API_URL, type NetworkName } from "./constants";
+import { NETWORKS, type NetworkName } from "./constants";
 
 const HELP = `
 ${ansi.brightCyan}KALIEN${ansi.reset} - Autonomous Asteroids Farming CLI
@@ -22,10 +22,10 @@ ${ansi.bold}COMMANDS${ansi.reset}
 ${ansi.bold}RUN OPTIONS${ansi.reset}
   --address <addr>      Stellar wallet address for claims (required)
   --threads <n|max|%>   Worker count: number, "max", or percentage (e.g. "25%"). Default: 50%
-  --api-url <url>       API base URL (default: https://kalien.xyz)
+  --api-url <url>       API base URL (default: per network)
   --network <net>          Stellar network: testnet or mainnet (default: testnet)
   --rpc-url <url>          Stellar RPC URL override (default: per network)
-  --contract-id <addr>     Score contract address (default: testnet address; required for mainnet)
+  --contract-id <addr>     Score contract address (default: per network)
   --relayer-api-key <key>  OZ channels relayer API key — materializes/indexes epoch seed if cron hasn't fired yet
 
 ${ansi.bold}CLEANUP OPTIONS${ansi.reset}
@@ -112,14 +112,8 @@ async function main(): Promise<void> {
       const { relayerUrl: relayerBaseUrl } = NETWORKS[network];
       const rpcUrl = args["rpc-url"] || NETWORKS[network].rpcUrl;
       const contractId = args["contract-id"] || NETWORKS[network].contractId;
+      const tokenContractId = NETWORKS[network].tokenContractId;
       const relayerApiKey = args["relayer-api-key"] || null;
-
-      if (!contractId) {
-        console.error(
-          "Error: --contract-id is required for mainnet (no default set yet)",
-        );
-        process.exit(1);
-      }
 
       const coreCount = cpus().length;
       const threads =
@@ -133,11 +127,14 @@ async function main(): Promise<void> {
 
       const { runCommand } = await import("./commands/run");
       await runCommand({
+        network,
+        networkPassphrase: NETWORKS[network].networkPassphrase,
         address,
         threads,
-        apiUrl: args["api-url"] || DEFAULT_API_URL,
+        apiUrl: args["api-url"] || NETWORKS[network].apiUrl,
         rpcUrl,
         contractId,
+        tokenContractId,
         relayerBaseUrl,
         relayerApiKey,
       });
@@ -183,6 +180,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`Fatal error: ${message}`);
+  if (process.env.KALIEN_DEBUG === "1" && err instanceof Error && err.stack) {
+    console.error(err.stack);
+  }
   process.exit(1);
 });

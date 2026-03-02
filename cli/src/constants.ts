@@ -1,25 +1,24 @@
-// Network presets — RPC URL and score contract address per Stellar network.
-// contractId is null for networks where the contract hasn't been deployed yet;
-// in that case --contract-id must be supplied on the command line.
+// Network presets used by the CLI.
 export const NETWORKS = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
     rpcUrl: "https://soroban-testnet.stellar.org",
     contractId: "CAKVUHDKKEG6SYUAVMQMDRMUGCNQJS74BP45NNYS7Y2TTYUMYFSLA7EU",
+    tokenContractId: "CBUCDXT6BY3WWP764AMW66QJA6ZRWL2TRV6VTYCWPZF4FUZRAXK2S253",
     relayerUrl: "https://channels.openzeppelin.com/testnet",
+    apiUrl: "https://testnet.kalien.xyz",
   },
   mainnet: {
     networkPassphrase: "Public Global Stellar Network ; September 2015",
     rpcUrl: "https://rpc.lightsail.network",
-    contractId: null,
+    contractId: "CDDAYXNY6MMA47Q54VSHG2WV445ZUOJ354NOLSFRC7ZUDTD6OTS4A7PE",
+    tokenContractId: "CB4YK5LZG2EGRHJOS4WNX7AAFP3RR3RS5YJUC6D52V2HDT7EQO2QDF6T",
     relayerUrl: "https://channels.openzeppelin.com",
+    apiUrl: "https://kalien.xyz",
   },
 } as const;
 
 export type NetworkName = keyof typeof NETWORKS;
-
-// Default backend API URL
-export const DEFAULT_API_URL = "https://kalien.xyz";
 
 // Re-export the single source of truth for seed interval duration
 export { SEED_INTERVAL_SECONDS } from "@/chain/seed";
