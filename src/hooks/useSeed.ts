@@ -113,14 +113,8 @@ async function triggerSeedRefresh(seedId: number): Promise<void> {
       return;
     }
 
-    if (
-      typeof data.retry_after_seconds === "number" &&
-      Number.isFinite(data.retry_after_seconds)
-    ) {
-      missingSeedRetryMs = Math.max(
-        missingSeedRetryMs,
-        Math.ceil(data.retry_after_seconds * 1000),
-      );
+    if (typeof data.retry_after_seconds === "number" && Number.isFinite(data.retry_after_seconds)) {
+      missingSeedRetryMs = Math.max(missingSeedRetryMs, Math.ceil(data.retry_after_seconds * 1000));
     }
     scheduleMissingSeedRetry();
   } finally {

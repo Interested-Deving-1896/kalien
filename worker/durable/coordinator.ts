@@ -97,15 +97,15 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   private resolveMaxProofTotalWallTimeMs(): number {
-    return parseInteger(this.env.MAX_PROOF_TOTAL_WALL_TIME_MS, DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS, 60_000);
+    return parseInteger(
+      this.env.MAX_PROOF_TOTAL_WALL_TIME_MS,
+      DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
+      60_000,
+    );
   }
 
   private resolveMaxProverRunTimeMs(): number {
-    return parseInteger(
-      this.env.MAX_PROVER_RUN_TIME_MS,
-      DEFAULT_MAX_PROVER_RUN_TIME_MS,
-      60_000,
-    );
+    return parseInteger(this.env.MAX_PROVER_RUN_TIME_MS, DEFAULT_MAX_PROVER_RUN_TIME_MS, 60_000);
   }
 
   private updateQueueWaitElapsed(job: ProofJobRecord): void {

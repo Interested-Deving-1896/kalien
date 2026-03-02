@@ -98,7 +98,9 @@ impl AsteroidsScoreContract {
         token_id: Address,
     ) {
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::VerifierId, &verifier_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::VerifierId, &verifier_id);
         env.storage().instance().set(&DataKey::ImageId, &image_id);
         env.storage().instance().set(&DataKey::TokenId, &token_id);
         extend_instance_ttl(&env);

@@ -358,11 +358,14 @@ export class BoundlessClient {
         autoDepositWei: preparedAutoDepositWei,
       });
     } else {
-      console.log("[boundless] market-balance funding prep exhausted; using attached-value fallback", {
-        requestId: requestIdHex,
-        maxPriceWei: maxPrice.toString(),
-        error: marketFundingError ?? "unknown funding prep error",
-      });
+      console.log(
+        "[boundless] market-balance funding prep exhausted; using attached-value fallback",
+        {
+          requestId: requestIdHex,
+          maxPriceWei: maxPrice.toString(),
+          error: marketFundingError ?? "unknown funding prep error",
+        },
+      );
     }
 
     fundingPlans.push({

@@ -57,7 +57,11 @@ interface PreparedJob {
 }
 
 function resolveMaxProofTotalWallTimeMs(env: WorkerEnv): number {
-  return parseInteger(env.MAX_PROOF_TOTAL_WALL_TIME_MS, DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS, 60_000);
+  return parseInteger(
+    env.MAX_PROOF_TOTAL_WALL_TIME_MS,
+    DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
+    60_000,
+  );
 }
 
 function resolveMaxProverRunTimeMs(env: WorkerEnv): number {
@@ -251,7 +255,11 @@ async function tryRecoverStaleVastSlot(
   env: WorkerEnv,
 ): Promise<boolean> {
   const activeVastJob = await coordinator.getActiveVastJob();
-  if (!activeVastJob || isTerminalProofStatus(activeVastJob.status) || !activeVastJob.prover.jobId) {
+  if (
+    !activeVastJob ||
+    isTerminalProofStatus(activeVastJob.status) ||
+    !activeVastJob.prover.jobId
+  ) {
     return false;
   }
 
