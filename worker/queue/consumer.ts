@@ -13,7 +13,13 @@ import type { WorkerEnv } from "../env";
 import { writeProofTapeMapping } from "../leaderboard-store";
 import { hexToBytes, parseProofArtifactV4, sha256Hex } from "../proof-artifact";
 import { submitToProver } from "../prover/client";
-import type { ClaimQueueMessage, ProofJobRecord, ProofQueueMessage, ProofJournal } from "../types";
+import type {
+  ClaimQueueMessage,
+  ProofJobRecord,
+  ProofJournal,
+  ProofQueueMessage,
+  ProverBackend,
+} from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
 import { packJournalRaw } from "../../shared/stellar/journal";
 
@@ -130,6 +136,7 @@ async function prepareForSubmission(
 async function handleSubmitResult(
   submitResult: Awaited<ReturnType<typeof submitToProver>>,
   jobId: string,
+  backend: ProverBackend,
   message: Message<ProofQueueMessage>,
   env: WorkerEnv,
   maxRetries: number,
@@ -138,8 +145,9 @@ async function handleSubmitResult(
 
   if (submitResult.type === "retry") {
     if (message.attempts >= maxRetries) {
-      await coordinator.markFailed(
+      await coordinator.markDispatchFailedAndTryNextBackend(
         jobId,
+        backend,
         `${submitResult.message} (exhausted ${message.attempts} delivery attempts)`,
       );
       message.ack();
@@ -154,7 +162,7 @@ async function handleSubmitResult(
   }
 
   if (submitResult.type === "fatal") {
-    await coordinator.markFailed(jobId, submitResult.message);
+    await coordinator.markDispatchFailedAndTryNextBackend(jobId, backend, submitResult.message);
     message.ack();
     return;
   }
@@ -193,8 +201,12 @@ async function processBoundlessMessage(
   const boundlessConfig = resolveBoundlessConfig(env);
   if (!boundlessConfig) {
     // Boundless not configured — this shouldn't happen in normal flow,
-    // but if it does, fail gracefully and let the coordinator handle fallback.
-    await coordinator.markFailed(jobId, "boundless backend not configured");
+    // but if it does, immediately fail over to the next backend.
+    await coordinator.markDispatchFailedAndTryNextBackend(
+      jobId,
+      "boundless",
+      "boundless backend not configured",
+    );
     message.ack();
     return;
   }
@@ -208,8 +220,9 @@ async function processBoundlessMessage(
   } catch (error) {
     const reason = `boundless submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_QUEUE_RETRIES) {
-      await coordinator.markFailed(
+      await coordinator.markDispatchFailedAndTryNextBackend(
         jobId,
+        "boundless",
         `${reason} (exhausted ${message.attempts} delivery attempts)`,
       );
       message.ack();
@@ -226,7 +239,7 @@ async function processBoundlessMessage(
     return;
   }
 
-  await handleSubmitResult(submitResult, jobId, message, env, MAX_QUEUE_RETRIES);
+  await handleSubmitResult(submitResult, jobId, "boundless", message, env, MAX_QUEUE_RETRIES);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,8 +386,9 @@ async function processVastMessage(
   } catch (error) {
     const reason = `vast submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {
-      await coordinator.markFailed(
+      await coordinator.markDispatchFailedAndTryNextBackend(
         jobId,
+        "vast",
         `${reason} (exhausted ${message.attempts} delivery attempts)`,
       );
       message.ack();
@@ -391,7 +405,7 @@ async function processVastMessage(
     return;
   }
 
-  await handleSubmitResult(submitResult, jobId, message, env, MAX_VAST_QUEUE_RETRIES);
+  await handleSubmitResult(submitResult, jobId, "vast", message, env, MAX_VAST_QUEUE_RETRIES);
 }
 
 // ---------------------------------------------------------------------------

@@ -1273,6 +1273,69 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return refreshed ?? job;
   }
 
+  /**
+   * Records a failed dispatch/submission attempt for a specific backend and
+   * immediately tries the next backend in the fallback chain.
+   *
+   * Used by queue consumers when submission fails before a prover job is
+   * accepted (no in-progress attempt exists yet).
+   */
+  async markDispatchFailedAndTryNextBackend(
+    jobId: string,
+    backend: ProverBackend,
+    reason: string,
+    enrichment?: {
+      errorCode?: string | null;
+      errorDetail?: string | null;
+    },
+  ): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job || isTerminalProofStatus(job.status)) {
+      return job;
+    }
+
+    const now = nowIso();
+    const openAttempt = job.proverAttempts.find((a) => a.outcome === "in_progress");
+    if (openAttempt) {
+      openAttempt.endedAt = now;
+      openAttempt.outcome = "failed";
+      openAttempt.error = openAttempt.error ?? reason;
+      if (enrichment?.errorCode !== undefined) openAttempt.errorCode = enrichment.errorCode;
+      if (enrichment?.errorDetail !== undefined) openAttempt.errorDetail = enrichment.errorDetail;
+      await this.saveJob(job);
+    } else {
+      const syntheticAttempt: ProverAttempt = {
+        index: job.proverAttempts.length,
+        backend,
+        startedAt: job.queue.lastAttemptAt ?? now,
+        endedAt: now,
+        outcome: "failed",
+        error: reason,
+        errorDetail: enrichment?.errorDetail ?? null,
+        errorCode: enrichment?.errorCode ?? null,
+        proverJobId: null,
+        statusUrl: null,
+        maxPriceUsd: null,
+        minPriceWei: null,
+        maxPriceWei: null,
+        fundingModeUsed: null,
+        marketBalanceBeforeWei: null,
+        autoDepositWei: null,
+        actualCostUsd: null,
+        lockPriceWei: null,
+        proverAddress: null,
+        fulfillmentTxHash: null,
+        programCycles: null,
+        totalCycles: null,
+      };
+      job.proverAttempts.push(syntheticAttempt);
+      await this.saveJob(job);
+    }
+
+    await this.tryNextProverBackend(jobId, job, reason);
+    return await this.loadJob(jobId);
+  }
+
   private async recordAttemptEnd(
     job: ProofJobRecord,
     outcome: "success" | "failed",
