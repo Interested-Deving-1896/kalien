@@ -1,6 +1,6 @@
 # ZK Asteroids Proof Gateway Spec
 
-Last updated: 2026-02-28
+Last updated: 2026-03-02
 
 ## Purpose
 
@@ -45,6 +45,21 @@ Success response (`202`) returns `status_url` and public job snapshot.
 
 ### `GET /api/proofs/jobs/:jobId`
 Returns current job status and attempt history.
+Includes timeout diagnostics (`errorCode`, `timeoutPhase`) and phase timing
+fields (`queue.waitElapsedMs`, `prover.runElapsedMs`) when present.
+
+### `POST /api/proofs/jobs/:jobId/retry-proof`
+Manual retry for failed proof jobs.
+
+Query params:
+- `backend=auto|boundless|vast` (default: `auto`)
+
+Returns updated job snapshot after re-queue.
+
+### `POST /api/proofs/jobs/:jobId/retry-claim`
+Manual retry for failed claim submission after a succeeded proof.
+
+Returns updated job snapshot after re-queue.
 
 ### `GET /api/proofs/jobs/:jobId/result`
 Returns `ProofArtifactV4` when job succeeded.
@@ -72,6 +87,10 @@ Claim statuses:
 - Durable Object alarm drives polling and retries.
 - Terminal jobs are retained by retention/max-count policy.
 - Result artifacts are kept in R2; DO record cleanup does not immediately delete result artifacts.
+- Timeout attribution is explicit:
+  - `job_total_wall_timeout` (`timeoutPhase=total_wall`)
+  - `vast_slot_wait_timeout` (`timeoutPhase=vast_wait`)
+  - `prover_run_timeout` (`timeoutPhase=prover_run`)
 
 ## Backend Selection
 
@@ -98,7 +117,8 @@ Successful proofs are stored as `ProofArtifactV4` in R2:
 
 Worker:
 - `MAX_TAPE_BYTES`
-- `MAX_JOB_WALL_TIME_MS`
+- `MAX_PROOF_TOTAL_WALL_TIME_MS`
+- `MAX_PROVER_RUN_TIME_MS`
 - `PROVER_POLL_INTERVAL_MS`
 - `PROVER_POLL_BUDGET_MS`
 - `PROVER_POLL_TIMEOUT_MS`
