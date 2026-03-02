@@ -1233,15 +1233,17 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       throw new Error(`requested backend is not configured: ${backend}`);
     }
 
+    const now = nowIso();
     job.status = "queued";
-    job.updatedAt = nowIso();
+    job.createdAt = now; // Reset wall-time reference so the retried job isn't immediately killed
+    job.updatedAt = now;
     job.completedAt = null;
     job.error = null;
     job.errorCode = null;
     job.timeoutPhase = null;
     job.queue.lastError = null;
     job.queue.nextRetryAt = null;
-    job.queue.waitStartedAt = nowIso();
+    job.queue.waitStartedAt = now;
     job.queue.waitElapsedMs = 0;
     job.prover.jobId = null;
     job.prover.status = null;
