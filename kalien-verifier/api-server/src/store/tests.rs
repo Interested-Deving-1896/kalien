@@ -1,6 +1,7 @@
 use super::*;
 use crate::options_summary;
 use host::ProveOptions;
+use rusqlite::Connection;
 use tempfile::TempDir;
 
 fn test_store() -> (JobStore, TempDir) {
@@ -304,6 +305,38 @@ fn open_succeeds_on_invalid_result_path_value() {
     assert!(
         orphan.exists(),
         "cleanup should be skipped when DB contains invalid result_path values"
+    );
+}
+
+#[test]
+fn open_fails_fast_on_incompatible_jobs_schema() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("jobs.db");
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE jobs (
+            job_id     TEXT PRIMARY KEY,
+            status     TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );",
+    )
+    .unwrap();
+    drop(conn);
+
+    let opened = JobStore::open(dir.path());
+    assert!(opened.is_err(), "open should fail for incompatible schema");
+    let err = opened.err().unwrap();
+    assert!(
+        err.contains("incompatible jobs.db schema"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.contains("missing required columns in jobs table"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.contains("started_at"),
+        "error should include at least one missing column: {err}"
     );
 }
 

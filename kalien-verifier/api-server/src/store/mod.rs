@@ -4,6 +4,7 @@ mod files;
 mod tests;
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -14,6 +15,24 @@ use uuid::Uuid;
 
 use crate::{now_unix_s, JobStatus, ProofEnvelope, ProofJob, ProveOptionsSummary};
 use db::status_to_str;
+
+const REQUIRED_JOBS_COLUMNS: &[&str] = &[
+    "job_id",
+    "status",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "tape_size_bytes",
+    "opt_max_frames",
+    "opt_receipt_kind",
+    "opt_segment_limit_po2",
+    "opt_proof_mode",
+    "opt_verify_mode",
+    "opt_accelerator",
+    "result_path",
+    "error",
+    "error_code",
+];
 
 /// Result of attempting to enqueue a new proof job.
 pub enum EnqueueResult {
@@ -63,26 +82,30 @@ impl JobStore {
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs (
-                job_id              TEXT PRIMARY KEY,
-                status              TEXT NOT NULL,
-                created_at          INTEGER NOT NULL,
-                started_at          INTEGER,
-                finished_at         INTEGER,
-                tape_size_bytes     INTEGER NOT NULL,
+                job_id                TEXT PRIMARY KEY,
+                status                TEXT NOT NULL,
+                created_at            INTEGER NOT NULL,
+                started_at            INTEGER,
+                finished_at           INTEGER,
+                tape_size_bytes       INTEGER NOT NULL,
                 opt_max_frames        INTEGER NOT NULL,
                 opt_receipt_kind      TEXT NOT NULL,
                 opt_segment_limit_po2 INTEGER NOT NULL,
-                 opt_proof_mode        TEXT NOT NULL,
-                 opt_verify_mode       TEXT NOT NULL,
-                 opt_accelerator       TEXT NOT NULL,
-                 result_path         TEXT,
-                 error               TEXT,
-                 error_code          TEXT
-             );
-             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+                opt_proof_mode        TEXT NOT NULL,
+                opt_verify_mode       TEXT NOT NULL,
+                opt_accelerator       TEXT NOT NULL,
+                result_path           TEXT,
+                error                 TEXT,
+                error_code            TEXT
+             );",
+        )
+        .map_err(|e| format!("failed to create jobs table: {e}"))?;
+        Self::validate_jobs_schema(&conn, &db_path)?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
              CREATE INDEX IF NOT EXISTS idx_jobs_finished_at ON jobs(finished_at);",
         )
-        .map_err(|e| format!("failed to create schema: {e}"))?;
+        .map_err(|e| format!("failed to create indexes: {e}"))?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -100,6 +123,47 @@ impl JobStore {
         }
 
         Ok(store)
+    }
+
+    fn validate_jobs_schema(conn: &Connection, db_path: &Path) -> Result<(), String> {
+        let mut stmt = conn.prepare("PRAGMA table_info(jobs)").map_err(|e| {
+            format!(
+                "failed to inspect jobs schema at {}: {e}",
+                db_path.display()
+            )
+        })?;
+        let columns: BTreeSet<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| {
+                format!(
+                    "failed to inspect jobs schema at {}: {e}",
+                    db_path.display()
+                )
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                format!(
+                    "failed to inspect jobs schema at {}: {e}",
+                    db_path.display()
+                )
+            })?
+            .into_iter()
+            .collect();
+
+        let missing: Vec<&str> = REQUIRED_JOBS_COLUMNS
+            .iter()
+            .copied()
+            .filter(|required| !columns.contains(*required))
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "incompatible jobs.db schema at {}: missing required columns in jobs table: {}",
+                db_path.display(),
+                missing.join(", ")
+            ));
+        }
+
+        Ok(())
     }
 
     /// Mark any queued/running jobs from a previous crash as failed.
