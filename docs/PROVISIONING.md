@@ -22,8 +22,6 @@ The worker now uses two explicit wall-time controls:
   - Cap for a single active prover run occupying the slot.
   - Used for stale VAST slot recovery and alarm-time run timeout checks.
 
-`MAX_JOB_WALL_TIME_MS` is legacy and should not be used in active configs/docs.
-
 ### Worker timeout + retry inventory
 
 | Setting | Current value | Env var | Source |

@@ -4,9 +4,6 @@ Last reviewed: 2026-02-28
 
 This is the active, execution-oriented checklist for current architecture.
 
-Legacy detailed checklist is preserved at:
-- `docs/archive/plans/deferred/2026-02/MAINNET-CHECKLIST-legacy.md`
-
 ---
 
 ## 1. Release Inputs Frozen
