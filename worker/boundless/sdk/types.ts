@@ -74,6 +74,8 @@ export interface BoundlessClientConfig {
   maxPriceUsd: number;
   /** Minimum price in USD (resolved to wei at submission via Chainlink) */
   minPriceUsd: number;
+  /** JIT top-up buffer in basis points applied when topping up market balance. */
+  topUpBufferBps: number;
   pollIntervalMs: number;
   pollTimeoutMs: number;
   /** Seconds before price ramp begins (prover discovery window) */

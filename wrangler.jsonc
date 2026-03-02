@@ -54,6 +54,8 @@
 		"BOUNDLESS_IMAGE_ID": "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
 		"BOUNDLESS_MAX_PRICE_USD": "0.02",
 		"BOUNDLESS_MIN_PRICE_USD": "0.0002",
+		// Add this buffer (basis points) on top of deficit when auto-depositing.
+		"BOUNDLESS_TOP_UP_BUFFER_BPS": "1500",
 		"BOUNDLESS_FLAT_PERIOD_SEC": "60",
 		"BOUNDLESS_RAMP_PERIOD_SEC": "660",
 		"BOUNDLESS_LOCK_TIMEOUT_SEC": "1740",

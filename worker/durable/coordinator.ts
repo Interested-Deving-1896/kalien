@@ -51,6 +51,11 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     errorDetail: a.errorDetail ?? null,
     errorCode: a.errorCode ?? null,
     actualCostUsd: a.actualCostUsd != null && a.actualCostUsd <= 1000 ? a.actualCostUsd : null,
+    minPriceWei: a.minPriceWei ?? null,
+    maxPriceWei: a.maxPriceWei ?? null,
+    fundingModeUsed: a.fundingModeUsed ?? null,
+    marketBalanceBeforeWei: a.marketBalanceBeforeWei ?? null,
+    autoDepositWei: a.autoDepositWei ?? null,
     proverAddress: a.proverAddress ?? null,
     fulfillmentTxHash: a.fulfillmentTxHash ?? null,
     programCycles: a.programCycles ?? null,
@@ -719,6 +724,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     segmentLimitPo2: number,
     ipfsCid?: string,
     maxPriceUsd?: number,
+    minPriceWei?: string,
+    maxPriceWei?: string,
+    fundingModeUsed?: ProverAttempt["fundingModeUsed"],
+    marketBalanceBeforeWei?: string,
+    autoDepositWei?: string,
   ): Promise<ProofJobRecord | null> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
@@ -757,6 +767,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         proverJobId,
         statusUrl,
         maxPriceUsd: maxPriceUsd ?? null,
+        minPriceWei: minPriceWei ?? null,
+        maxPriceWei: maxPriceWei ?? null,
+        fundingModeUsed: fundingModeUsed ?? null,
+        marketBalanceBeforeWei: marketBalanceBeforeWei ?? null,
+        autoDepositWei: autoDepositWei ?? null,
         actualCostUsd: null,
         proverAddress: null,
         fulfillmentTxHash: null,
@@ -1456,7 +1471,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           }
 
           // If locked, extend wait up to the full lock deadline; otherwise use poll timeout
-          const lockWindowMs = (boundlessConfig.flatPeriodSec + boundlessConfig.lockTimeoutSec) * 1000;
+          const lockWindowMs =
+            (boundlessConfig.flatPeriodSec + boundlessConfig.lockTimeoutSec) * 1000;
           const fullTimeoutMs = (boundlessConfig.flatPeriodSec + boundlessConfig.timeoutSec) * 1000;
           const deadlineMs = isLocked
             ? fullTimeoutMs

@@ -54,6 +54,8 @@ export interface WorkerEnv {
   BOUNDLESS_IMAGE_ID?: string;
   BOUNDLESS_MIN_PRICE_USD?: string;
   BOUNDLESS_MAX_PRICE_USD?: string;
+  // JIT top-up buffer (basis points) applied to the funding deficit.
+  BOUNDLESS_TOP_UP_BUFFER_BPS?: string;
   BOUNDLESS_POLL_INTERVAL_MS?: string;
   BOUNDLESS_POLL_TIMEOUT_MS?: string;
   // Auction shape

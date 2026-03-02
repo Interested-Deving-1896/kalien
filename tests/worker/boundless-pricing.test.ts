@@ -190,6 +190,7 @@ describe("resolveBoundlessConfig", () => {
     expect(config).not.toBeNull();
     expect(config!.maxPriceUsd).toBe(0.02);
     expect(config!.minPriceUsd).toBe(0.0002);
+    expect(config!.topUpBufferBps).toBe(1500);
   });
 
   it("reads custom USD pricing from env vars", () => {
@@ -197,10 +198,12 @@ describe("resolveBoundlessConfig", () => {
       makeEnv({
         BOUNDLESS_MAX_PRICE_USD: "0.05",
         BOUNDLESS_MIN_PRICE_USD: "0.001",
+        BOUNDLESS_TOP_UP_BUFFER_BPS: "350",
       }),
     );
     expect(config!.maxPriceUsd).toBe(0.05);
     expect(config!.minPriceUsd).toBe(0.001);
+    expect(config!.topUpBufferBps).toBe(350);
   });
 
   it("defaults to Base Mainnet auction timing", () => {

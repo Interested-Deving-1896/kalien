@@ -97,6 +97,13 @@ const GROTH16_SELECTOR = "0x73c457ba" as const;
 
 const MAX_PRICE_USD = 0.02; // $0.02 — resolved to wei at submission via Chainlink
 const MIN_PRICE_USD = 0.0002; // ~1% of max — auction floor
+const TOP_UP_BUFFER_BPS = (() => {
+  const raw = env.BOUNDLESS_TOP_UP_BUFFER_BPS?.trim();
+  if (!raw) return 1500;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return 1500;
+  return Math.min(10_000, Math.max(0, parsed));
+})();
 const FLAT_PERIOD_SEC = 60; // 1 min prover discovery window before ramp
 const RAMP_PERIOD_SEC = 660; // 11 min for price to ramp from minPrice to maxPrice
 const LOCK_TIMEOUT_SEC = 1740; // 29 min from rampUpStart (11m ramp + 18m at max price)
@@ -463,17 +470,65 @@ if (claimOnly) {
     message: proofRequest,
   });
 
+  let submitValueWei = 0n;
+  let fundingModeUsed: "market_balance" | "attached_value_fallback" = "market_balance";
+  let marketBalanceBeforeWei: bigint | null = null;
+  let autoDepositWei: bigint | null = null;
+
+  try {
+    marketBalanceBeforeWei = await publicClient.readContract({
+      address: MARKET_ADDRESS,
+      abi: boundlessMarketAbi,
+      functionName: "balanceOf",
+      args: [account.address],
+    });
+
+    if (marketBalanceBeforeWei < maxPrice) {
+      const deficitWei = maxPrice - marketBalanceBeforeWei;
+      const bufferWei =
+        TOP_UP_BUFFER_BPS > 0
+          ? (deficitWei * BigInt(TOP_UP_BUFFER_BPS) + 9_999n) / 10_000n
+          : 0n;
+      autoDepositWei = deficitWei + bufferWei;
+      if (autoDepositWei > 0n) {
+        const depositTxHash = await walletClient.writeContract({
+          address: MARKET_ADDRESS,
+          abi: boundlessMarketAbi,
+          functionName: "deposit",
+          args: [],
+          value: autoDepositWei,
+        });
+        console.log(
+          `  Deposited ${formatEth(autoDepositWei)} ETH to market (${depositTxHash})`,
+        );
+      }
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    fundingModeUsed = "attached_value_fallback";
+    submitValueWei = maxPrice;
+    console.log(`  Market-balance funding prep failed (${reason}); using attached-value fallback.`);
+  }
+
   const txHash = await walletClient.writeContract({
     address: MARKET_ADDRESS,
     abi: boundlessMarketAbi,
     functionName: "submitRequest",
     args: [proofRequest, signature],
-    value: maxPrice,
+    value: submitValueWei,
   });
 
   const requestIdHex = `0x${requestId.toString(16)}`;
   const submitMs = Date.now() - t0;
   console.log(`  On-chain tx: ${txHash} (${(submitMs / 1000).toFixed(1)}s)`);
+  console.log(`  Funding mode: ${fundingModeUsed}`);
+  if (marketBalanceBeforeWei != null) {
+    console.log(`  Market balance before submit: ${formatEth(marketBalanceBeforeWei)} ETH`);
+  }
+  if (autoDepositWei != null) {
+    console.log(`  Auto-deposit amount: ${formatEth(autoDepositWei)} ETH`);
+  }
+  console.log(`  submitRequest value: ${formatEth(submitValueWei)} ETH`);
   console.log(`  BaseScan: https://basescan.org/tx/${txHash}`);
   console.log(`  Request ID: ${requestIdHex}`);
 

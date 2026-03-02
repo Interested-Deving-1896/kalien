@@ -158,6 +158,11 @@ async function handleSubmitResult(
     submitResult.segmentLimitPo2,
     submitResult.ipfsCid,
     submitResult.maxPriceUsd,
+    submitResult.minPriceWei,
+    submitResult.maxPriceWei,
+    submitResult.fundingModeUsed,
+    submitResult.marketBalanceBeforeWei,
+    submitResult.autoDepositWei,
   );
   message.ack();
 }
