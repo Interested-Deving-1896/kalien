@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { decodeCredentialPublicKey } from "@simplewebauthn/server/helpers";
-import {
+const {
   LeaderboardCredentialBindingError,
   assertCredentialBelongsToClaimantContract,
   base64UrlToHex,
   encodeRawP256PublicKeyBase64UrlToCose,
   fetchIndexedContractsForCredential,
-} from "../../worker/leaderboard-profile-auth";
+} = await import("../../worker/leaderboard-profile-auth.ts?suite=real");
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = "";

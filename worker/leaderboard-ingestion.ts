@@ -14,6 +14,7 @@ const DEFAULT_GALEXIE_DATA_ROOT_PATH = "/v1";
 const DEFAULT_GALEXIE_OBJECT_EXTENSION = "zst";
 const DEFAULT_FORWARD_LEDGER_WINDOW = 4_096;
 const DEFAULT_RPC_BASE_URL_MAINNET = "https://rpc-pro.lightsail.network";
+const DEFAULT_RPC_BASE_URL_MAINNET_ARCHIVE = "https://archive-rpc-pro.lightsail.network";
 const DEFAULT_RPC_BASE_URL_TESTNET_LIGHTSAIL = "https://rpc-testnet.lightsail.network";
 const DEFAULT_RPC_BASE_URL_TESTNET_PUBLIC = "https://soroban-testnet.stellar.org";
 const DEFAULT_RPC_BASE_URL_TESTNET_GATEWAY = "https://soroban-rpc.testnet.stellar.gateway.fm";
@@ -199,6 +200,21 @@ function normalizeSourceMode(raw: string): LeaderboardSourceMode | null {
     return "events_api";
   }
   return null;
+}
+
+function parseBooleanEnv(raw: string | undefined, defaultValue: boolean): boolean {
+  if (!raw) {
+    return defaultValue;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return defaultValue;
 }
 
 export function parseLeaderboardSourceMode(env: WorkerEnv): LeaderboardSourceMode {
@@ -972,9 +988,16 @@ function isGalexieBaseUrlCompatibleWithNetwork(env: WorkerEnv): boolean {
 
 function resolveRpcBaseUrlCandidates(env: WorkerEnv): URL[] {
   const configured = env.GALEXIE_RPC_BASE_URL?.trim();
-  const candidateStrings =
+  const configuredCandidates =
     configured && configured.length > 0
-      ? [configured]
+      ? configured
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0)
+      : null;
+  const candidateStrings =
+    configuredCandidates && configuredCandidates.length > 0
+      ? configuredCandidates
       : isTestnetIngestionNetwork(env)
         ? [
             DEFAULT_RPC_BASE_URL_TESTNET_LIGHTSAIL,
@@ -982,7 +1005,7 @@ function resolveRpcBaseUrlCandidates(env: WorkerEnv): URL[] {
             DEFAULT_RPC_BASE_URL_TESTNET_GATEWAY,
             DEFAULT_RPC_BASE_URL_TESTNET_ANKR,
           ]
-        : [DEFAULT_RPC_BASE_URL_MAINNET];
+        : [DEFAULT_RPC_BASE_URL_MAINNET, DEFAULT_RPC_BASE_URL_MAINNET_ARCHIVE];
 
   const unique = new Set<string>();
   const urls: URL[] = [];
@@ -1037,6 +1060,7 @@ function getGalexieAuthHeaders(env: WorkerEnv): Record<string, string> {
     const apiKey = env.GALEXIE_API_KEY.trim();
     headers.authorization = `Bearer ${apiKey}`;
     headers["x-api-key"] = apiKey;
+    headers["api-key"] = apiKey;
   }
 
   return headers;
@@ -1779,9 +1803,9 @@ export function normalizeGalexieScoreEvents(
       continue;
     }
 
-    // Best-effort extraction with defaults — same approach as RPC/datalake paths.
-    // Never skip an event from the Events API, as cursor advancement would lose
-    // the data permanently.
+    // Best-effort extraction with defaults for partial payloads.
+    // Keep salvageable rows (to avoid losing data behind an advanced cursor),
+    // but reject rows that provide contradictory explicit score fields.
     const seed = toInteger(pickValue(nested, ["seed"]));
     const frameCount = toInteger(pickValue(nested, ["frame_count"]));
     const finalScore = toInteger(pickValue(nested, ["final_score"]));
@@ -1790,6 +1814,14 @@ export function normalizeGalexieScoreEvents(
     const mintedDelta = toInteger(pickValue(nested, ["minted_delta"]));
     const closedAt = toIsoTimestamp(pickValue(nested, ["closed_at"]));
 
+    if (
+      [seed, frameCount, finalScore, newBest, previousBest, mintedDelta].some(
+        (value) => value !== null && value < 0,
+      )
+    ) {
+      continue;
+    }
+
     const resolvedScore = (finalScore ?? newBest ?? 0) >>> 0;
     const resolvedNewBest = (newBest ?? finalScore ?? 0) >>> 0;
     const resolvedPreviousBest = (previousBest ?? 0) >>> 0;
@@ -1797,6 +1829,21 @@ export function normalizeGalexieScoreEvents(
       mintedDelta !== null
         ? mintedDelta >>> 0
         : Math.max(0, resolvedNewBest - resolvedPreviousBest) >>> 0;
+
+    if (finalScore !== null && newBest !== null && resolvedScore !== resolvedNewBest) {
+      continue;
+    }
+    if ((previousBest !== null || mintedDelta !== null) && resolvedPreviousBest > resolvedNewBest) {
+      continue;
+    }
+    if (
+      mintedDelta !== null &&
+      previousBest !== null &&
+      (finalScore !== null || newBest !== null) &&
+      resolvedMintedDelta !== resolvedNewBest - resolvedPreviousBest
+    ) {
+      continue;
+    }
 
     const txHashRaw = pickValue(nested, ["tx_hash"]);
     const txHash =
@@ -1927,6 +1974,7 @@ export async function fetchLeaderboardEventsFromGalexie(
   const overrideMode = resolveRequestedSourceMode(options);
   const effectiveMode = overrideMode ?? configuredMode;
   const hasCompatibleGalexieFallback = isGalexieBaseUrlCompatibleWithNetwork(env);
+  const enableEventsApiFallback = parseBooleanEnv(env.GALEXIE_ENABLE_EVENTS_API_FALLBACK, false);
 
   const tryMode = async (mode: LeaderboardResolvedSourceMode): Promise<GalexieFetchResult> => {
     if (mode === "rpc") {
@@ -1940,10 +1988,16 @@ export async function fetchLeaderboardEventsFromGalexie(
 
   const fallbackModes: LeaderboardResolvedSourceMode[] = (() => {
     if (effectiveMode === "rpc") {
-      return hasCompatibleGalexieFallback ? ["rpc", "datalake", "events_api"] : ["rpc"];
+      if (!hasCompatibleGalexieFallback) {
+        return ["rpc"];
+      }
+      return enableEventsApiFallback ? ["rpc", "datalake", "events_api"] : ["rpc", "datalake"];
     }
     if (effectiveMode === "auto") {
-      return hasCompatibleGalexieFallback ? ["rpc", "datalake", "events_api"] : ["rpc"];
+      if (!hasCompatibleGalexieFallback) {
+        return ["rpc"];
+      }
+      return enableEventsApiFallback ? ["rpc", "datalake", "events_api"] : ["rpc", "datalake"];
     }
     if (effectiveMode === "datalake") {
       return ["datalake", "rpc"];

@@ -9,7 +9,7 @@
 	"workers_dev": false,
 	"routes": [
 		{
-			"pattern": "kalien.xyz",
+			"pattern": "testnet.kalien.xyz",
 			"custom_domain": true,
 		},
 	],
@@ -179,5 +179,156 @@
 			"*/1 * * * *",
 			"*/10 * * * *"
 		],
+	},
+
+	// ── Mainnet environment ──────────────────────────────────────────────
+	// Deploy: CLOUDFLARE_ENV=mainnet vite build --mode mainnet && wrangler deploy --env mainnet
+	"env": {
+		"mainnet": {
+			"name": "kalien-mainnet",
+			"assets": {
+				"not_found_handling": "single-page-application",
+				"binding": "ASSETS",
+			},
+			"routes": [
+				{
+					"pattern": "kalien.xyz",
+					"custom_domain": true,
+				},
+			],
+			"vars": {
+				// Prover
+				"PROVER_BASE_URL": "https://risc0-kalien.stellar.buzz",
+				"PROVER_HEALTH_CACHE_MS": "30000",
+				"PROVER_POLL_INTERVAL_MS": "3000",
+				"PROVER_POLL_TIMEOUT_MS": "660000",
+				"PROVER_POLL_BUDGET_MS": "45000",
+				"PROVER_REQUEST_TIMEOUT_MS": "30000",
+				"ALLOW_INSECURE_PROVER_URL": "0",
+				// Gateway limits
+				"MAX_TAPE_BYTES": "2097152",
+				"MAX_PROOF_TOTAL_WALL_TIME_MS": "3900000",
+				"MAX_PROVER_RUN_TIME_MS": "660000",
+				"MAX_COMPLETED_JOBS": "200",
+				"COMPLETED_JOB_RETENTION_MS": "86400000",
+				// Relayer (OpenZeppelin Channels mainnet)
+				"RELAYER_URL": "https://channels.openzeppelin.com",
+				"RELAYER_PLUGIN_ID": "",
+				"RELAYER_REQUEST_TIMEOUT_MS": "30000",
+				// Boundless proving
+				"BOUNDLESS_RPC_URL": "https://base-mainnet.public.blastapi.io",
+				"BOUNDLESS_IMAGE_URL": "https://gateway.pinata.cloud/ipfs/QmQ7m1WcrHH4TABWwYjroZzKPeSmqBXv8NeMHvwGFzFwrk",
+				"BOUNDLESS_IMAGE_ID": "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
+				"BOUNDLESS_MAX_PRICE_USD": "0.02",
+				"BOUNDLESS_MIN_PRICE_USD": "0.0002",
+				"BOUNDLESS_TOP_UP_BUFFER_BPS": "1500",
+				"BOUNDLESS_FLAT_PERIOD_SEC": "60",
+				"BOUNDLESS_RAMP_PERIOD_SEC": "660",
+				"BOUNDLESS_LOCK_TIMEOUT_SEC": "1740",
+				"BOUNDLESS_TIMEOUT_SEC": "3540",
+				"BOUNDLESS_POLL_INTERVAL_MS": "15000",
+				"BOUNDLESS_POLL_TIMEOUT_MS": "600000",
+				"BOUNDLESS_CHAIN_ID": "8453",
+				// Stellar mainnet
+				"SCORE_CONTRACT_ID": "CDDAYXNY6MMA47Q54VSHG2WV445ZUOJ354NOLSFRC7ZUDTD6OTS4A7PE",
+				"CLAIM_NETWORK_PASSPHRASE": "Public Global Stellar Network ; September 2015",
+				// Leaderboard sync
+				"LEADERBOARD_SYNC_CRON_ENABLED": "1",
+				"LEADERBOARD_SYNC_CRON_LIMIT": "400",
+				"LEADERBOARD_CATCHUP_INTERVAL_MINUTES": "30",
+				"LEADERBOARD_CATCHUP_WINDOW_LEDGERS": "8000",
+				"LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS": "8000",
+			},
+			"d1_databases": [
+				{
+					"binding": "LEADERBOARD_DB",
+					"database_name": "kalien-mainnet-leaderboard",
+					"database_id": "4172bfa1-deb7-4250-83a4-b1f8b26734d6",
+				},
+			],
+			"r2_buckets": [
+				{
+					"binding": "PROOF_ARTIFACTS",
+					"bucket_name": "kalien-mainnet-proof-artifacts",
+				},
+			],
+			"queues": {
+				"producers": [
+					{
+						"binding": "PROOF_QUEUE",
+						"queue": "kalien-mainnet-proof-jobs",
+					},
+					{
+						"binding": "VAST_QUEUE",
+						"queue": "kalien-mainnet-vast-jobs",
+					},
+					{
+						"binding": "CLAIM_QUEUE",
+						"queue": "kalien-mainnet-claim-jobs",
+					},
+				],
+				"consumers": [
+					{
+						"queue": "kalien-mainnet-proof-jobs",
+						"max_batch_size": 1,
+						"max_batch_timeout": 1,
+						"max_retries": 10,
+						"max_concurrency": 5,
+						"dead_letter_queue": "kalien-mainnet-proof-jobs-dlq",
+					},
+					{
+						"queue": "kalien-mainnet-proof-jobs-dlq",
+						"max_batch_size": 1,
+						"max_batch_timeout": 5,
+						"max_retries": 3,
+						"max_concurrency": 1,
+					},
+					{
+						"queue": "kalien-mainnet-vast-jobs",
+						"max_batch_size": 1,
+						"max_batch_timeout": 1,
+						"max_retries": 30,
+						"max_concurrency": 1,
+						"dead_letter_queue": "kalien-mainnet-vast-jobs-dlq",
+					},
+					{
+						"queue": "kalien-mainnet-vast-jobs-dlq",
+						"max_batch_size": 1,
+						"max_batch_timeout": 5,
+						"max_retries": 3,
+						"max_concurrency": 1,
+					},
+					{
+						"queue": "kalien-mainnet-claim-jobs",
+						"max_batch_size": 1,
+						"max_batch_timeout": 1,
+						"max_retries": 10,
+						"max_concurrency": 1,
+						"dead_letter_queue": "kalien-mainnet-claim-jobs-dlq",
+					},
+					{
+						"queue": "kalien-mainnet-claim-jobs-dlq",
+						"max_batch_size": 1,
+						"max_batch_timeout": 5,
+						"max_retries": 3,
+						"max_concurrency": 1,
+					},
+				],
+			},
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "PROOF_COORDINATOR",
+						"class_name": "ProofCoordinatorDO",
+					},
+				],
+			},
+			"triggers": {
+				"crons": [
+					"*/1 * * * *",
+					"*/10 * * * *"
+				],
+			},
+		},
 	},
 }

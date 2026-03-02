@@ -14,6 +14,24 @@ import type { LeaderboardEventRecord, LeaderboardIngestionState } from "./types"
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
 
+export interface LeaderboardSyncDeps {
+  fetchLeaderboardEventsFromGalexie: typeof fetchLeaderboardEventsFromGalexie;
+  countLeaderboardEvents: typeof countLeaderboardEvents;
+  getLeaderboardIngestionState: typeof getLeaderboardIngestionState;
+  purgeExpiredLeaderboardProfileAuthChallenges: typeof purgeExpiredLeaderboardProfileAuthChallenges;
+  setLeaderboardIngestionState: typeof setLeaderboardIngestionState;
+  upsertLeaderboardEvents: typeof upsertLeaderboardEvents;
+}
+
+const DEFAULT_SYNC_DEPS: LeaderboardSyncDeps = {
+  fetchLeaderboardEventsFromGalexie,
+  countLeaderboardEvents,
+  getLeaderboardIngestionState,
+  purgeExpiredLeaderboardProfileAuthChallenges,
+  setLeaderboardIngestionState,
+  upsertLeaderboardEvents,
+};
+
 export interface LeaderboardSyncRequest {
   mode: "forward" | "backfill";
   cursor?: string | null;
@@ -127,8 +145,9 @@ function parseForwardReplayWindowLedgers(env: WorkerEnv): number {
 export async function runLeaderboardSync(
   env: WorkerEnv,
   request: LeaderboardSyncRequest,
+  deps: LeaderboardSyncDeps = DEFAULT_SYNC_DEPS,
 ): Promise<LeaderboardSyncResult> {
-  const existingState = await getLeaderboardIngestionState(env);
+  const existingState = await deps.getLeaderboardIngestionState(env);
   const maxPages = parseInteger(env.LEADERBOARD_SYNC_MAX_PAGES, 5, 1);
 
   const replayWindowLedgers = parseForwardReplayWindowLedgers(env);
@@ -186,7 +205,7 @@ export async function runLeaderboardSync(
   let totalFetchedCount = 0;
 
   // eslint-disable-next-line no-await-in-loop
-  let lastFetched: GalexieFetchResult = await fetchLeaderboardEventsFromGalexie(env, {
+  let lastFetched: GalexieFetchResult = await deps.fetchLeaderboardEventsFromGalexie(env, {
     cursor: effectiveCursor,
     fromLedger: effectiveFromLedger,
     toLedger: effectiveToLedger,
@@ -213,8 +232,11 @@ export async function runLeaderboardSync(
     }
 
     // eslint-disable-next-line no-await-in-loop
-    lastFetched = await fetchLeaderboardEventsFromGalexie(env, {
+    lastFetched = await deps.fetchLeaderboardEventsFromGalexie(env, {
       cursor: lastFetched.nextCursor,
+      // Preserve explicit sync bounds (especially backfill toLedger) across pages.
+      // Opaque RPC cursors still suppress start/end internally.
+      toLedger: effectiveToLedger,
       limit: request.limit,
       source: request.source ?? null,
     });
@@ -223,14 +245,14 @@ export async function runLeaderboardSync(
     pageCount += 1;
   }
 
-  const upsert = await upsertLeaderboardEvents(env, allEvents);
+  const upsert = await deps.upsertLeaderboardEvents(env, allEvents);
   const hasBaselineState =
     existingState.totalEvents > 0 ||
     existingState.cursor !== null ||
     existingState.lastSyncedAt !== null;
   const totalEvents = hasBaselineState
     ? Math.max(existingState.totalEvents, 0) + upsert.inserted
-    : await countLeaderboardEvents(env);
+    : await deps.countLeaderboardEvents(env);
   const ledgers = allEvents
     .map((event) => event.ledger)
     .filter((value): value is number => typeof value === "number");
@@ -259,7 +281,7 @@ export async function runLeaderboardSync(
     lastError: null,
   };
 
-  await setLeaderboardIngestionState(env, nextState);
+  await deps.setLeaderboardIngestionState(env, nextState);
 
   return {
     mode: request.mode,
@@ -284,6 +306,7 @@ export async function runLeaderboardSync(
 export async function runScheduledLeaderboardSync(
   env: WorkerEnv,
   scheduledTimeMs = Date.now(),
+  deps: LeaderboardSyncDeps = DEFAULT_SYNC_DEPS,
 ): Promise<{
   enabled: boolean;
   forward: LeaderboardSyncResult | null;
@@ -304,10 +327,14 @@ export async function runScheduledLeaderboardSync(
   const catchupIntervalMinutes = parseInteger(env.LEADERBOARD_CATCHUP_INTERVAL_MINUTES, 30, 0);
   const catchupWindowLedgers = parseInteger(env.LEADERBOARD_CATCHUP_WINDOW_LEDGERS, 0, 0);
 
-  const forward = await runLeaderboardSync(env, {
-    mode: "forward",
-    limit,
-  });
+  const forward = await runLeaderboardSync(
+    env,
+    {
+      mode: "forward",
+      limit,
+    },
+    deps,
+  );
 
   let catchup: LeaderboardSyncResult | null = null;
   let warning: string | null = null;
@@ -321,18 +348,22 @@ export async function runScheduledLeaderboardSync(
       warning = "skipped catchup backfill because highest ledger is unknown";
     } else {
       const fromLedger = Math.max(2, highestLedger - catchupWindowLedgers);
-      catchup = await runLeaderboardSync(env, {
-        mode: "backfill",
-        fromLedger,
-        toLedger: highestLedger,
-        limit,
-        source: "datalake",
-      });
+      catchup = await runLeaderboardSync(
+        env,
+        {
+          mode: "backfill",
+          fromLedger,
+          toLedger: highestLedger,
+          limit,
+          source: "datalake",
+        },
+        deps,
+      );
     }
   }
 
   // Purge expired/used auth challenges so they don't accumulate between user requests.
-  await purgeExpiredLeaderboardProfileAuthChallenges(env);
+  await deps.purgeExpiredLeaderboardProfileAuthChallenges(env);
 
   return {
     enabled: true,
@@ -342,11 +373,14 @@ export async function runScheduledLeaderboardSync(
   };
 }
 
-export async function recordLeaderboardSyncFailure(env: WorkerEnv, error: unknown): Promise<void> {
-  const existingState = await getLeaderboardIngestionState(env);
-  await setLeaderboardIngestionState(env, {
+export async function recordLeaderboardSyncFailure(
+  env: WorkerEnv,
+  error: unknown,
+  deps: LeaderboardSyncDeps = DEFAULT_SYNC_DEPS,
+): Promise<void> {
+  const existingState = await deps.getLeaderboardIngestionState(env);
+  await deps.setLeaderboardIngestionState(env, {
     ...existingState,
     lastError: safeErrorMessage(error),
-    lastSyncedAt: new Date().toISOString(),
   });
 }

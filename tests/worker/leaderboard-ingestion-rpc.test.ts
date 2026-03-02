@@ -67,6 +67,103 @@ describe("leaderboard ingestion source selection", () => {
     expect(result.nextCursor).toBe("rpc-cursor-1");
   });
 
+  it("falls back from mainnet rpc-pro to archive-rpc-pro before galexie modes", async () => {
+    const calledUrls: string[] = [];
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calledUrls.push(url);
+      if (url === "https://rpc-pro.lightsail.network/") {
+        return new Response("rpc down", { status: 503 });
+      }
+      if (url === "https://archive-rpc-pro.lightsail.network/") {
+        const payload = init?.body ? JSON.parse(String(init.body)) : {};
+        if (payload?.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 51_000_000,
+              oldestLedger: 1,
+            },
+          });
+        }
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-archive",
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_SOURCE_MODE: "auto",
+        GALEXIE_API_BASE_URL: "https://galexie-pro.lightsail.network",
+        GALEXIE_RPC_BASE_URL: "",
+      }),
+      {
+        limit: 50,
+      },
+    );
+
+    expect(result.provider).toBe("rpc");
+    expect(result.sourceMode).toBe("rpc");
+    expect(result.nextCursor).toBe("rpc-cursor-archive");
+    expect(calledUrls).toContain("https://rpc-pro.lightsail.network/");
+    expect(calledUrls).toContain("https://archive-rpc-pro.lightsail.network/");
+  });
+
+  it("accepts comma-separated GALEXIE_RPC_BASE_URL candidates in priority order", async () => {
+    const calledUrls: string[] = [];
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calledUrls.push(url);
+      if (url === "https://rpc-pro.lightsail.network/") {
+        return new Response("rpc down", { status: 503 });
+      }
+      if (url === "https://archive-rpc-pro.lightsail.network/") {
+        const payload = init?.body ? JSON.parse(String(init.body)) : {};
+        if (payload?.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 51_000_000,
+              oldestLedger: 1,
+            },
+          });
+        }
+        return jsonResponse({
+          result: {
+            events: [],
+            cursor: "rpc-cursor-from-config-list",
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_RPC_BASE_URL:
+          "https://rpc-pro.lightsail.network, https://archive-rpc-pro.lightsail.network",
+      }),
+      {
+        limit: 50,
+      },
+    );
+
+    expect(result.provider).toBe("rpc");
+    expect(result.sourceMode).toBe("rpc");
+    expect(result.nextCursor).toBe("rpc-cursor-from-config-list");
+    expect(calledUrls[0]).toBe("https://rpc-pro.lightsail.network/");
+    expect(calledUrls).toContain("https://archive-rpc-pro.lightsail.network/");
+  });
+
   it("falls back from rpc to datalake in auto mode", async () => {
     let rpcGetEventsCalls = 0;
     globalThis.fetch = (async (
@@ -115,6 +212,173 @@ describe("leaderboard ingestion source selection", () => {
     expect(result.provider).toBe("galexie");
     expect(result.sourceMode).toBe("datalake");
     expect(result.nextCursor).toBe("ledger:3");
+  });
+
+  it("falls back in strict order: rpc-pro -> archive-rpc-pro -> datalake", async () => {
+    const calledUrls: string[] = [];
+    let rpcGetEventsCalls = 0;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === "string" ? input : input.toString();
+      calledUrls.push(url);
+      if (
+        url === "https://rpc-pro.lightsail.network/" ||
+        url === "https://archive-rpc-pro.lightsail.network/"
+      ) {
+        const payload = init?.body ? JSON.parse(String(init.body)) : {};
+        const method = payload?.method;
+        if (method === "getEvents") {
+          rpcGetEventsCalls += 1;
+          return new Response("rpc down", { status: 503 });
+        }
+        if (method === "getHealth") {
+          return jsonResponse({ result: { latestLedger: 2 } });
+        }
+      }
+      if (url.endsWith("/v1/.config.json")) {
+        return jsonResponse({
+          ledgersPerBatch: 1,
+          batchesPerPartition: 1,
+          compression: "zstd",
+        });
+      }
+      if (url.includes(".xdr.zstd") || url.includes(".xdr.zst")) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_RPC_BASE_URL: "",
+        GALEXIE_SOURCE_MODE: "auto",
+        GALEXIE_API_BASE_URL: "https://galexie-pro.lightsail.network",
+        GALEXIE_DATASTORE_ROOT_PATH: "/v1",
+      }),
+      {
+        fromLedger: 2,
+        toLedger: 2,
+        limit: 1,
+      },
+    );
+
+    expect(rpcGetEventsCalls).toBe(2);
+    expect(result.provider).toBe("galexie");
+    expect(result.sourceMode).toBe("datalake");
+    expect(result.nextCursor).toBe("ledger:3");
+
+    const rpcProIndex = calledUrls.indexOf("https://rpc-pro.lightsail.network/");
+    const archiveIndex = calledUrls.indexOf(
+      "https://archive-rpc-pro.lightsail.network/",
+    );
+    const datalakeConfigIndex = calledUrls.findIndex((url) =>
+      url.includes("galexie-pro.lightsail.network/v1/.config.json"),
+    );
+    expect(rpcProIndex).toBeGreaterThanOrEqual(0);
+    expect(archiveIndex).toBeGreaterThanOrEqual(0);
+    expect(datalakeConfigIndex).toBeGreaterThanOrEqual(0);
+    expect(rpcProIndex).toBeLessThan(archiveIndex);
+    expect(archiveIndex).toBeLessThan(datalakeConfigIndex);
+  });
+
+  it("does not attempt events_api fallback in auto mode unless explicitly enabled", async () => {
+    let eventsApiCalls = 0;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (
+        url === "https://rpc-pro.lightsail.network/" ||
+        url === "https://archive-rpc-pro.lightsail.network/"
+      ) {
+        const payload = init?.body ? JSON.parse(String(init.body)) : {};
+        if (payload?.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 51_000_000,
+              oldestLedger: 1,
+            },
+          });
+        }
+        return new Response("rpc down", { status: 503 });
+      }
+      if (url.endsWith("/v1/.config.json")) {
+        return new Response("datalake down", { status: 503 });
+      }
+      if (url.includes("/events")) {
+        eventsApiCalls += 1;
+        return jsonResponse({ events: [] });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    await expect(
+      fetchLeaderboardEventsFromGalexie(
+        makeEnv({
+          GALEXIE_SOURCE_MODE: "auto",
+          GALEXIE_API_BASE_URL: "https://galexie-pro.lightsail.network",
+          GALEXIE_RPC_BASE_URL: "",
+        }),
+        {
+          limit: 10,
+        },
+      ),
+    ).rejects.toThrow("all leaderboard ingestion sources failed");
+
+    expect(eventsApiCalls).toBe(0);
+  });
+
+  it("attempts events_api fallback in auto mode when explicitly enabled", async () => {
+    let eventsApiCalls = 0;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (
+        url === "https://rpc-pro.lightsail.network/" ||
+        url === "https://archive-rpc-pro.lightsail.network/"
+      ) {
+        const payload = init?.body ? JSON.parse(String(init.body)) : {};
+        if (payload?.method === "getHealth") {
+          return jsonResponse({
+            result: {
+              latestLedger: 51_000_000,
+              oldestLedger: 1,
+            },
+          });
+        }
+        return new Response("rpc down", { status: 503 });
+      }
+      if (url.endsWith("/v1/.config.json")) {
+        return new Response("datalake down", { status: 503 });
+      }
+      if (url.includes("/events")) {
+        eventsApiCalls += 1;
+        return jsonResponse({ events: [], next_cursor: "events-cursor-1" });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const result = await fetchLeaderboardEventsFromGalexie(
+      makeEnv({
+        GALEXIE_SOURCE_MODE: "auto",
+        GALEXIE_ENABLE_EVENTS_API_FALLBACK: "1",
+        GALEXIE_API_BASE_URL: "https://galexie-pro.lightsail.network",
+        GALEXIE_RPC_BASE_URL: "",
+      }),
+      {
+        limit: 10,
+      },
+    );
+
+    expect(result.provider).toBe("galexie");
+    expect(result.sourceMode).toBe("events_api");
+    expect(result.nextCursor).toBe("events-cursor-1");
+    expect(eventsApiCalls).toBe(1);
   });
 
   it("falls back to rpc when datalake mode is configured but galexie is missing", async () => {

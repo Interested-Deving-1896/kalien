@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fetchBoundlessCycles } from "../../worker/boundless/sdk/client";
+const { fetchBoundlessCycles } = await import("../../worker/boundless/sdk/client.ts?suite=real");
 
 describe("fetchBoundlessCycles", () => {
   it("parses object payloads from the Boundless indexer", async () => {

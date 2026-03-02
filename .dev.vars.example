@@ -58,8 +58,14 @@ PROVER_ACCESS_CLIENT_SECRET=
 #
 # GALEXIE_SOURCE_MODE=auto
 # GALEXIE_API_BASE_URL=https://galexie-pro.lightsail.network
+# Optional override: single URL or comma-separated priority list.
+# When unset on mainnet, defaults are:
+#   https://rpc-pro.lightsail.network,https://archive-rpc-pro.lightsail.network
 # GALEXIE_RPC_BASE_URL=
 # GALEXIE_SCORE_EVENTS_PATH=/events
+# Optional: include events_api as last-resort fallback in auto/rpc mode.
+# Default is disabled (0) because not all provider plans expose /events.
+# GALEXIE_ENABLE_EVENTS_API_FALLBACK=0
 # GALEXIE_DATASTORE_ROOT_PATH=/v1
 # GALEXIE_DATASTORE_OBJECT_EXTENSION=zst
 # GALEXIE_REQUEST_TIMEOUT_MS=20000

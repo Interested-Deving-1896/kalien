@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 import {
   packJournalRaw,
   type JournalFields,
@@ -23,6 +23,12 @@ mock.module("../../worker/boundless/config", () => ({
   resolveBoundlessConfig: (env: WorkerEnv) =>
     (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ??
     null,
+  IPFS_GATEWAY_PREFIX: "https://gateway.pinata.cloud/ipfs/",
+  BOUNDLESS_INDEXER_URLS: {
+    "8453": "https://d2mdvlnmyov1e1.cloudfront.net",
+    "84532": "https://d3kkukmpiqlzm1.cloudfront.net",
+  },
+  MAX_INLINE_STDIN_BYTES: 3000,
 }));
 
 mock.module("../../worker/boundless/sdk/client", () => ({
@@ -72,6 +78,10 @@ const {
   handleClaimQueueBatch,
   handleClaimDlqBatch,
 } = await import("../../worker/queue/consumer");
+
+afterAll(() => {
+  mock.restore();
+});
 
 function makeMessage<T>(body: T, attempts = 1): Message<T> {
   let acked = false;

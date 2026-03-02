@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 
 // ── usdToWei tests (pure math, no mocking needed) ──────────────────────────
 
@@ -92,6 +92,10 @@ mock.module("viem", () => {
 // Import after mock is set up
 const { fetchEthPriceUsd, resetEthPriceCache } =
   await import("../../worker/boundless/pricing");
+
+afterAll(() => {
+  mock.restore();
+});
 
 describe("fetchEthPriceUsd", () => {
   beforeEach(() => {

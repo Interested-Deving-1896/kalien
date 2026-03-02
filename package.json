@@ -9,6 +9,8 @@
     "build": "vite build",
     "preview": "node node_modules/vite/bin/vite.js preview",
     "deploy": "vite build && wrangler deploy",
+    "deploy:testnet": "vite build && wrangler deploy",
+    "deploy:mainnet": "CLOUDFLARE_ENV=mainnet vite build --mode mainnet && wrangler deploy --env mainnet",
     "typegen": "WRANGLER_LOG_PATH=.wrangler/logs wrangler types",
     "typegen:check": "WRANGLER_LOG_PATH=.wrangler/logs wrangler types --check",
     "typecheck:app": "tsc --noEmit -p tsconfig.json",

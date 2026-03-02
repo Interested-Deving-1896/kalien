@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 
 // Mock cloudflare:workers before importing coordinator
 mock.module("cloudflare:workers", () => ({
@@ -7,6 +7,10 @@ mock.module("cloudflare:workers", () => ({
 
 const { asPublicJob } = await import("../../worker/durable/coordinator");
 import type { ProofJobRecord, ProverAttempt } from "../../worker/types";
+
+afterAll(() => {
+  mock.restore();
+});
 
 function makeAttempt(overrides: Partial<ProverAttempt> = {}): ProverAttempt {
   return {

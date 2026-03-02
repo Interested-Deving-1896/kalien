@@ -28,6 +28,7 @@ Set non-secret vars in `wrangler.jsonc`:
 - `GALEXIE_RPC_BASE_URL`
 - `CLAIM_NETWORK_PASSPHRASE` (optional; used for RPC auto-selection when `GALEXIE_RPC_BASE_URL` is unset)
 - `GALEXIE_SCORE_EVENTS_PATH`
+- `GALEXIE_ENABLE_EVENTS_API_FALLBACK`
 - `GALEXIE_DATASTORE_ROOT_PATH`
 - `GALEXIE_DATASTORE_OBJECT_EXTENSION`
 - `GALEXIE_REQUEST_TIMEOUT_MS`
@@ -43,6 +44,7 @@ Defaulted in this worktree for Quasar Pro:
 - `GALEXIE_RPC_BASE_URL=` (optional explicit override)
 - `CLAIM_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"` for testnet
 - `GALEXIE_SCORE_EVENTS_PATH=/events`
+- `GALEXIE_ENABLE_EVENTS_API_FALLBACK=0` (default; set to `1` to include `events_api` as final fallback in `auto`/`rpc` mode)
 - `GALEXIE_DATASTORE_ROOT_PATH=/v1`
 - `GALEXIE_DATASTORE_OBJECT_EXTENSION=zst`
 - cron: `*/5 * * * *`
@@ -61,13 +63,15 @@ If your provider key is labeled as a Lightsail key, use that value for `GALEXIE_
 - If `SCORE_CONTRACT_ID` points to a testnet deployment, sync will stay empty by design because provider and contract are on different networks.
 - For testnet E2E ingestion, use a testnet provider endpoint or a testnet Galexie dataset.
 - RPC defaulting behavior:
-  - If `GALEXIE_RPC_BASE_URL` is set, that URL is always used.
+  - If `GALEXIE_RPC_BASE_URL` is set, that URL (or comma-separated URL list) is used in order.
   - If it is unset and `CLAIM_NETWORK_PASSPHRASE` is testnet, ingestion tries:
     - `https://rpc-testnet.lightsail.network`
     - `https://soroban-testnet.stellar.org`
     - `https://soroban-rpc.testnet.stellar.gateway.fm`
     - `https://rpc.ankr.com/stellar_testnet_soroban`
-  - Otherwise, ingestion defaults to `https://rpc-pro.lightsail.network`.
+  - Otherwise (mainnet), ingestion tries:
+    - `https://rpc-pro.lightsail.network`
+    - `https://archive-rpc-pro.lightsail.network`
 - On testnet, Galexie fallback (`datalake`/`events_api`) is only attempted when `GALEXIE_API_BASE_URL` host is testnet-compatible (`testnet` in hostname).
 
 ## Sync Endpoints

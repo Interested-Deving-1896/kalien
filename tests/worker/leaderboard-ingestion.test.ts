@@ -69,7 +69,7 @@ describe("normalizeGalexieScoreEvents", () => {
     expect(normalized.events[0]?.mintedDelta).toBe(1024);
   });
 
-  it("skips malformed events", () => {
+  it("keeps salvageable events and skips only invalid claimant rows", () => {
     const payload = {
       events: [
         {
@@ -81,7 +81,7 @@ describe("normalizeGalexieScoreEvents", () => {
         },
         {
           id: "bad-2",
-          claimant: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF",
+          claimant: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
           seed: 1,
           new_best: 0,
           closed_at: "2026-02-11T12:00:00.000Z",
@@ -91,6 +91,30 @@ describe("normalizeGalexieScoreEvents", () => {
 
     const normalized = normalizeGalexieScoreEvents(payload);
     expect(normalized.fetchedCount).toBe(2);
+    expect(normalized.events).toHaveLength(1);
+    expect(normalized.events[0]?.eventId).toBe("bad-2");
+    expect(normalized.events[0]?.finalScore).toBe(0);
+  });
+
+  it("rejects events with contradictory explicit score invariants", () => {
+    const payload = {
+      events: [
+        {
+          id: "bad-invariants",
+          claimant: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+          seed: 1,
+          frame_count: 10,
+          final_score: 100,
+          previous_best: 0,
+          new_best: 99,
+          minted_delta: 100,
+          closed_at: "2026-02-11T12:00:00.000Z",
+        },
+      ],
+    };
+
+    const normalized = normalizeGalexieScoreEvents(payload);
+    expect(normalized.fetchedCount).toBe(1);
     expect(normalized.events).toHaveLength(0);
   });
 });

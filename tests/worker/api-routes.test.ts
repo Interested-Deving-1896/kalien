@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 
 const VALID_CLAIMANT_CONTRACT =
@@ -141,6 +141,10 @@ mock.module("../../worker/durable/coordinator", () => ({
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
+
+afterAll(() => {
+  mock.restore();
+});
 
 const { Hono } = await import("hono");
 const { createApiRouter } = await import("../../worker/api/routes");

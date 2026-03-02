@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 import {
   HEALTH_CACHE_CONTROL,
@@ -189,6 +189,10 @@ mock.module("../../worker/durable/coordinator", () => ({
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
+
+afterAll(() => {
+  mock.restore();
+});
 
 const workerModule = await import("../../worker/index");
 const handler = workerModule.default;
