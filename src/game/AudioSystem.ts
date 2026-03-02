@@ -10,6 +10,9 @@ export class AudioSystem {
   private muted = false;
 
   enable(): void {
+    if (typeof window === "undefined") {
+      return;
+    }
     if (!this.ctx) {
       this.ctx = new (
         window.AudioContext ||
@@ -121,6 +124,9 @@ export class AudioSystem {
 
   /** Start (or restart) the background music track. */
   playMusic(): void {
+    if (typeof Audio === "undefined") {
+      return;
+    }
     if (!this.musicEl) {
       this.musicEl = new Audio(MUSIC_URL);
       this.musicEl.loop = true;
@@ -133,6 +139,9 @@ export class AudioSystem {
 
   /** Resume background music from current position. */
   resumeMusic(): void {
+    if (typeof Audio === "undefined") {
+      return;
+    }
     if (this.musicEl) {
       this.musicEl.muted = this.muted;
       this.musicEl.play().catch(() => {});
