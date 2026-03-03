@@ -294,6 +294,7 @@ export async function runLeaderboardSync(
   const effectiveLimit = Math.min(Math.max(request.limit ?? 200, 1), 1000);
   const allEvents: LeaderboardEventRecord[] = [];
   let totalFetchedCount = 0;
+  let paginationWarning: string | null = null;
 
   // eslint-disable-next-line no-await-in-loop
   let lastFetched: GalexieFetchResult = await deps.fetchLeaderboardEventsFromGalexie(env, {
@@ -334,9 +335,8 @@ export async function runLeaderboardSync(
         source: request.source ?? null,
       });
     } catch (error) {
-      console.warn(
-        `[leaderboard-sync] stopping pagination after page ${pageCount} due to fetch failure: ${safeErrorMessage(error)}`,
-      );
+      paginationWarning = `pagination halted after page ${pageCount}: ${safeErrorMessage(error)}`;
+      console.warn(`[leaderboard-sync] ${paginationWarning}`);
       break;
     }
     lastFetched = nextPage;
@@ -378,7 +378,7 @@ export async function runLeaderboardSync(
     lastSyncedAt: nowIso,
     lastBackfillAt: request.mode === "backfill" ? nowIso : existingState.lastBackfillAt,
     totalEvents,
-    lastError: null,
+    lastError: paginationWarning,
   };
 
   await deps.setLeaderboardIngestionState(env, nextState);
