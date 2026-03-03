@@ -131,9 +131,11 @@ function claimStatusColor(status: string, txHash?: string | null): string {
 export function ProofJobCard({
   job: initialJob,
   onJobUpdate,
+  readOnly,
 }: {
   job: ProofJobPublic;
   onJobUpdate?: (job: ProofJobPublic) => void;
+  readOnly?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [job, setJob] = useState(initialJob);
@@ -337,8 +339,8 @@ export function ProofJobCard({
       ? `${STELLAR_EXPLORER_BASE}/tx/${job.claim.txHash}`
       : null;
   const isClaimed = job.claim.status === "succeeded";
-  const canRetryClaim = job.status === "succeeded" && job.claim.status === "failed";
-  const canRetryProof = job.status === "failed" && !job.result;
+  const canRetryClaim = !readOnly && job.status === "succeeded" && job.claim.status === "failed";
+  const canRetryProof = !readOnly && job.status === "failed" && !job.result;
   const hasProverAttempts = (job.proverAttempts?.length ?? 0) > 0;
   const showProverAttempts = hasProverAttempts || canRetryProof || proofRetryError != null;
 

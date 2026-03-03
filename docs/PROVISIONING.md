@@ -1,6 +1,6 @@
 # Provisioning & Timeout Reference (Current)
 
-Last reviewed: 2026-03-02
+Last reviewed: 2026-03-03
 
 This document is the source-of-truth reference for proof/claim timeout behavior in
 production.
@@ -27,8 +27,6 @@ The worker now uses two explicit wall-time controls:
 | Setting | Current value | Env var | Source |
 |---|---:|---|---|
 | Poll interval | 3000 ms | `PROVER_POLL_INTERVAL_MS` | `worker/constants.ts`, `wrangler.jsonc` |
-| Poll budget per alarm run | 45000 ms | `PROVER_POLL_BUDGET_MS` | `worker/constants.ts`, `wrangler.jsonc` |
-| Absolute poll timeout | 660000 ms (11 min) | `PROVER_POLL_TIMEOUT_MS` | `worker/constants.ts`, `wrangler.jsonc` |
 | Per-request prover HTTP timeout | 30000 ms | `PROVER_REQUEST_TIMEOUT_MS` | `worker/constants.ts`, `wrangler.jsonc` |
 | Total proof wall-time cap | 3900000 ms (65 min) | `MAX_PROOF_TOTAL_WALL_TIME_MS` | `worker/constants.ts`, `wrangler.jsonc` |
 | Active prover run cap | 660000 ms (11 min) | `MAX_PROVER_RUN_TIME_MS` | `worker/constants.ts`, `wrangler.jsonc` |
@@ -67,8 +65,8 @@ The public job response can also include:
   - retry after 30s
   - fail with `vast_slot_wait_timeout` if total wall time cap is exceeded
 - Stale slot recovery:
-  - if active VAST job appears stale past run cap, `kickAlarm()` is attempted
-  - if still stale, active job is failed with `prover_run_timeout`
+  - if slot is occupied, queue consumer triggers `kickAlarm()`
+  - `kickAlarm()` applies timeout/fallback logic in the coordinator; queue side does not duplicate timeout policy
 
 ### Claims (`CLAIM_QUEUE`)
 
@@ -102,8 +100,6 @@ The public job response can also include:
 
 ```jsonc
 "PROVER_POLL_INTERVAL_MS": "3000",
-"PROVER_POLL_TIMEOUT_MS": "660000",
-"PROVER_POLL_BUDGET_MS": "45000",
 "PROVER_REQUEST_TIMEOUT_MS": "30000",
 "MAX_PROOF_TOTAL_WALL_TIME_MS": "3900000",
 "MAX_PROVER_RUN_TIME_MS": "660000"

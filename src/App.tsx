@@ -18,6 +18,12 @@ const LazyProofsPage = lazy(() =>
   })),
 );
 
+const LazyPublicProofsPage = lazy(() =>
+  import("./components/proofs/PublicProofsPage").then((m) => ({
+    default: m.PublicProofsPage,
+  })),
+);
+
 const LazyGamePage = lazy(() =>
   import("./components/game/GamePageWrapper").then((m) => ({
     default: m.GamePageWrapper,
@@ -36,10 +42,16 @@ function App() {
             <LazyLeaderboardPage />
           </Suspense>
         </ErrorBoundary>
-      ) : pathname.startsWith("/proofs") ? (
+      ) : pathname === "/proofs" ? (
         <ErrorBoundary key={pathname}>
           <Suspense fallback={<SuspenseFallback />}>
             <LazyProofsPage />
+          </Suspense>
+        </ErrorBoundary>
+      ) : pathname.startsWith("/proofs/") ? (
+        <ErrorBoundary key={pathname}>
+          <Suspense fallback={<SuspenseFallback />}>
+            <LazyPublicProofsPage />
           </Suspense>
         </ErrorBoundary>
       ) : (

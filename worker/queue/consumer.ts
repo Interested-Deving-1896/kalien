@@ -1,6 +1,5 @@
 import {
   DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
-  DEFAULT_MAX_PROVER_RUN_TIME_MS,
   MAX_QUEUE_RETRIES,
   MAX_VAST_QUEUE_RETRIES,
   VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
@@ -177,10 +176,6 @@ function resolveMaxProofTotalWallTimeMs(env: WorkerEnv): number {
     DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
     60_000,
   );
-}
-
-function resolveMaxProverRunTimeMs(env: WorkerEnv): number {
-  return parseInteger(env.MAX_PROVER_RUN_TIME_MS, DEFAULT_MAX_PROVER_RUN_TIME_MS, 60_000);
 }
 
 /**
@@ -388,9 +383,13 @@ async function processBoundlessMessage(
 // VastAI queue consumer (VAST_QUEUE — serial, 1-at-a-time)
 // ---------------------------------------------------------------------------
 
+/**
+ * Attempt to recover a stale VastAI slot by kicking the coordinator alarm.
+ * kickAlarm() applies wall-time, Boundless, and Vast prover run timeouts
+ * directly, so a single call handles all recovery paths.
+ */
 async function tryRecoverStaleVastSlot(
   coordinator: ReturnType<typeof coordinatorStub>,
-  env: WorkerEnv,
 ): Promise<boolean> {
   const activeVastJob = await coordinator.getActiveVastJob();
   if (
@@ -401,44 +400,10 @@ async function tryRecoverStaleVastSlot(
     return false;
   }
 
-  const maxProverRunTimeMs = resolveMaxProverRunTimeMs(env);
-  const nowMs = Date.now();
-  const runStartMs = new Date(
-    activeVastJob.prover.runStartedAt ?? activeVastJob.updatedAt ?? activeVastJob.createdAt,
-  ).getTime();
-  const lastPolledAtMs = activeVastJob.prover.lastPolledAt
-    ? new Date(activeVastJob.prover.lastPolledAt).getTime()
-    : runStartMs;
-  const runAgeMs = Number.isFinite(runStartMs) ? Math.max(0, nowMs - runStartMs) : 0;
-  const lastPollAgeMs = Number.isFinite(lastPolledAtMs) ? Math.max(0, nowMs - lastPolledAtMs) : 0;
-  if (runAgeMs <= maxProverRunTimeMs && lastPollAgeMs <= maxProverRunTimeMs) {
-    return false;
-  }
-
   await coordinator.kickAlarm();
-  const refreshed = await coordinator.getJob(activeVastJob.jobId);
-  if (!refreshed || isTerminalProofStatus(refreshed.status)) {
-    return true;
-  }
 
-  const stillVast =
-    Boolean(refreshed.prover.jobId) &&
-    typeof refreshed.prover.statusUrl === "string" &&
-    refreshed.prover.statusUrl.length > 0 &&
-    !refreshed.prover.statusUrl.startsWith("boundless:");
-  if (stillVast) {
-    const runMin = Math.round(runAgeMs / 60_000);
-    await coordinator.markFailed(
-      refreshed.jobId,
-      `vast prover slot watchdog timed out after ${runMin} minutes`,
-      {
-        errorCode: "prover_run_timeout",
-        timeoutPhase: "prover_run",
-      },
-    );
-  }
-
-  return true;
+  // Re-check: kickAlarm may have timed out or recovered the job.
+  return !(await coordinator.hasActiveVastJob());
 }
 
 async function processVastMessage(
@@ -457,7 +422,7 @@ async function processVastMessage(
   let slotBusy = await coordinator.hasActiveVastJob();
   if (slotBusy) {
     try {
-      await tryRecoverStaleVastSlot(coordinator, env);
+      await tryRecoverStaleVastSlot(coordinator);
       slotBusy = await coordinator.hasActiveVastJob();
     } catch (error) {
       console.warn(`[vast-queue] stale slot recovery failed: ${safeErrorMessage(error)}`);

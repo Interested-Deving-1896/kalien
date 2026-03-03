@@ -9,7 +9,7 @@
  *
  *   const client = new BoundlessClient(config);
  *   const submitResult = await client.submitRequest(tapeBytes);
- *   const pollResult = await client.poll(requestIdHex, budgetMs);
+ *   const pollResult = await client.pollOnce(requestIdHex);
  *   const url = client.explorerUrl(requestIdBigInt);
  */
 

@@ -16,9 +16,7 @@ export interface WorkerEnv {
   PROVER_EXPECTED_IMAGE_ID?: string;
   PROVER_HEALTH_CACHE_MS?: string;
   PROVER_POLL_INTERVAL_MS?: string;
-  PROVER_POLL_TIMEOUT_MS?: string;
   PROVER_REQUEST_TIMEOUT_MS?: string;
-  PROVER_POLL_BUDGET_MS?: string;
   MAX_TAPE_BYTES?: string;
   MAX_PROOF_TOTAL_WALL_TIME_MS?: string;
   MAX_PROVER_RUN_TIME_MS?: string;
@@ -66,7 +64,6 @@ export interface WorkerEnv {
   BOUNDLESS_MAX_PRICE_USD?: string;
   // JIT top-up buffer (basis points) applied to the funding deficit.
   BOUNDLESS_TOP_UP_BUFFER_BPS?: string;
-  BOUNDLESS_POLL_INTERVAL_MS?: string;
   BOUNDLESS_POLL_TIMEOUT_MS?: string;
   // Auction shape
   BOUNDLESS_FLAT_PERIOD_SEC?: string;

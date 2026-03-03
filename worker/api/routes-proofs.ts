@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cache } from "hono/cache";
 import { fetchBoundlessCycles } from "../boundless/sdk/client";
 import { resolveBoundlessConfig } from "../boundless/config";
-import { DEFAULT_MAX_TAPE_BYTES, OPPORTUNISTIC_POLL_STALE_MS } from "../constants";
+import { DEFAULT_MAX_TAPE_BYTES } from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
 import { resultKey } from "../keys";
@@ -459,12 +459,6 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
     const coordinator = coordinatorStub(c.env);
     const { jobs, total } = await coordinator.listJobsForClaimant(claimantAddress, limit, offset);
 
-    // Restart the alarm chain if it died (e.g. server restart / DO eviction).
-    // Best-effort, don't block the response.
-    if (jobs.some((j) => !isTerminalProofStatus(j.status))) {
-      coordinator.kickAlarm().catch(() => {});
-    }
-
     const jobsWithCycleBackfill = await Promise.all(
       jobs.map(async (job) => {
         if (job.status !== "succeeded") {
@@ -559,23 +553,6 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
     let job = (await coordinator.getJob(jobId)) as ProofJobRecord | null;
     if (!job) {
       return jsonError(c, 404, `job not found: ${jobId}`);
-    }
-
-    // Opportunistic: if the DO alarm hasn't polled recently (unreliable in local
-    // dev), do a single-shot prover check so the frontend sees progress.
-    // DOs are single-threaded so this is safe from races in prod.
-    if (
-      !isTerminalProofStatus(job.status) &&
-      job.prover.jobId &&
-      (!job.prover.lastPolledAt ||
-        Date.now() - new Date(job.prover.lastPolledAt).getTime() > OPPORTUNISTIC_POLL_STALE_MS)
-    ) {
-      try {
-        await coordinator.kickAlarm();
-        job = (await coordinator.getJob(jobId)) ?? job;
-      } catch {
-        // Best-effort — don't fail the read if kicking the alarm errors.
-      }
     }
 
     // Lazy backfill: if this is a succeeded Boundless job missing cycle data,

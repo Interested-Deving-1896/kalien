@@ -76,7 +76,6 @@ export interface BoundlessClientConfig {
   minPriceUsd: number;
   /** JIT top-up buffer in basis points applied when topping up market balance. */
   topUpBufferBps: number;
-  pollIntervalMs: number;
   pollTimeoutMs: number;
   /** Seconds before price ramp begins (prover discovery window) */
   flatPeriodSec: number;

@@ -692,44 +692,6 @@ export class BoundlessClient {
   }
 
   /**
-   * Poll for Boundless fulfillment with a time budget.
-   *
-   * Polls at `config.pollIntervalMs` intervals until either:
-   * - The request is fulfilled (returns success/fatal)
-   * - The budget runs out (returns running — caller should resume later)
-   * - The absolute timeout is reached (returns running)
-   *
-   * @param requestIdHex - 0x-prefixed hex string of the request ID
-   * @param budgetMs     - Maximum time to spend polling in this call
-   */
-  async poll(requestIdHex: string, budgetMs: number): Promise<ProverPollResult> {
-    const config = this.config;
-    const budgetDeadline = Date.now() + budgetMs;
-    const absoluteDeadline = Date.now() + config.pollTimeoutMs;
-
-    let lastResult: ProverPollResult = { type: "running", status: "running" };
-
-    /* eslint-disable no-await-in-loop */
-    while (Date.now() < budgetDeadline && Date.now() < absoluteDeadline) {
-      const result = await this.pollOnce(requestIdHex);
-      lastResult = result;
-
-      if (result.type !== "running") {
-        return result;
-      }
-
-      if (Date.now() + config.pollIntervalMs >= budgetDeadline) {
-        return result;
-      }
-
-      await sleep(config.pollIntervalMs);
-    }
-    /* eslint-enable no-await-in-loop */
-
-    return lastResult;
-  }
-
-  /**
    * Get the Boundless explorer URL for a given request ID.
    *
    * @param requestId - bigint request ID

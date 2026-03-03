@@ -15,7 +15,7 @@ Kalien is a deterministic Asteroids stack with:
 - [kalien-verifier/README.md](kalien-verifier/README.md): prover service setup and deployment
 - [kalien-contract/README.md](kalien-contract/README.md): on-chain score contract and proof flow
 - [autopilot/README.md](autopilot/README.md): deterministic tape generation lab
-- [cli/README.md](cli/README.md): `kalien` terminal client
+- [cli/README.md](cli/README.md): multi-language `kalien` terminal clients
 - [test-fixtures/README.md](test-fixtures/README.md): canonical tape/proof fixtures
 - [shared/README.md](shared/README.md): shared cross-package utilities
 

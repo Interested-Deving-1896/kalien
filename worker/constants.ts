@@ -12,14 +12,8 @@ export const TAPE_FOOTER_SIZE = 8;
 export const DEFAULT_MAX_TAPE_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_POLL_INTERVAL_MS = 3_000;
 export const MIN_PROVER_POLL_INTERVAL_MS = 500;
-// Target: typical proofs ~5 min; accept up to 10 min before timing out.
-// This is primarily a safety bound if someone configures an overly large poll budget.
-export const DEFAULT_POLL_TIMEOUT_MS = 11 * 60_000;
-export const MIN_PROVER_POLL_TIMEOUT_MS = 5_000;
 export const DEFAULT_PROVER_REQUEST_TIMEOUT_MS = 30_000;
-export const DEFAULT_POLL_BUDGET_MS = 45_000;
 export const DEFAULT_PROVER_HEALTH_CACHE_MS = 30_000;
-export const OPPORTUNISTIC_POLL_STALE_MS = 5_000;
 // End-to-end job lifetime cap in the gateway (queue + proving + storage writes).
 // Also used as the max time a queued VAST fallback job can wait for a slot.
 // Keep this above the full four-attempt fallback chain budget
@@ -30,7 +24,7 @@ export const DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS = 180 * 60_000; // 3 hours
 // Keep slightly above the prover API timeout so status propagation can finish.
 export const DEFAULT_MAX_PROVER_RUN_TIME_MS = 11 * 60_000; // 11 minutes
 export const DEFAULT_MAX_COMPLETED_JOBS = 200;
-export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 24 * 60 * 60_000; // 24 hours
+export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 7 * 24 * 60 * 60_000; // 7 days
 export const MAX_TOTAL_PROVER_ATTEMPTS = 4; // 2 Boundless + 2 Vast.ai interleaved
 
 export const DEFAULT_SEGMENT_LIMIT_PO2 = 21;
@@ -61,7 +55,5 @@ export const ACTIVE_JOBS_KEY = "active_job_ids";
 export const JOB_KEY_PREFIX = "job:";
 
 // Boundless proving defaults
-export const DEFAULT_BOUNDLESS_POLL_INTERVAL_MS = 5_000;
 export const DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS = 30 * 60_000; // Full lock window: flat (1m) + lockTimeout (29m from rampUpStart)
 export const DEFAULT_BOUNDLESS_MAX_FRAMES = 36_000;
-export const DEFAULT_BOUNDLESS_POLL_BUDGET_MS = 45_000;

@@ -1,14 +1,9 @@
 import {
-  DEFAULT_POLL_BUDGET_MS,
-  DEFAULT_POLL_INTERVAL_MS,
-  DEFAULT_POLL_TIMEOUT_MS,
   DEFAULT_PROVER_HEALTH_CACHE_MS,
   DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
   DEFAULT_SEGMENT_LIMIT_PO2,
   EXPECTED_RULES_DIGEST,
   EXPECTED_RULESET,
-  MIN_PROVER_POLL_INTERVAL_MS,
-  MIN_PROVER_POLL_TIMEOUT_MS,
   RETRYABLE_JOB_ERROR_CODES,
 } from "../constants";
 import type { WorkerEnv } from "../env";
@@ -22,7 +17,7 @@ import type {
   ProofResultSummary,
 } from "../types";
 import { buildProofArtifactV4FromProverResponse } from "../proof-artifact";
-import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage, sleep } from "../utils";
+import { isLocalHostname, parseBoolean, parseInteger, safeErrorMessage } from "../utils";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 
 export interface ValidatedProverHealth {
@@ -401,8 +396,7 @@ export async function submitToProver(
 
 /**
  * Single-shot prover status check: one HTTP fetch, parse, return.
- * Used by `kickAlarm()` for lightweight progress checks and internally
- * by `pollProver()` for its polling loop.
+ * Used by the DO alarm handler and kickAlarm() for progress checks.
  */
 export async function pollProverOnce(
   env: WorkerEnv,
@@ -554,51 +548,6 @@ export async function pollProverOnce(
   return {
     type: "running",
     status: payload.status,
-  };
-}
-
-export async function pollProver(env: WorkerEnv, proverJobId: string): Promise<ProverPollResult> {
-  const pollTimeoutMs = parseInteger(
-    env.PROVER_POLL_TIMEOUT_MS,
-    DEFAULT_POLL_TIMEOUT_MS,
-    MIN_PROVER_POLL_TIMEOUT_MS,
-  );
-  const pollIntervalMs = parseInteger(
-    env.PROVER_POLL_INTERVAL_MS,
-    DEFAULT_POLL_INTERVAL_MS,
-    MIN_PROVER_POLL_INTERVAL_MS,
-  );
-  const pollBudgetMs = parseInteger(
-    env.PROVER_POLL_BUDGET_MS,
-    DEFAULT_POLL_BUDGET_MS,
-    pollIntervalMs,
-  );
-
-  const budgetDeadline = Date.now() + pollBudgetMs;
-  const absoluteDeadline = Date.now() + pollTimeoutMs;
-
-  // Polling is intentionally sequential to preserve strict single-job semantics.
-  /* eslint-disable no-await-in-loop */
-  while (Date.now() < budgetDeadline && Date.now() < absoluteDeadline) {
-    const result = await pollProverOnce(env, proverJobId);
-
-    // Terminal results (success, retry, fatal) break out immediately.
-    if (result.type !== "running") {
-      return result;
-    }
-
-    // Still running — if budget is almost exhausted, return as-is.
-    if (Date.now() + pollIntervalMs >= budgetDeadline) {
-      return result;
-    }
-
-    await sleep(pollIntervalMs);
-  }
-  /* eslint-enable no-await-in-loop */
-
-  return {
-    type: "running",
-    status: "running",
   };
 }
 

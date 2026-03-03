@@ -30,6 +30,12 @@ interface DirectClaimConfig {
 const SEED_INTERVAL_SECONDS = 600;
 const SEED_REFRESH_COOLDOWN_MS = 2_500;
 const SEED_LEDGER_FETCH_TIMEOUT_MS = 15_000;
+const MIN_SEED_LEDGER_FETCH_TIMEOUT_MS = 1_000;
+
+export interface SeedEnsureOptions {
+  deadlineMs?: number;
+  maxFetchTimeoutMs?: number;
+}
 
 let inFlightSeedEnsureSeedId: number | null = null;
 let inFlightSeedEnsurePromise: Promise<EnsureCurrentEpochSeedResult> | null = null;
@@ -38,6 +44,33 @@ let lastSeedRefreshAttemptAt = 0;
 
 function isAcceptedWithoutHashMessage(message: string | null | undefined): boolean {
   return (message ?? "").toLowerCase().includes("did not return hash");
+}
+
+function hasExceededDeadline(deadlineMs: number | undefined): boolean {
+  return typeof deadlineMs === "number" && Date.now() >= deadlineMs;
+}
+
+function remainingUntilDeadline(deadlineMs: number | undefined): number | null {
+  if (typeof deadlineMs !== "number") {
+    return null;
+  }
+  return Math.max(0, deadlineMs - Date.now());
+}
+
+function resolveSeedFetchTimeoutMs(options: SeedEnsureOptions | undefined): number | null {
+  const configuredMax =
+    typeof options?.maxFetchTimeoutMs === "number"
+      ? Math.max(MIN_SEED_LEDGER_FETCH_TIMEOUT_MS, Math.floor(options.maxFetchTimeoutMs))
+      : SEED_LEDGER_FETCH_TIMEOUT_MS;
+  const baseTimeoutMs = Math.min(SEED_LEDGER_FETCH_TIMEOUT_MS, configuredMax);
+  const remainingMs = remainingUntilDeadline(options?.deadlineMs);
+  if (remainingMs === null) {
+    return baseTimeoutMs;
+  }
+  if (remainingMs < MIN_SEED_LEDGER_FETCH_TIMEOUT_MS) {
+    return null;
+  }
+  return Math.min(baseTimeoutMs, remainingMs);
 }
 
 function nonEmpty(value: string | undefined): string | null {
@@ -636,9 +669,13 @@ async function fetchSeedById(
   contractId: string,
   rpcUrl: string,
   seedId: number,
+  timeoutMs: number = SEED_LEDGER_FETCH_TIMEOUT_MS,
 ): Promise<number | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), SEED_LEDGER_FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.max(MIN_SEED_LEDGER_FETCH_TIMEOUT_MS, timeoutMs),
+  );
   try {
     const keyXdr = buildSeedByIdLedgerKeyXdr(contractId, seedId);
     const response = await fetch(rpcUrl, {
@@ -738,7 +775,10 @@ export interface EnsureCurrentEpochSeedResult {
   retryAfterSeconds?: number;
 }
 
-export async function readCurrentEpochSeedState(env: WorkerEnv): Promise<CurrentEpochSeedState> {
+export async function readCurrentEpochSeedState(
+  env: WorkerEnv,
+  options?: SeedEnsureOptions,
+): Promise<CurrentEpochSeedState> {
   const scoreContractId = nonEmpty(env.SCORE_CONTRACT_ID);
   if (!scoreContractId) {
     throw new Error("SCORE_CONTRACT_ID is not configured");
@@ -746,11 +786,18 @@ export async function readCurrentEpochSeedState(env: WorkerEnv): Promise<Current
 
   const rpcUrl = resolveBindingsRpcUrl(env);
   const { seedId, secondsLeft } = currentSeedIdWithSecondsLeft();
-  const seed = await fetchSeedById(scoreContractId, rpcUrl, seedId);
+  const fetchTimeoutMs = resolveSeedFetchTimeoutMs(options);
+  const seed =
+    fetchTimeoutMs === null
+      ? null
+      : await fetchSeedById(scoreContractId, rpcUrl, seedId, fetchTimeoutMs);
   return { seedId, secondsLeft, seed };
 }
 
-export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResult> {
+export async function submitSeedRefresh(
+  env: WorkerEnv,
+  options?: SeedEnsureOptions,
+): Promise<SeedRefreshResult> {
   const config = resolveDirectClaimConfig(env);
   if (!config) {
     console.log("[seed-refresh] channels relayer not configured, skipping seed refresh");
@@ -766,6 +813,16 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
   const rpcUrl = resolveBindingsRpcUrl(env);
   let phase = "init";
   try {
+    if (hasExceededDeadline(options?.deadlineMs)) {
+      return {
+        success: false,
+        message: "seed refresh deadline exceeded before submission",
+        seedId: null,
+        seed: null,
+        txHashCurrentSeed: null,
+      };
+    }
+
     phase = "build_payload_current_seed";
     const payload = buildCurrentSeedPayload(config.scoreContractId);
 
@@ -806,16 +863,32 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
     phase = "fetch_seed_by_id";
     let seedId: number | null = null;
     let seed: number | null = null;
+    let deadlineExceeded = false;
     const readDelaysMs = currentSeedAcceptedWithoutHash ? [0, 600, 1_500, 3_000] : [0, 1_000];
     for (const delayMs of readDelaysMs) {
       if (delayMs > 0) {
+        const remainingMs = remainingUntilDeadline(options?.deadlineMs);
+        if (remainingMs !== null && remainingMs < delayMs) {
+          deadlineExceeded = true;
+          break;
+        }
         // eslint-disable-next-line no-await-in-loop -- intentional sequential retry with backoff
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
 
       for (const candidateSeedId of candidateSeedIds) {
+        const fetchTimeoutMs = resolveSeedFetchTimeoutMs(options);
+        if (fetchTimeoutMs === null) {
+          deadlineExceeded = true;
+          break;
+        }
         // eslint-disable-next-line no-await-in-loop -- sequential seed lookup with early exit
-        const candidateSeed = await fetchSeedById(config.scoreContractId, rpcUrl, candidateSeedId);
+        const candidateSeed = await fetchSeedById(
+          config.scoreContractId,
+          rpcUrl,
+          candidateSeedId,
+          fetchTimeoutMs,
+        );
         if (candidateSeed !== null) {
           seedId = candidateSeedId;
           seed = candidateSeed;
@@ -826,13 +899,18 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
       if (seed !== null) {
         break;
       }
+      if (deadlineExceeded) {
+        break;
+      }
     }
 
     if (seedId === null || seed === null) {
       console.warn("[seed-refresh] unable to read seed after current_seed() submission");
       return {
         success: false,
-        message: "could not read seed after current_seed() submission",
+        message: deadlineExceeded
+          ? "seed refresh deadline exceeded while waiting for indexed seed"
+          : "could not read seed after current_seed() submission",
         seedId: null,
         seed: null,
         txHashCurrentSeed: txHashCurrentSeed,
@@ -866,8 +944,9 @@ export async function submitSeedRefresh(env: WorkerEnv): Promise<SeedRefreshResu
 
 export async function ensureCurrentEpochSeed(
   env: WorkerEnv,
+  options?: SeedEnsureOptions,
 ): Promise<EnsureCurrentEpochSeedResult> {
-  let state = await readCurrentEpochSeedState(env);
+  let state = await readCurrentEpochSeedState(env, options);
   if (state.seed !== null) {
     return {
       success: true,
@@ -880,7 +959,8 @@ export async function ensureCurrentEpochSeed(
   }
 
   const seedId = state.seedId;
-  if (inFlightSeedEnsurePromise && inFlightSeedEnsureSeedId === seedId) {
+  const useSharedInFlight = options?.deadlineMs == null && options?.maxFetchTimeoutMs == null;
+  if (useSharedInFlight && inFlightSeedEnsurePromise && inFlightSeedEnsureSeedId === seedId) {
     return inFlightSeedEnsurePromise;
   }
 
@@ -904,10 +984,21 @@ export async function ensureCurrentEpochSeed(
   }
 
   const attempt = (async (): Promise<EnsureCurrentEpochSeedResult> => {
+    if (hasExceededDeadline(options?.deadlineMs)) {
+      return {
+        success: false,
+        state,
+        refreshAttempted: false,
+        refreshed: false,
+        message: "seed refresh deadline exceeded before refresh attempt",
+        txHashCurrentSeed: null,
+      };
+    }
+
     lastSeedRefreshAttemptSeedId = seedId;
     lastSeedRefreshAttemptAt = Date.now();
 
-    const refresh = await submitSeedRefresh(env);
+    const refresh = await submitSeedRefresh(env, options);
 
     // submitSeedRefresh already retries reading the seed after submission.
     // If it found the seed, use its data directly — no extra RPC call needed.
@@ -935,8 +1026,12 @@ export async function ensureCurrentEpochSeed(
       const shouldRecheck =
         msg.includes("did not return hash") || isRetryableDirectClaimMessage(msg);
       if (shouldRecheck) {
-        await new Promise((resolve) => setTimeout(resolve, 1_500));
-        state = await readCurrentEpochSeedState(env).catch(() => state);
+        const recheckDelayMs = 1_500;
+        const remainingMs = remainingUntilDeadline(options?.deadlineMs);
+        if (remainingMs === null || remainingMs >= recheckDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, recheckDelayMs));
+          state = await readCurrentEpochSeedState(env, options).catch(() => state);
+        }
       }
     }
 
@@ -951,16 +1046,20 @@ export async function ensureCurrentEpochSeed(
     };
   })();
 
-  inFlightSeedEnsureSeedId = seedId;
-  inFlightSeedEnsurePromise = attempt;
-  try {
-    return await attempt;
-  } finally {
-    if (inFlightSeedEnsurePromise === attempt) {
-      inFlightSeedEnsurePromise = null;
-      inFlightSeedEnsureSeedId = null;
+  if (useSharedInFlight) {
+    inFlightSeedEnsureSeedId = seedId;
+    inFlightSeedEnsurePromise = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (inFlightSeedEnsurePromise === attempt) {
+        inFlightSeedEnsurePromise = null;
+        inFlightSeedEnsureSeedId = null;
+      }
     }
   }
+
+  return attempt;
 }
 
 export async function submitClaimDirect(

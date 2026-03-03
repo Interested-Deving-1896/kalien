@@ -2,7 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 import {
   ACTIVE_JOBS_KEY,
   COORDINATOR_OBJECT_NAME,
-  DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
   DEFAULT_COMPLETED_JOB_RETENTION_MS,
   DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
   DEFAULT_MAX_PROVER_RUN_TIME_MS,
@@ -18,7 +17,7 @@ import { fetchEthPriceUsd, weiToUsd } from "../boundless/pricing";
 import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
 import { jobKey, resultKey, tapeKey } from "../keys";
-import { pollProver, pollProverOnce } from "../prover/client";
+import { pollProverOnce } from "../prover/client";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import type {
   ClaimAttempt,
@@ -461,12 +460,25 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   /**
    * Lightweight periodic maintenance:
+   * - keep the alarm chain alive while active jobs exist
    * - prune completed jobs by retention/count policy
    * - fully clear storage when the coordinator is empty
    */
   async runMaintenance(): Promise<void> {
     const activeJobIds = await this.getActiveJobIds();
     if (activeJobIds.length > 0) {
+      // Keep the alarm chain alive even if no reads/queue activity happen.
+      // This avoids request-path watchdog logic and keeps progress cron/alarm-driven.
+      const currentAlarm = await this.ctx.storage.getAlarm();
+      const alarmMissing = currentAlarm == null || currentAlarm < Date.now();
+      if (alarmMissing) {
+        const pollIntervalMs = parseInteger(
+          this.env.PROVER_POLL_INTERVAL_MS,
+          DEFAULT_POLL_INTERVAL_MS,
+          MIN_PROVER_POLL_INTERVAL_MS,
+        );
+        await this.scheduleAlarm(pollIntervalMs);
+      }
       return;
     }
 
@@ -1660,7 +1672,8 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         continue;
       }
 
-      // Poll prover
+      // Poll prover — single-shot check; the alarm reschedules itself if
+      // the job is still running, so there is no need for an inner polling loop.
       let pollResult: ProverPollResult;
       let boundlessConfig: ReturnType<typeof resolveBoundlessConfig> = null;
       try {
@@ -1670,12 +1683,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
             await this.markFailed(jobId, "boundless config missing during alarm poll");
             continue;
           }
-          pollResult = await new BoundlessClient(boundlessConfig).poll(
-            job.prover.jobId,
-            DEFAULT_BOUNDLESS_POLL_BUDGET_MS,
-          );
+          pollResult = await new BoundlessClient(boundlessConfig).pollOnce(job.prover.jobId);
         } else {
-          pollResult = await pollProver(this.env, job.prover.jobId);
+          pollResult = await pollProverOnce(this.env, job.prover.jobId);
         }
       } catch (error) {
         job.prover.pollingErrors += 1;
@@ -1766,10 +1776,24 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       return;
     }
 
+    const maxWallTimeMs = this.resolveMaxProofTotalWallTimeMs();
+
     /* eslint-disable no-await-in-loop */
     for (const activeJobId of activeJobIds) {
       const job = await this.loadJob(activeJobId);
       if (!job || isTerminalProofStatus(job.status)) {
+        continue;
+      }
+
+      // Apply wall-time timeout directly — don't rely on alarm() for this,
+      // because the alarm chain may be dead after a server restart.
+      const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+      if (jobAgeMs > maxWallTimeMs) {
+        const ageMin = Math.round(jobAgeMs / 60_000);
+        await this.markFailed(activeJobId, `proof job timed out after ${ageMin} minutes`, {
+          errorCode: "job_total_wall_timeout",
+          timeoutPhase: "total_wall",
+        });
         continue;
       }
 
@@ -1779,6 +1803,44 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         // Just ensure the alarm is scheduled.
         await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
         continue;
+      }
+
+      // Apply Vast prover run timeout: if a non-Boundless job has been
+      // running longer than the prover slot limit, fail and fall back.
+      if (!this.isBoundlessJob(job)) {
+        this.updateRunElapsed(job);
+        const runElapsedMs = job.prover.runElapsedMs ?? 0;
+        const maxProverRunTimeMs = this.resolveMaxProverRunTimeMs();
+        if (runElapsedMs > maxProverRunTimeMs) {
+          const runMin = Math.round(runElapsedMs / 60_000);
+          const reason = `proof run timed out after ${runMin} minutes while occupying prover slot`;
+          await this.recordAttemptEnd(job, "failed", reason, {
+            errorCode: "prover_run_timeout",
+          });
+          await this.tryNextProverBackend(activeJobId, job, reason);
+          continue;
+        }
+      }
+
+      // Apply Boundless two-tier timeout: if the attempt has been running
+      // longer than the order's on-chain lifetime, fail and fall back.
+      if (this.isBoundlessJob(job)) {
+        const boundlessConfig = resolveBoundlessConfig(this.env);
+        if (boundlessConfig) {
+          const currentAttempt = job.proverAttempts.find((a) => a.outcome === "in_progress");
+          if (currentAttempt) {
+            const attemptAgeMs = Date.now() - new Date(currentAttempt.startedAt).getTime();
+            const fullTimeoutMs =
+              (boundlessConfig.flatPeriodSec + boundlessConfig.timeoutSec) * 1000;
+            if (attemptAgeMs > fullTimeoutMs) {
+              const elapsedSec = Math.round(attemptAgeMs / 1000);
+              const reason = `boundless order expired after ${elapsedSec}s (recovered by kickAlarm)`;
+              await this.recordAttemptEnd(job, "failed", reason);
+              await this.tryNextProverBackend(activeJobId, job, reason);
+              continue;
+            }
+          }
+        }
       }
 
       let pollResult: ProverPollResult;
@@ -1809,6 +1871,20 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       await this.applyPollResult(activeJobId, job, pollResult, false);
     }
     /* eslint-enable no-await-in-loop */
+
+    // Ensure the alarm chain is running. If the server was restarted (or the
+    // DO was evicted) the alarm may have been lost — this restarts it so
+    // alarm() can apply its full timeout / fallback logic on the next tick.
+    // Also reschedule if the existing alarm is in the past (stale from a
+    // previous session that never fired).
+    const currentAlarm = await this.ctx.storage.getAlarm();
+    const alarmMissing = currentAlarm == null || currentAlarm < Date.now();
+    if (alarmMissing) {
+      const remaining = await this.getActiveJobIds();
+      if (remaining.length > 0) {
+        await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
+      }
+    }
   }
 
   async listJobsForClaimant(

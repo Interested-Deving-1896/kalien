@@ -20,10 +20,10 @@ epoch boundaries or under host clock skew.
 
 ## Current Behavior References
 
-- Worker local epoch derivation: `cli/src/worker/game-worker.ts`
+- Worker local epoch derivation: `cli/cli-ts/src/worker/game-worker.ts`
 - CLI seed fetch helper uses local epoch: `src/chain/seed.ts`
-- Relayer fallback probes `now` and `now-1`: `cli/src/relayer.ts`
-- Run loop submit gating by epoch: `cli/src/commands/run.ts`
+- Relayer fallback probes `now` and `now-1`: `cli/cli-ts/src/relayer.ts`
+- Run loop submit gating by epoch: `cli/cli-ts/src/commands/run.ts`
 - Contract seed-window enforcement: `kalien-contract/contracts/asteroids_score/src/lib.rs`
 
 ## Proposed Follow-Up

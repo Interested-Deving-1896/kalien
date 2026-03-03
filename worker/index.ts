@@ -144,12 +144,29 @@ export default {
     if (!controller.cron || controller.cron === SEED_REFRESH_CRON) {
       // Materialize/index the on-chain seed for the current 10-min window so
       // players don't need to trigger seed creation themselves.
-      // Retry up to 5 times with 10s gaps to ride out transient failures.
+      // Retry up to 3 times with short gaps under a strict wall-time budget;
+      // if all fail the next cron tick (every 10 min) will try again.
       let seedRefreshSucceeded = false;
       let lastSeedRefreshFailure: string | null = null;
-      for (let attempt = 1; attempt <= 5; attempt++) {
+      const SEED_REFRESH_MAX_ATTEMPTS = 3;
+      const SEED_REFRESH_RETRY_DELAY_MS = 3_000;
+      const SEED_REFRESH_HANDLER_BUDGET_MS = 20_000;
+      const SEED_REFRESH_MAX_FETCH_TIMEOUT_MS = 5_000;
+      const seedRefreshDeadlineMs = Date.now() + SEED_REFRESH_HANDLER_BUDGET_MS;
+      for (let attempt = 1; attempt <= SEED_REFRESH_MAX_ATTEMPTS; attempt++) {
+        if (Date.now() >= seedRefreshDeadlineMs) {
+          lastSeedRefreshFailure = "seed refresh cron budget exceeded";
+          console.warn(
+            `[seed-refresh] stopping retries: ${lastSeedRefreshFailure} (${SEED_REFRESH_HANDLER_BUDGET_MS}ms)`,
+          );
+          break;
+        }
+
         // eslint-disable-next-line no-await-in-loop -- intentional sequential retry with backoff
-        const seedResult = await ensureCurrentEpochSeed(env).catch((error) => ({
+        const seedResult = await ensureCurrentEpochSeed(env, {
+          deadlineMs: seedRefreshDeadlineMs,
+          maxFetchTimeoutMs: SEED_REFRESH_MAX_FETCH_TIMEOUT_MS,
+        }).catch((error) => ({
           success: false,
           message: safeErrorMessage(error),
         }));
@@ -159,16 +176,24 @@ export default {
         }
         lastSeedRefreshFailure = seedResult.message ?? "unknown";
         console.warn(
-          `[seed-refresh] attempt ${attempt}/5 failed: ${seedResult.message ?? "unknown"}`,
+          `[seed-refresh] attempt ${attempt}/${SEED_REFRESH_MAX_ATTEMPTS} failed: ${seedResult.message ?? "unknown"}`,
         );
-        if (attempt < 5) {
+        if (attempt < SEED_REFRESH_MAX_ATTEMPTS) {
+          const remainingMs = seedRefreshDeadlineMs - Date.now();
+          if (remainingMs < SEED_REFRESH_RETRY_DELAY_MS) {
+            lastSeedRefreshFailure = "seed refresh cron budget exhausted before next retry";
+            console.warn(
+              `[seed-refresh] stopping retries: ${lastSeedRefreshFailure} (${SEED_REFRESH_HANDLER_BUDGET_MS}ms)`,
+            );
+            break;
+          }
           // eslint-disable-next-line no-await-in-loop -- intentional sequential retry with backoff
-          await new Promise((r) => setTimeout(r, 10_000));
+          await new Promise((r) => setTimeout(r, SEED_REFRESH_RETRY_DELAY_MS));
         }
       }
       if (!seedRefreshSucceeded) {
         console.warn(
-          `[seed-refresh] scheduled refresh failed after 5 attempts: ${
+          `[seed-refresh] scheduled refresh failed after ${SEED_REFRESH_MAX_ATTEMPTS} attempts: ${
             lastSeedRefreshFailure ?? "unknown"
           }`,
         );

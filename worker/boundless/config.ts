@@ -1,7 +1,4 @@
-import {
-  DEFAULT_BOUNDLESS_POLL_INTERVAL_MS,
-  DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS,
-} from "../constants";
+import { DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS } from "../constants";
 import type { WorkerEnv } from "../env";
 
 // Known Boundless deployments by chain
@@ -54,7 +51,6 @@ export interface BoundlessConfig {
   maxPriceUsd: number;
   minPriceUsd: number;
   topUpBufferBps: number;
-  pollIntervalMs: number;
   pollTimeoutMs: number;
   // Auction shape (reverse Dutch auction) — all in seconds (contract uses block.timestamp)
   flatPeriodSec: number; // Seconds before ramp begins (prover discovery window)
@@ -129,10 +125,6 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     ? Math.max(lockTimeoutSec, Number.parseInt(env.BOUNDLESS_TIMEOUT_SEC, 10))
     : 3540; // lock (29m) + 30m expiry period for secondary provers
 
-  const pollIntervalMs = env.BOUNDLESS_POLL_INTERVAL_MS
-    ? Math.max(1000, Number.parseInt(env.BOUNDLESS_POLL_INTERVAL_MS, 10))
-    : DEFAULT_BOUNDLESS_POLL_INTERVAL_MS;
-
   const pollTimeoutMs = env.BOUNDLESS_POLL_TIMEOUT_MS
     ? Math.max(5000, Number.parseInt(env.BOUNDLESS_POLL_TIMEOUT_MS, 10))
     : DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS;
@@ -147,7 +139,6 @@ export function resolveBoundlessConfig(env: WorkerEnv): BoundlessConfig | null {
     maxPriceUsd,
     minPriceUsd,
     topUpBufferBps,
-    pollIntervalMs,
     pollTimeoutMs,
     flatPeriodSec,
     rampPeriodSec,
