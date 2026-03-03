@@ -138,8 +138,60 @@ function retryableChannelsExecutionCode(rawCode: string | null): boolean {
     code === "pool_capacity" ||
     code === "rate_limit" ||
     code === "locked_conflict" ||
-    code === "service_unavailable"
+    code === "service_unavailable" ||
+    code === "auth_expiry_too_short" ||
+    code === "simulation_signed_auth_validation_failed"
   );
+}
+
+const RETRYABLE_ONCHAIN_FEE_RESULT_CODES = [
+  "txinsufficientfee",
+  "txfeebumpinnerfailed",
+] as const;
+
+function containsRetryableOnchainFeeCode(rawValue: string): boolean {
+  const value = rawValue.toLowerCase();
+  return RETRYABLE_ONCHAIN_FEE_RESULT_CODES.some((code) => value.includes(code));
+}
+
+/**
+ * Check whether an `onchain_failed` error is caused by transient fee-market
+ * congestion (txInsufficientFee, TxFeeBumpInnerFailed).  Other on-chain
+ * failures remain fatal.
+ */
+function isRetryableOnchainFailed(errorDetails: unknown, errorMessage: string): boolean {
+  const details = asObject(errorDetails);
+  const inner = details ? asObject(details.details) : null;
+  const candidates = [
+    inner && typeof inner.resultCode === "string" ? inner.resultCode : null,
+    inner && typeof inner.reason === "string" ? inner.reason : null,
+    inner && typeof inner.error === "string" ? inner.error : null,
+    errorMessage,
+  ];
+
+  return candidates.some(
+    (value) => typeof value === "string" && containsRetryableOnchainFeeCode(value),
+  );
+}
+
+function classifyOnchainFailedSubmission(
+  context: "soroban" | "signed transaction",
+  error: PluginExecutionError,
+  code: string,
+): RelaySubmitResult {
+  const feeRetryable = isRetryableOnchainFailed(error.errorDetails, error.message);
+  const detail = `${error.message} (${code})`;
+  return {
+    type: feeRetryable ? "retry" : "fatal",
+    message: `channels relayer ${context} submission failed: ${detail}`,
+    errorDetail: buildErrorDetail({
+      category: error.category,
+      code,
+      message: error.message,
+      errorDetails: error.errorDetails,
+      stack: error.stack,
+    }),
+  };
 }
 
 function extractExecutionCode(details: unknown): string | null {
@@ -211,6 +263,13 @@ function classifySimulationContractError(
       return {
         type: "fatal",
         message: "claim rejected: seed is not active for this seed_id (SeedNotActive)",
+        errorDetail,
+      };
+    case 9:
+      return {
+        type: "fatal",
+        message:
+          "claim rejected: sub-contract error #9 (likely verifier or token contract — needs investigation)",
         errorDetail,
       };
     default:
@@ -313,7 +372,13 @@ export function isRetryableDirectClaimMessage(rawMessage: string): boolean {
     message.includes("http 504") ||
     message.includes("empty or invalid response from plugin") ||
     message.includes("pool_capacity") ||
-    message.includes("too many transactions queued")
+    message.includes("too many transactions queued") ||
+    message.includes("auth_expiry_too_short") ||
+    message.includes("auth entry signatureexpirationledger too close") ||
+    message.includes("nonce already exists") ||
+    message.includes("signature has expired") ||
+    message.includes("txinsufficientfee") ||
+    message.includes("txfeebumpinnerfailed")
   );
 }
 
@@ -398,6 +463,11 @@ async function submitSorobanOperationViaChannels(
         };
       }
 
+      // For onchain_failed, only retry fee-market congestion errors.
+      if (code?.toLowerCase() === "onchain_failed") {
+        return classifyOnchainFailedSubmission("soroban", error, code);
+      }
+
       const detail = code ? `${error.message} (${code})` : error.message;
       return {
         type: isRetryableChannelsExecution(error.message, code) ? "retry" : "fatal",
@@ -463,6 +533,12 @@ async function submitSignedTransactionViaChannels(
 
     if (error instanceof PluginExecutionError) {
       const code = extractExecutionCode(error.errorDetails);
+
+      // For onchain_failed, only retry fee-market congestion errors.
+      if (code?.toLowerCase() === "onchain_failed") {
+        return classifyOnchainFailedSubmission("signed transaction", error, code);
+      }
+
       const detail = code ? `${error.message} (${code})` : error.message;
       return {
         type: isRetryableChannelsExecution(error.message, code) ? "retry" : "fatal",

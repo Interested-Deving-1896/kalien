@@ -25,6 +25,14 @@ function clientIp(c: { req: { raw: Request } }): string {
   return c.req.raw.headers.get("cf-connecting-ip") ?? "unknown";
 }
 
+function extractErrorCode(detail: string | undefined): string | undefined {
+  if (!detail) {
+    return undefined;
+  }
+  const match = /(?:^|\n)\s*code:\s*([A-Za-z0-9_:-]+)/.exec(detail);
+  return match?.[1];
+}
+
 function parseRelayPayload(body: unknown): { payload: RelayProxyPayload } | { error: string } {
   if (!body || typeof body !== "object") {
     return { error: "request body must be a JSON object" };
@@ -127,13 +135,18 @@ export function createRelayRouter(): Hono<{ Bindings: WorkerEnv }> {
       });
     }
 
+    const retryable = relay.type === "retry";
+    const code = extractErrorCode(relay.errorDetail);
     return c.json(
       {
         success: false,
         error: relay.message,
+        message: relay.message,
+        ...(code ? { code, errorCode: code } : {}),
+        retryable,
         data: relay.errorDetail ? { detail: relay.errorDetail } : undefined,
       },
-      relay.type === "retry" ? 503 : 400,
+      retryable ? 503 : 400,
     );
   });
 

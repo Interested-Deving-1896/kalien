@@ -21,6 +21,33 @@ describe("isRetryableDirectClaimMessage", () => {
     ).toBe(true);
   });
 
+  it("retries transient auth, nonce, and fee-market relayer failures", () => {
+    expect(
+      isRetryableDirectClaimMessage(
+        "Plugin error: Auth entry signatureExpirationLedger too close to current ledger",
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableDirectClaimMessage(
+        "Plugin error (auth_expiry_too_short): auth entry expires too soon",
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableDirectClaimMessage(
+        "Signed auth entry validation failed: nonce already exists",
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableDirectClaimMessage("Signed auth entry validation failed: signature has expired"),
+    ).toBe(true);
+    expect(
+      isRetryableDirectClaimMessage("onchain failed: txInsufficientFee"),
+    ).toBe(true);
+    expect(
+      isRetryableDirectClaimMessage("onchain failed: txFeeBumpInnerFailed"),
+    ).toBe(true);
+  });
+
   it("does not retry opaque simulation failures (handled at higher level)", () => {
     // Bare "Simulation failed" with no transient indicator is not retryable
     // by this function — the SIMULATION_FAILED code path is handled by
