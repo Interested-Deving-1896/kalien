@@ -55,6 +55,25 @@ function makeFetchResult(
   };
 }
 
+function makeEvent(index: number): LeaderboardEventRecord {
+  return {
+    eventId: `evt-${index}`,
+    claimantAddress: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+    seed: index,
+    frameCount: 120,
+    finalScore: 1_000 + index,
+    previousBest: 900 + index,
+    newBest: 1_000 + index,
+    mintedDelta: 100,
+    txHash: null,
+    eventIndex: index,
+    ledger: 10_000 + index,
+    closedAt: "2026-03-02T00:00:00.000Z",
+    source: "rpc",
+    ingestedAt: "2026-03-02T00:00:00.000Z",
+  };
+}
+
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
     ASSETS: {} as Fetcher,
@@ -207,6 +226,69 @@ describe("leaderboard sync behavior", () => {
     expect(fetchCalls[0]?.toLedger).toBe(110);
     expect(fetchCalls[1]?.cursor).toBe("ledger:103");
     expect(fetchCalls[1]?.toLedger).toBe(110);
+  });
+
+  it("chunks sync upserts to avoid oversized D1 variable batches", async () => {
+    const events = Array.from({ length: 130 }, (_, index) => makeEvent(index + 1));
+    fetchQueue.push(
+      makeFetchResult({
+        events,
+        fetchedCount: events.length,
+      }),
+    );
+
+    const result = await runLeaderboardSync(makeEnv(), { mode: "forward", limit: 500 }, deps);
+
+    expect(upsertCalls.map((batch) => batch.length)).toEqual([64, 64, 2]);
+    expect(result.inserted_count).toBe(130);
+  });
+
+  it("falls back to smaller write batches when a larger upsert batch fails", async () => {
+    const events = [makeEvent(1), makeEvent(2), makeEvent(3), makeEvent(4)];
+    fetchQueue.push(
+      makeFetchResult({
+        events,
+        fetchedCount: events.length,
+      }),
+    );
+
+    deps.upsertLeaderboardEvents = async (_env: WorkerEnv, batch: LeaderboardEventRecord[]) => {
+      upsertCalls.push(batch);
+      if (batch.length > 2) {
+        throw new Error("D1_ERROR: internal error");
+      }
+      return { inserted: batch.length, updated: 0 };
+    };
+
+    const result = await runLeaderboardSync(makeEnv(), { mode: "forward", limit: 50 }, deps);
+
+    expect(upsertCalls.map((batch) => batch.length)).toEqual([4, 2, 2]);
+    expect(result.inserted_count).toBe(4);
+  });
+
+  it("keeps sync progress from earlier pages when a follow-up page fetch fails", async () => {
+    const events = [makeEvent(1), makeEvent(2)];
+    fetchQueue.push(
+      makeFetchResult({
+        events,
+        fetchedCount: events.length,
+        nextCursor: "ledger:5000",
+      }),
+      new Error("rpc getEvents failed across candidates"),
+    );
+
+    const result = await runLeaderboardSync(
+      makeEnv({ LEADERBOARD_SYNC_MAX_PAGES: "5" }),
+      { mode: "forward", limit: 2 },
+      deps,
+    );
+
+    expect(fetchCalls).toHaveLength(2);
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0]).toEqual(events);
+    expect(result.fetched_count).toBe(2);
+    expect(result.inserted_count).toBe(2);
+    expect(result.next_cursor).toBe("ledger:5000");
   });
 
   it("discards stale opaque cursor and resumes from highestLedger + 1", async () => {

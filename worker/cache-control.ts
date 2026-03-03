@@ -31,8 +31,23 @@ export const LEADERBOARD_PRIVATE_CACHE_CONTROL = "private, max-age=5, stale-whil
 // Fallback: sets "no-store" on responses that did not set their own header
 // (e.g. POST, error responses, unknown routes).
 // ---------------------------------------------------------------------------
-export function applyApiCacheControl(response: Response): void {
-  if (!response.headers.has("cache-control")) {
+export function applyApiCacheControl(response: Response): Response {
+  if (response.headers.has("cache-control")) {
+    return response;
+  }
+
+  try {
     response.headers.set("cache-control", API_CACHE_CONTROL);
+    return response;
+  } catch {
+    // Some response objects (for example cached/fetched responses) expose
+    // immutable headers. Re-wrap with copied headers before setting fallback.
+    const headers = new Headers(response.headers);
+    headers.set("cache-control", API_CACHE_CONTROL);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   }
 }

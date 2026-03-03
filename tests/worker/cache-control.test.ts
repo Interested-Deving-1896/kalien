@@ -9,8 +9,8 @@ import {
 describe("applyApiCacheControl", () => {
   it("applies no-store when cache-control is missing", () => {
     const response = new Response(null, { status: 200 });
-    applyApiCacheControl(response);
-    expect(response.headers.get("cache-control")).toBe(API_CACHE_CONTROL);
+    const updated = applyApiCacheControl(response);
+    expect(updated.headers.get("cache-control")).toBe(API_CACHE_CONTROL);
   });
 
   it("preserves explicit cache-control from route handlers", () => {
@@ -20,10 +20,25 @@ describe("applyApiCacheControl", () => {
         "cache-control": LEADERBOARD_CACHE_CONTROL,
       },
     });
-    applyApiCacheControl(response);
-    expect(response.headers.get("cache-control")).toBe(
+    const updated = applyApiCacheControl(response);
+    expect(updated.headers.get("cache-control")).toBe(
       LEADERBOARD_CACHE_CONTROL,
     );
+  });
+
+  it("falls back to a cloned response when headers are immutable", () => {
+    const response = new Response("ok", { status: 200 });
+    const immutableHeaders = response.headers as Headers & {
+      set: (name: string, value: string) => void;
+    };
+    immutableHeaders.set = () => {
+      throw new TypeError("Can't modify immutable headers.");
+    };
+
+    const updated = applyApiCacheControl(response);
+    expect(updated.headers.get("cache-control")).toBe(API_CACHE_CONTROL);
+    expect(response.headers.get("cache-control")).toBeNull();
+    expect(updated).not.toBe(response);
   });
 
   it("supports dedicated private leaderboard caching policy", () => {

@@ -55,12 +55,12 @@ app.get(STELLAR_TOML_PATH, async (c) => {
 
 app.use("/api/*", async (c, next) => {
   await next();
-  applyApiCacheControl(c.res);
+  c.res = applyApiCacheControl(c.res);
 });
 
 app.use("/dev/api/*", async (c, next) => {
   await next();
-  applyApiCacheControl(c.res);
+  c.res = applyApiCacheControl(c.res);
 });
 
 app.route("/api", createApiRouter());
@@ -85,7 +85,7 @@ app.onError((error, c) => {
   if (error instanceof HTTPException) {
     const response = error.getResponse();
     if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/dev/api/")) {
-      applyApiCacheControl(response);
+      return applyApiCacheControl(response);
     }
     return response;
   }

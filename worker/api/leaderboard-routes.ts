@@ -307,19 +307,25 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
           !run.proofJobId && typeof run.claimTxHash === "string" && run.claimTxHash.length > 0,
       );
       if (readRepairEnabled && hasReplayGap) {
-        const repaired = await backfillProofTapeMappings(c.env, undefined, {
-          claimantAddress: address,
-          oldestFirst: true,
-          unmappedBatchSize: 100,
-          maxUnmappedBatches: 20,
-          jobsPageSize: 200,
-          maxJobsPerClaimant: 10_000,
-        });
-        if (repaired.written > 0) {
-          player = await getLeaderboardPlayer(c.env, address, {
-            limit: runsLimit,
-            offset: runsOffset,
+        try {
+          const repaired = await backfillProofTapeMappings(c.env, undefined, {
+            claimantAddress: address,
+            oldestFirst: true,
+            unmappedBatchSize: 100,
+            maxUnmappedBatches: 20,
+            jobsPageSize: 200,
+            maxJobsPerClaimant: 10_000,
           });
+          if (repaired.written > 0) {
+            player = await getLeaderboardPlayer(c.env, address, {
+              limit: runsLimit,
+              offset: runsOffset,
+            });
+          }
+        } catch (error) {
+          console.warn(
+            `[leaderboard] read-repair skipped for ${address}: ${safeErrorMessage(error)}`,
+          );
         }
       }
 

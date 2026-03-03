@@ -173,6 +173,66 @@ function parseScheduledTapeBackfillConfig(env: WorkerEnv): {
   };
 }
 
+// Keep sync writes below D1/SQLite variable ceilings, then split further if needed.
+const SYNC_UPSERT_BATCH_SIZE = 64;
+
+async function upsertLeaderboardEventsChunkWithFallback(
+  env: WorkerEnv,
+  deps: LeaderboardSyncDeps,
+  events: LeaderboardEventRecord[],
+): Promise<{ inserted: number; updated: number }> {
+  if (events.length === 0) {
+    return { inserted: 0, updated: 0 };
+  }
+
+  try {
+    return await deps.upsertLeaderboardEvents(env, events);
+  } catch (error) {
+    if (events.length === 1) {
+      throw new Error(
+        `[leaderboard-sync] failed writing leaderboard event ${events[0].eventId}: ${safeErrorMessage(error)}`,
+        { cause: error },
+      );
+    }
+
+    const splitIndex = Math.floor(events.length / 2);
+    const left = events.slice(0, splitIndex);
+    const right = events.slice(splitIndex);
+    console.warn(
+      `[leaderboard-sync] upsert batch failed (size=${events.length}); retrying in halves (${left.length}+${right.length}): ${safeErrorMessage(error)}`,
+    );
+
+    const leftResult = await upsertLeaderboardEventsChunkWithFallback(env, deps, left);
+    const rightResult = await upsertLeaderboardEventsChunkWithFallback(env, deps, right);
+    return {
+      inserted: leftResult.inserted + rightResult.inserted,
+      updated: leftResult.updated + rightResult.updated,
+    };
+  }
+}
+
+async function upsertLeaderboardEventsSafely(
+  env: WorkerEnv,
+  deps: LeaderboardSyncDeps,
+  events: LeaderboardEventRecord[],
+): Promise<{ inserted: number; updated: number }> {
+  if (events.length === 0) {
+    return { inserted: 0, updated: 0 };
+  }
+
+  let inserted = 0;
+  let updated = 0;
+  for (let offset = 0; offset < events.length; offset += SYNC_UPSERT_BATCH_SIZE) {
+    const batch = events.slice(offset, offset + SYNC_UPSERT_BATCH_SIZE);
+    // eslint-disable-next-line no-await-in-loop
+    const result = await upsertLeaderboardEventsChunkWithFallback(env, deps, batch);
+    inserted += result.inserted;
+    updated += result.updated;
+  }
+
+  return { inserted, updated };
+}
+
 export async function runLeaderboardSync(
   env: WorkerEnv,
   request: LeaderboardSyncRequest,
@@ -240,7 +300,7 @@ export async function runLeaderboardSync(
     cursor: effectiveCursor,
     fromLedger: effectiveFromLedger,
     toLedger: effectiveToLedger,
-    limit: request.limit,
+    limit: effectiveLimit,
     source: request.source ?? null,
   });
   allEvents.push(...lastFetched.events);
@@ -262,21 +322,30 @@ export async function runLeaderboardSync(
       );
     }
 
-    // eslint-disable-next-line no-await-in-loop
-    lastFetched = await deps.fetchLeaderboardEventsFromGalexie(env, {
-      cursor: lastFetched.nextCursor,
-      // Preserve explicit sync bounds (especially backfill toLedger) across pages.
-      // Opaque RPC cursors still suppress start/end internally.
-      toLedger: effectiveToLedger,
-      limit: request.limit,
-      source: request.source ?? null,
-    });
+    let nextPage: GalexieFetchResult;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      nextPage = await deps.fetchLeaderboardEventsFromGalexie(env, {
+        cursor: lastFetched.nextCursor,
+        // Preserve explicit sync bounds (especially backfill toLedger) across pages.
+        // Opaque RPC cursors still suppress start/end internally.
+        toLedger: effectiveToLedger,
+        limit: effectiveLimit,
+        source: request.source ?? null,
+      });
+    } catch (error) {
+      console.warn(
+        `[leaderboard-sync] stopping pagination after page ${pageCount} due to fetch failure: ${safeErrorMessage(error)}`,
+      );
+      break;
+    }
+    lastFetched = nextPage;
     allEvents.push(...lastFetched.events);
     totalFetchedCount += lastFetched.fetchedCount;
     pageCount += 1;
   }
 
-  const upsert = await deps.upsertLeaderboardEvents(env, allEvents);
+  const upsert = await upsertLeaderboardEventsSafely(env, deps, allEvents);
   const hasBaselineState =
     existingState.totalEvents > 0 ||
     existingState.cursor !== null ||
