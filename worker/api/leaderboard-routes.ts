@@ -293,7 +293,8 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
 
       const readRepairEnabled = parseBooleanEnv(c.env.LEADERBOARD_PLAYER_READ_REPAIR, true);
       const hasReplayGap = player.recentRuns.some(
-        (run) => !run.proofJobId && typeof run.claimTxHash === "string" && run.claimTxHash.length > 0,
+        (run) =>
+          !run.proofJobId && typeof run.claimTxHash === "string" && run.claimTxHash.length > 0,
       );
       if (readRepairEnabled && hasReplayGap) {
         const { backfillProofTapeMappings } = await import("../leaderboard-sync");
@@ -382,7 +383,8 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
         if (error instanceof LeaderboardCredentialBindingError) {
           const shouldFallbackToChain =
             error.statusCode === 503 ||
-            error.message === "credential is not linked to claimant address in smart-account indexer";
+            error.message ===
+              "credential is not linked to claimant address in smart-account indexer";
 
           if (!shouldFallbackToChain) {
             return jsonError(c, error.statusCode, error.message);
@@ -718,12 +720,7 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
       claimantAddress = claimantRaw;
     }
 
-    const unmappedBatchSize = parsePositiveIntQuery(
-      c.req.query("unmapped_batch_size"),
-      50,
-      1,
-      500,
-    );
+    const unmappedBatchSize = parsePositiveIntQuery(c.req.query("unmapped_batch_size"), 50, 1, 500);
     const maxUnmappedBatches = parsePositiveIntQuery(
       c.req.query("max_unmapped_batches"),
       3,
@@ -761,16 +758,17 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
         },
       });
     } catch (error) {
-      console.error(`[leaderboard-sync] dev/backfill-tape-mappings failed: ${safeErrorMessage(error)}`);
+      console.error(
+        `[leaderboard-sync] dev/backfill-tape-mappings failed: ${safeErrorMessage(error)}`,
+      );
       return jsonError(c, 500, safeErrorMessage(error));
     }
   });
 
   // DEV-ONLY: Inspect current unmapped leaderboard tx hashes.
   router.get("/backfill-tape-mappings/status", async (c) => {
-    const { countUnmappedLeaderboardTxHashes, getUnmappedLeaderboardTxHashes } = await import(
-      "../leaderboard-store"
-    );
+    const { countUnmappedLeaderboardTxHashes, getUnmappedLeaderboardTxHashes } =
+      await import("../leaderboard-store");
     const claimantRaw = c.req.query("claimant")?.trim() ?? "";
     let claimantAddress: string | null = null;
     if (claimantRaw.length > 0) {

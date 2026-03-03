@@ -144,10 +144,7 @@ function retryableChannelsExecutionCode(rawCode: string | null): boolean {
   );
 }
 
-const RETRYABLE_ONCHAIN_FEE_RESULT_CODES = [
-  "txinsufficientfee",
-  "txfeebumpinnerfailed",
-] as const;
+const RETRYABLE_ONCHAIN_FEE_RESULT_CODES = ["txinsufficientfee", "txfeebumpinnerfailed"] as const;
 
 function containsRetryableOnchainFeeCode(rawValue: string): boolean {
   const value = rawValue.toLowerCase();

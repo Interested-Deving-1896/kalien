@@ -163,7 +163,11 @@ function parseScheduledTapeBackfillConfig(env: WorkerEnv): {
       unmappedBatchSize: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE, 100, 1),
       maxUnmappedBatches: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES, 20, 1),
       jobsPageSize: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE, 200, 1),
-      maxJobsPerClaimant: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT, 5_000, 1),
+      maxJobsPerClaimant: parseInteger(
+        env.LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT,
+        5_000,
+        1,
+      ),
       oldestFirst: parseBoolean(env.LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST, true),
     },
   };
@@ -432,10 +436,13 @@ export async function runScheduledLeaderboardSync(
 
       backfillResult = aggregate;
       try {
-        const countUnmapped = deps.countUnmappedLeaderboardTxHashes ?? countUnmappedLeaderboardTxHashes;
+        const countUnmapped =
+          deps.countUnmappedLeaderboardTxHashes ?? countUnmappedLeaderboardTxHashes;
         remainingUnmapped = await countUnmapped(env);
       } catch (error) {
-        console.warn(`[leaderboard-sync] failed counting unmapped tape mappings: ${safeErrorMessage(error)}`);
+        console.warn(
+          `[leaderboard-sync] failed counting unmapped tape mappings: ${safeErrorMessage(error)}`,
+        );
       }
     } catch (error) {
       console.warn(`[leaderboard-sync] backfill: unexpected error: ${safeErrorMessage(error)}`);
@@ -676,19 +683,10 @@ export async function backfillProofTapeMappings(
     let total = Number.POSITIVE_INFINITY;
     let fullyScannedClaimantJobs = false;
 
-    while (
-      pending.length > 0 &&
-      !fullyScannedClaimantJobs &&
-      jobs.length < maxJobsPerClaimant
-    ) {
+    while (pending.length > 0 && !fullyScannedClaimantJobs && jobs.length < maxJobsPerClaimant) {
       let response: { jobs: ProofJobRecord[]; total: number };
       try {
-        response = await deps.listJobsForClaimant(
-          env,
-          claimantAddress,
-          jobsPageSize,
-          offset,
-        );
+        response = await deps.listJobsForClaimant(env, claimantAddress, jobsPageSize, offset);
       } catch (error) {
         console.warn(
           `[leaderboard-sync] backfill: failed to list jobs for ${claimantAddress}: ${safeErrorMessage(error)}`,
