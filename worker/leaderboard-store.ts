@@ -87,6 +87,17 @@ function toNullableString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function normalizeTxHash(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  return trimmed.toLowerCase();
+}
+
 function toNullableU32(value: unknown): number | null {
   if (value === null || value === undefined) {
     return null;
@@ -522,7 +533,7 @@ export async function upsertLeaderboardEvents(
         event.previousBest >>> 0,
         event.newBest >>> 0,
         event.mintedDelta >>> 0,
-        event.txHash,
+        normalizeTxHash(event.txHash),
         event.eventIndex,
         event.ledger,
         event.closedAt,
@@ -841,6 +852,10 @@ export async function writeProofTapeMapping(
   txHash: string,
   proofJobId: string,
 ): Promise<void> {
+  const normalizedTxHash = normalizeTxHash(txHash);
+  if (!normalizedTxHash) {
+    throw new Error("tx hash is required for proof tape mapping");
+  }
   await ensureSchema(env);
   const db = getDb(env);
   await db
@@ -849,7 +864,7 @@ export async function writeProofTapeMapping(
        VALUES (?, ?)
        ON CONFLICT(tx_hash) DO UPDATE SET proof_job_id = excluded.proof_job_id`,
     )
-    .bind(txHash, proofJobId)
+    .bind(normalizedTxHash, proofJobId)
     .run();
 }
 
@@ -860,26 +875,68 @@ export interface UnmappedLeaderboardEvent {
   finalScore: number;
 }
 
+export interface GetUnmappedLeaderboardTxHashesOptions {
+  limit?: number;
+  offset?: number;
+  claimantAddress?: string | null;
+  oldestFirst?: boolean;
+}
+
+export async function countUnmappedLeaderboardTxHashes(
+  env: WorkerEnv,
+  claimantAddress: string | null = null,
+): Promise<number> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  const normalizedClaimant =
+    typeof claimantAddress === "string" && claimantAddress.trim().length > 0
+      ? claimantAddress.trim()
+      : null;
+  const claimantWhere = normalizedClaimant ? " AND e.claimant_address = ?" : "";
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM leaderboard_events e
+       LEFT JOIN proof_tape_index t ON lower(trim(t.tx_hash)) = lower(trim(e.tx_hash))
+       WHERE e.tx_hash IS NOT NULL
+         AND e.final_score IS NOT NULL
+         ${claimantWhere}
+         AND t.proof_job_id IS NULL`,
+    )
+    .bind(...(normalizedClaimant ? [normalizedClaimant] : []))
+    .first<Record<string, unknown>>();
+  return toNumber(row?.total, 0);
+}
+
 export async function getUnmappedLeaderboardTxHashes(
   env: WorkerEnv,
-  limit = 50,
-  offset = 0,
+  options: GetUnmappedLeaderboardTxHashesOptions = {},
 ): Promise<UnmappedLeaderboardEvent[]> {
   await ensureSchema(env);
   const db = getDb(env);
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 50), 1), 500);
+  const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+  const claimantAddress =
+    typeof options.claimantAddress === "string" && options.claimantAddress.trim().length > 0
+      ? options.claimantAddress.trim()
+      : null;
+  const oldestFirst = options.oldestFirst === true;
+  const orderDirection = oldestFirst ? "ASC" : "DESC";
+  const claimantWhere = claimantAddress ? " AND e.claimant_address = ?" : "";
   const rows = await db
     .prepare(
       `SELECT e.tx_hash, e.claimant_address, e.seed, e.final_score
        FROM leaderboard_events e
-       LEFT JOIN proof_tape_index t ON t.tx_hash = e.tx_hash
+       LEFT JOIN proof_tape_index t ON lower(trim(t.tx_hash)) = lower(trim(e.tx_hash))
        WHERE e.tx_hash IS NOT NULL
          AND e.final_score IS NOT NULL
+         ${claimantWhere}
          AND t.proof_job_id IS NULL
-       ORDER BY e.closed_at DESC, e.event_id DESC
+       ORDER BY e.closed_at ${orderDirection}, e.event_id ${orderDirection}
        LIMIT ?
        OFFSET ?`,
     )
-    .bind(limit, Math.max(offset, 0))
+    .bind(...(claimantAddress ? [claimantAddress] : []), limit, offset)
     .all<{ tx_hash: string; claimant_address: string; seed: number; final_score: number }>();
 
   const normalized: UnmappedLeaderboardEvent[] = [];
@@ -890,7 +947,7 @@ export async function getUnmappedLeaderboardTxHashes(
       continue;
     }
     normalized.push({
-      txHash: row.tx_hash,
+      txHash: normalizeTxHash(row.tx_hash) ?? row.tx_hash,
       claimantAddress: row.claimant_address,
       seed,
       finalScore,
@@ -1049,7 +1106,7 @@ export async function getLeaderboardPage(
        LEFT JOIN leaderboard_profiles AS p
          ON p.claimant_address = ranked.claimant_address
        LEFT JOIN proof_tape_index AS t
-         ON t.tx_hash = ranked.tx_hash
+         ON lower(trim(t.tx_hash)) = lower(trim(ranked.tx_hash))
        ORDER BY ranked.rank ASC
        LIMIT ? OFFSET ?`,
     )
@@ -1081,7 +1138,7 @@ export async function getLeaderboardPage(
          LEFT JOIN leaderboard_profiles AS p
            ON p.claimant_address = ranked.claimant_address
          LEFT JOIN proof_tape_index AS t
-           ON t.tx_hash = ranked.tx_hash
+           ON lower(trim(t.tx_hash)) = lower(trim(ranked.tx_hash))
          WHERE ranked.claimant_address = ?
          LIMIT 1`,
       )
@@ -1212,7 +1269,7 @@ export async function getLeaderboardPlayer(
            t.proof_job_id AS proof_job_id
          FROM leaderboard_events AS e
          LEFT JOIN proof_tape_index AS t
-           ON t.tx_hash = e.tx_hash
+           ON lower(trim(t.tx_hash)) = lower(trim(e.tx_hash))
          WHERE e.claimant_address = ?
          ORDER BY e.closed_at DESC, e.new_best DESC, e.event_id ASC
          LIMIT ? OFFSET ?`,

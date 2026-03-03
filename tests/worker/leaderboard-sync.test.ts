@@ -160,6 +160,7 @@ describe("leaderboard sync behavior", () => {
         countCalls += 1;
         return 123;
       },
+      countUnmappedLeaderboardTxHashes: async () => 0,
       getLeaderboardIngestionState: async () => ingestionState,
       purgeExpiredLeaderboardProfileAuthChallenges: async () => {
         purgeCalls += 1;
@@ -319,8 +320,8 @@ describe("proof tape backfill behavior", () => {
     const writes: Array<{ txHash: string; proofJobId: string }> = [];
 
     const result = await backfillProofTapeMappings(makeEnv(), {
-      getUnmappedLeaderboardTxHashes: async (_env, _limit, offset) =>
-        offset === 0
+      getUnmappedLeaderboardTxHashes: async (_env, options) =>
+        options?.offset === 0
           ? [{ txHash, claimantAddress, seed: 42, finalScore: 12_345 }]
           : [],
       writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
@@ -382,8 +383,8 @@ describe("proof tape backfill behavior", () => {
     ];
 
     const result = await backfillProofTapeMappings(makeEnv(), {
-      getUnmappedLeaderboardTxHashes: async (_env, _limit, offset) =>
-        offset === 0
+      getUnmappedLeaderboardTxHashes: async (_env, options) =>
+        options?.offset === 0
           ? [{ txHash, claimantAddress, seed: 777, finalScore: 55_555 }]
           : [],
       writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
@@ -413,8 +414,8 @@ describe("proof tape backfill behavior", () => {
     const writes: Array<{ txHash: string; proofJobId: string }> = [];
 
     const result = await backfillProofTapeMappings(makeEnv(), {
-      getUnmappedLeaderboardTxHashes: async (_env, _limit, offset) =>
-        offset === 0
+      getUnmappedLeaderboardTxHashes: async (_env, options) =>
+        options?.offset === 0
           ? [{ txHash, claimantAddress, seed: 99, finalScore: 40_000 }]
           : [],
       writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
@@ -444,5 +445,39 @@ describe("proof tape backfill behavior", () => {
     expect(result.written).toBe(0);
     expect(result.matched).toBe(0);
     expect(writes).toHaveLength(0);
+  });
+
+  it("passes claimant and paging options into unmapped lookup", async () => {
+    const claimantAddress =
+      "CBXFWZJ34RA2XJ2E5AQM5A6N7BRF7R2GVJGYFS64GR2R4K2PEMYRXXVY";
+    const calls: Array<{
+      limit?: number;
+      offset?: number;
+      claimantAddress?: string | null;
+      oldestFirst?: boolean;
+    }> = [];
+
+    const result = await backfillProofTapeMappings(
+      makeEnv(),
+      {
+        getUnmappedLeaderboardTxHashes: async (_env, options) => {
+          calls.push(options ?? {});
+          return [];
+        },
+        writeProofTapeMapping: async () => undefined,
+        listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+      },
+      {
+        claimantAddress,
+        unmappedBatchSize: 1,
+        maxUnmappedBatches: 2,
+        oldestFirst: true,
+      },
+    );
+
+    expect(result.unmapped).toBe(0);
+    expect(calls).toEqual([
+      { limit: 1, offset: 0, claimantAddress, oldestFirst: true },
+    ]);
   });
 });

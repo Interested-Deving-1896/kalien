@@ -37,6 +37,14 @@ Set non-secret vars in `wrangler.jsonc`:
 - `LEADERBOARD_CATCHUP_INTERVAL_MINUTES`
 - `LEADERBOARD_CATCHUP_WINDOW_LEDGERS`
 - `LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS`
+- `LEADERBOARD_TAPE_BACKFILL_ENABLED`
+- `LEADERBOARD_TAPE_BACKFILL_MAX_PASSES`
+- `LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE`
+- `LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES`
+- `LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE`
+- `LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT`
+- `LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST`
+- `LEADERBOARD_PLAYER_READ_REPAIR`
 
 Defaulted in this worktree for Quasar Pro:
 - `GALEXIE_API_BASE_URL=https://galexie-pro.lightsail.network`
@@ -104,6 +112,40 @@ Backfill safety rules:
 - `from_ledger` must be an integer >= 2.
 - The sync operation is idempotent, so repeated windows are safe.
 
+### Targeted proof-tape mapping backfill
+
+Run this when leaderboard runs have a `claim_tx_hash` but no replay button (`proofJobId` is null).
+
+```bash
+curl -sS -X POST \
+  "http://127.0.0.1:8787/dev/api/leaderboard/backfill-tape-mappings?claimant=<G...|C...>&oldest_first=1&unmapped_batch_size=100&max_unmapped_batches=50" \
+  -H "Authorization: Bearer $DEV_API_KEY"
+```
+
+Query params:
+- `claimant` (optional): only backfill rows for one address.
+- `oldest_first` (optional, default `1`): scan oldest unmapped rows first.
+- `unmapped_batch_size` (optional, default `50`, max `500`).
+- `max_unmapped_batches` (optional, default `3`, max `10000`).
+- `jobs_page_size` (optional, default `200`, max `1000`).
+- `max_jobs_per_claimant` (optional, default `1000`, max `100000`).
+
+### Inspect unmapped replay links
+
+```bash
+curl -sS \
+  "http://127.0.0.1:8787/dev/api/leaderboard/backfill-tape-mappings/status?sample_limit=50&oldest_first=1" \
+  -H "Authorization: Bearer $DEV_API_KEY"
+```
+
+Optional filter:
+
+```bash
+curl -sS \
+  "http://127.0.0.1:8787/dev/api/leaderboard/backfill-tape-mappings/status?claimant=<G...|C...>&sample_limit=50&oldest_first=1" \
+  -H "Authorization: Bearer $DEV_API_KEY"
+```
+
 ## Catch-Up Cron
 - The Worker scheduled handler runs forward sync every cron tick.
 - Periodic overlapping backfill is optional and controlled by:
@@ -112,6 +154,8 @@ Backfill safety rules:
 - Forward sync also replays a small overlapping window (`LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS`) and relies on idempotent upserts to heal transient provider/cursor gaps.
 - Catch-up backfill requests are forced through `datalake` first and then degrade to RPC if Galexie is unavailable.
 - This overlap is the automatic recovery path for missed files/events and short RPC retention windows.
+- Tape mapping recovery now runs as multi-pass reconciliation on each cron tick (defaults: oldest-first, 4 passes, 100x20 unmapped scan per pass) and reports `remaining_unmapped_tape_mappings` in sync responses.
+- Player reads (`GET /api/leaderboard/player/:address`) can run claimant-scoped read-repair when replay gaps are detected (`LEADERBOARD_PLAYER_READ_REPAIR=1`).
 
 ## Public Read Endpoints
 - `GET /api/leaderboard?window=10m|day|all&limit=<n>&offset=<n>&address=<G...|C...>`

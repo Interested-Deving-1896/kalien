@@ -84,6 +84,43 @@ function jsonError(
   return c.json({ success: false, error }, status);
 }
 
+function parsePositiveIntQuery(
+  raw: string | null | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (!raw || raw.trim().length === 0) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  const bounded = Math.trunc(parsed);
+  if (bounded < min) {
+    return min;
+  }
+  if (bounded > max) {
+    return max;
+  }
+  return bounded;
+}
+
+function parseBooleanEnv(raw: string | undefined, fallback: boolean): boolean {
+  if (!raw) {
+    return fallback;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
 function validateLinkUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -249,10 +286,32 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
       const runsOffsetRaw = c.req.query("runs_offset");
       const runsOffset = runsOffsetRaw ? Number.parseInt(runsOffsetRaw, 10) || 0 : 0;
 
-      const player = await getLeaderboardPlayer(c.env, address, {
+      let player = await getLeaderboardPlayer(c.env, address, {
         limit: runsLimit,
         offset: runsOffset,
       });
+
+      const readRepairEnabled = parseBooleanEnv(c.env.LEADERBOARD_PLAYER_READ_REPAIR, true);
+      const hasReplayGap = player.recentRuns.some(
+        (run) => !run.proofJobId && typeof run.claimTxHash === "string" && run.claimTxHash.length > 0,
+      );
+      if (readRepairEnabled && hasReplayGap) {
+        const { backfillProofTapeMappings } = await import("../leaderboard-sync");
+        const repaired = await backfillProofTapeMappings(c.env, undefined, {
+          claimantAddress: address,
+          oldestFirst: true,
+          unmappedBatchSize: 100,
+          maxUnmappedBatches: 20,
+          jobsPageSize: 200,
+          maxJobsPerClaimant: 10_000,
+        });
+        if (repaired.written > 0) {
+          player = await getLeaderboardPlayer(c.env, address, {
+            limit: runsLimit,
+            offset: runsOffset,
+          });
+        }
+      }
 
       c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
       return c.json({
@@ -640,6 +699,112 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
       return c.json({ success: true, ...result });
     } catch (error) {
       console.error(`[leaderboard-sync] dev/sync failed: ${safeErrorMessage(error)}`);
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+  });
+
+  // DEV-ONLY: Force a targeted proof-tape backfill pass.
+  // Useful for old/unlucky leaderboard rows that never got auto-mapped.
+  router.post("/backfill-tape-mappings", async (c) => {
+    const { backfillProofTapeMappings } = await import("../leaderboard-sync");
+    const claimantRaw = c.req.query("claimant")?.trim() ?? "";
+    let claimantAddress: string | null = null;
+    if (claimantRaw.length > 0) {
+      try {
+        validateClaimantStrKey(claimantRaw);
+      } catch {
+        return jsonError(c, 400, "invalid claimant");
+      }
+      claimantAddress = claimantRaw;
+    }
+
+    const unmappedBatchSize = parsePositiveIntQuery(
+      c.req.query("unmapped_batch_size"),
+      50,
+      1,
+      500,
+    );
+    const maxUnmappedBatches = parsePositiveIntQuery(
+      c.req.query("max_unmapped_batches"),
+      3,
+      1,
+      10_000,
+    );
+    const jobsPageSize = parsePositiveIntQuery(c.req.query("jobs_page_size"), 200, 1, 1000);
+    const maxJobsPerClaimant = parsePositiveIntQuery(
+      c.req.query("max_jobs_per_claimant"),
+      1000,
+      1,
+      100_000,
+    );
+    const oldestFirst = (c.req.query("oldest_first") ?? "1") !== "0";
+
+    try {
+      const result = await backfillProofTapeMappings(c.env, undefined, {
+        claimantAddress,
+        unmappedBatchSize,
+        maxUnmappedBatches,
+        jobsPageSize,
+        maxJobsPerClaimant,
+        oldestFirst,
+      });
+      return c.json({
+        success: true,
+        backfill_tape_mappings: result,
+        options: {
+          claimant: claimantAddress,
+          oldest_first: oldestFirst,
+          unmapped_batch_size: unmappedBatchSize,
+          max_unmapped_batches: maxUnmappedBatches,
+          jobs_page_size: jobsPageSize,
+          max_jobs_per_claimant: maxJobsPerClaimant,
+        },
+      });
+    } catch (error) {
+      console.error(`[leaderboard-sync] dev/backfill-tape-mappings failed: ${safeErrorMessage(error)}`);
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+  });
+
+  // DEV-ONLY: Inspect current unmapped leaderboard tx hashes.
+  router.get("/backfill-tape-mappings/status", async (c) => {
+    const { countUnmappedLeaderboardTxHashes, getUnmappedLeaderboardTxHashes } = await import(
+      "../leaderboard-store"
+    );
+    const claimantRaw = c.req.query("claimant")?.trim() ?? "";
+    let claimantAddress: string | null = null;
+    if (claimantRaw.length > 0) {
+      try {
+        validateClaimantStrKey(claimantRaw);
+      } catch {
+        return jsonError(c, 400, "invalid claimant");
+      }
+      claimantAddress = claimantRaw;
+    }
+
+    const sampleLimit = parsePositiveIntQuery(c.req.query("sample_limit"), 20, 1, 200);
+    const oldestFirst = (c.req.query("oldest_first") ?? "1") !== "0";
+    try {
+      const [total, sample] = await Promise.all([
+        countUnmappedLeaderboardTxHashes(c.env, claimantAddress),
+        getUnmappedLeaderboardTxHashes(c.env, {
+          claimantAddress,
+          oldestFirst,
+          limit: sampleLimit,
+          offset: 0,
+        }),
+      ]);
+
+      return c.json({
+        success: true,
+        claimant: claimantAddress,
+        total_unmapped: total,
+        sample,
+      });
+    } catch (error) {
+      console.error(
+        `[leaderboard-sync] dev/backfill-tape-mappings/status failed: ${safeErrorMessage(error)}`,
+      );
       return jsonError(c, 500, safeErrorMessage(error));
     }
   });

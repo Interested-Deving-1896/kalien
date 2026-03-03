@@ -5,6 +5,7 @@ import {
 } from "./leaderboard-ingestion";
 import {
   countLeaderboardEvents,
+  countUnmappedLeaderboardTxHashes,
   getLeaderboardIngestionState,
   getUnmappedLeaderboardTxHashes,
   purgeExpiredLeaderboardProfileAuthChallenges,
@@ -20,6 +21,7 @@ import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
 export interface LeaderboardSyncDeps {
   fetchLeaderboardEventsFromGalexie: typeof fetchLeaderboardEventsFromGalexie;
   countLeaderboardEvents: typeof countLeaderboardEvents;
+  countUnmappedLeaderboardTxHashes?: typeof countUnmappedLeaderboardTxHashes;
   getLeaderboardIngestionState: typeof getLeaderboardIngestionState;
   purgeExpiredLeaderboardProfileAuthChallenges: typeof purgeExpiredLeaderboardProfileAuthChallenges;
   setLeaderboardIngestionState: typeof setLeaderboardIngestionState;
@@ -30,6 +32,7 @@ export interface LeaderboardSyncDeps {
 const DEFAULT_SYNC_DEPS: LeaderboardSyncDeps = {
   fetchLeaderboardEventsFromGalexie,
   countLeaderboardEvents,
+  countUnmappedLeaderboardTxHashes,
   getLeaderboardIngestionState,
   purgeExpiredLeaderboardProfileAuthChallenges,
   setLeaderboardIngestionState,
@@ -144,6 +147,26 @@ function extractLedgerFromOpaqueCursor(cursor: string | null | undefined): numbe
 
 function parseForwardReplayWindowLedgers(env: WorkerEnv): number {
   return parseInteger(env.LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS, 8_000, 1);
+}
+
+function parseScheduledTapeBackfillConfig(env: WorkerEnv): {
+  enabled: boolean;
+  maxPasses: number;
+  options: BackfillProofTapeMappingsOptions;
+} {
+  const enabled = parseBoolean(env.LEADERBOARD_TAPE_BACKFILL_ENABLED, true);
+  const maxPasses = parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_PASSES, 4, 1);
+  return {
+    enabled,
+    maxPasses,
+    options: {
+      unmappedBatchSize: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE, 100, 1),
+      maxUnmappedBatches: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES, 20, 1),
+      jobsPageSize: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE, 200, 1),
+      maxJobsPerClaimant: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT, 5_000, 1),
+      oldestFirst: parseBoolean(env.LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST, true),
+    },
+  };
 }
 
 export async function runLeaderboardSync(
@@ -317,6 +340,7 @@ export async function runScheduledLeaderboardSync(
   catchup: LeaderboardSyncResult | null;
   warning: string | null;
   backfill_tape_mappings: BackfillTapeMappingsResult | null;
+  remaining_unmapped_tape_mappings: number | null;
 }> {
   const enabled = parseBoolean(env.LEADERBOARD_SYNC_CRON_ENABLED, true);
   if (!enabled) {
@@ -326,6 +350,7 @@ export async function runScheduledLeaderboardSync(
       catchup: null,
       warning: null,
       backfill_tape_mappings: null,
+      remaining_unmapped_tape_mappings: null,
     };
   }
 
@@ -372,10 +397,49 @@ export async function runScheduledLeaderboardSync(
   await deps.purgeExpiredLeaderboardProfileAuthChallenges(env);
 
   let backfillResult: BackfillTapeMappingsResult | null = null;
-  try {
-    backfillResult = await (deps.backfillProofTapeMappings ?? backfillProofTapeMappings)(env);
-  } catch (error) {
-    console.warn(`[leaderboard-sync] backfill: unexpected error: ${safeErrorMessage(error)}`);
+  let remainingUnmapped: number | null = null;
+  const backfillConfig = parseScheduledTapeBackfillConfig(env);
+  if (backfillConfig.enabled) {
+    try {
+      const runner = deps.backfillProofTapeMappings ?? backfillProofTapeMappings;
+      const aggregate: BackfillTapeMappingsResult = {
+        unmapped: 0,
+        matched: 0,
+        written: 0,
+        errors: 0,
+      };
+      let initialized = false;
+
+      for (let pass = 0; pass < backfillConfig.maxPasses; pass += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const passResult = await runner(env, undefined, backfillConfig.options);
+        if (!initialized) {
+          aggregate.unmapped = passResult.unmapped;
+          initialized = true;
+        }
+        aggregate.matched += passResult.matched;
+        aggregate.written += passResult.written;
+        aggregate.errors += passResult.errors;
+
+        if (passResult.unmapped === 0) {
+          break;
+        }
+        if (passResult.written === 0) {
+          // No progress in this pass — further passes will likely repeat.
+          break;
+        }
+      }
+
+      backfillResult = aggregate;
+      try {
+        const countUnmapped = deps.countUnmappedLeaderboardTxHashes ?? countUnmappedLeaderboardTxHashes;
+        remainingUnmapped = await countUnmapped(env);
+      } catch (error) {
+        console.warn(`[leaderboard-sync] failed counting unmapped tape mappings: ${safeErrorMessage(error)}`);
+      }
+    } catch (error) {
+      console.warn(`[leaderboard-sync] backfill: unexpected error: ${safeErrorMessage(error)}`);
+    }
   }
 
   return {
@@ -384,6 +448,7 @@ export async function runScheduledLeaderboardSync(
     catchup,
     warning,
     backfill_tape_mappings: backfillResult,
+    remaining_unmapped_tape_mappings: remainingUnmapped,
   };
 }
 
@@ -404,6 +469,15 @@ export interface BackfillTapeMappingsResult {
   matched: number;
   written: number;
   errors: number;
+}
+
+export interface BackfillProofTapeMappingsOptions {
+  claimantAddress?: string | null;
+  unmappedBatchSize?: number;
+  maxUnmappedBatches?: number;
+  jobsPageSize?: number;
+  maxJobsPerClaimant?: number;
+  oldestFirst?: boolean;
 }
 
 interface BackfillProofTapeMappingsDeps {
@@ -535,23 +609,45 @@ async function applyBackfillMatches(
 export async function backfillProofTapeMappings(
   env: WorkerEnv,
   deps: BackfillProofTapeMappingsDeps = DEFAULT_BACKFILL_DEPS,
+  options: BackfillProofTapeMappingsOptions = {},
 ): Promise<BackfillTapeMappingsResult> {
   const result: BackfillTapeMappingsResult = { unmapped: 0, matched: 0, written: 0, errors: 0 };
+  const unmappedBatchSize = Math.min(
+    Math.max(Math.trunc(options.unmappedBatchSize ?? BACKFILL_UNMAPPED_BATCH_SIZE), 1),
+    500,
+  );
+  const maxUnmappedBatches = Math.min(
+    Math.max(Math.trunc(options.maxUnmappedBatches ?? BACKFILL_UNMAPPED_MAX_BATCHES), 1),
+    10_000,
+  );
+  const jobsPageSize = Math.min(
+    Math.max(Math.trunc(options.jobsPageSize ?? BACKFILL_JOBS_PAGE_SIZE), 1),
+    1_000,
+  );
+  const maxJobsPerClaimant = Math.min(
+    Math.max(Math.trunc(options.maxJobsPerClaimant ?? BACKFILL_MAX_JOBS_PER_CLAIMANT), 1),
+    100_000,
+  );
+  const filterClaimantAddress =
+    typeof options.claimantAddress === "string" && options.claimantAddress.trim().length > 0
+      ? options.claimantAddress.trim()
+      : null;
 
   const unmapped: UnmappedLeaderboardEvent[] = [];
   /* eslint-disable no-await-in-loop */
-  for (let batch = 0; batch < BACKFILL_UNMAPPED_MAX_BATCHES; batch += 1) {
-    const offset = batch * BACKFILL_UNMAPPED_BATCH_SIZE;
-    const page = await deps.getUnmappedLeaderboardTxHashes(
-      env,
-      BACKFILL_UNMAPPED_BATCH_SIZE,
+  for (let batch = 0; batch < maxUnmappedBatches; batch += 1) {
+    const offset = batch * unmappedBatchSize;
+    const page = await deps.getUnmappedLeaderboardTxHashes(env, {
+      limit: unmappedBatchSize,
       offset,
-    );
+      claimantAddress: filterClaimantAddress,
+      oldestFirst: options.oldestFirst === true,
+    });
     if (page.length === 0) {
       break;
     }
     unmapped.push(...page);
-    if (page.length < BACKFILL_UNMAPPED_BATCH_SIZE) {
+    if (page.length < unmappedBatchSize) {
       break;
     }
   }
@@ -583,14 +679,14 @@ export async function backfillProofTapeMappings(
     while (
       pending.length > 0 &&
       !fullyScannedClaimantJobs &&
-      jobs.length < BACKFILL_MAX_JOBS_PER_CLAIMANT
+      jobs.length < maxJobsPerClaimant
     ) {
       let response: { jobs: ProofJobRecord[]; total: number };
       try {
         response = await deps.listJobsForClaimant(
           env,
           claimantAddress,
-          BACKFILL_JOBS_PAGE_SIZE,
+          jobsPageSize,
           offset,
         );
       } catch (error) {
@@ -613,7 +709,7 @@ export async function backfillProofTapeMappings(
 
       pending = await applyBackfillMatches(env, deps, jobs, pending, result, false);
 
-      if (offset >= total || response.jobs.length < BACKFILL_JOBS_PAGE_SIZE) {
+      if (offset >= total || response.jobs.length < jobsPageSize) {
         fullyScannedClaimantJobs = true;
       }
     }
@@ -622,9 +718,9 @@ export async function backfillProofTapeMappings(
       pending = await applyBackfillMatches(env, deps, jobs, pending, result, true);
     }
 
-    if (pending.length > 0 && jobs.length >= BACKFILL_MAX_JOBS_PER_CLAIMANT) {
+    if (pending.length > 0 && jobs.length >= maxJobsPerClaimant) {
       console.warn(
-        `[leaderboard-sync] backfill: scanned ${BACKFILL_MAX_JOBS_PER_CLAIMANT} jobs for ${claimantAddress} and left ${pending.length} events unresolved`,
+        `[leaderboard-sync] backfill: scanned ${maxJobsPerClaimant} jobs for ${claimantAddress} and left ${pending.length} events unresolved`,
       );
     }
   }
