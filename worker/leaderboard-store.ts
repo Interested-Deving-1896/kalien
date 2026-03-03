@@ -853,6 +853,53 @@ export async function writeProofTapeMapping(
     .run();
 }
 
+export interface UnmappedLeaderboardEvent {
+  txHash: string;
+  claimantAddress: string;
+  seed: number;
+  finalScore: number;
+}
+
+export async function getUnmappedLeaderboardTxHashes(
+  env: WorkerEnv,
+  limit = 50,
+  offset = 0,
+): Promise<UnmappedLeaderboardEvent[]> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  const rows = await db
+    .prepare(
+      `SELECT e.tx_hash, e.claimant_address, e.seed, e.final_score
+       FROM leaderboard_events e
+       LEFT JOIN proof_tape_index t ON t.tx_hash = e.tx_hash
+       WHERE e.tx_hash IS NOT NULL
+         AND e.final_score IS NOT NULL
+         AND t.proof_job_id IS NULL
+       ORDER BY e.closed_at DESC, e.event_id DESC
+       LIMIT ?
+       OFFSET ?`,
+    )
+    .bind(limit, Math.max(offset, 0))
+    .all<{ tx_hash: string; claimant_address: string; seed: number; final_score: number }>();
+
+  const normalized: UnmappedLeaderboardEvent[] = [];
+  for (const row of rows.results ?? []) {
+    const seed = Number(row.seed);
+    const finalScore = Number(row.final_score);
+    if (!Number.isFinite(seed) || !Number.isFinite(finalScore)) {
+      continue;
+    }
+    normalized.push({
+      txHash: row.tx_hash,
+      claimantAddress: row.claimant_address,
+      seed,
+      finalScore,
+    });
+  }
+
+  return normalized;
+}
+
 function windowWhereClause(window: LeaderboardWindow): string {
   return window === "all" ? "" : "WHERE closed_at >= ?";
 }

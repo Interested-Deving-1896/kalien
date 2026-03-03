@@ -6,11 +6,14 @@ import {
 import {
   countLeaderboardEvents,
   getLeaderboardIngestionState,
+  getUnmappedLeaderboardTxHashes,
   purgeExpiredLeaderboardProfileAuthChallenges,
   setLeaderboardIngestionState,
   upsertLeaderboardEvents,
+  writeProofTapeMapping,
 } from "./leaderboard-store";
-import type { LeaderboardEventRecord, LeaderboardIngestionState } from "./types";
+import type { UnmappedLeaderboardEvent } from "./leaderboard-store";
+import type { LeaderboardEventRecord, LeaderboardIngestionState, ProofJobRecord } from "./types";
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
 
@@ -21,6 +24,7 @@ export interface LeaderboardSyncDeps {
   purgeExpiredLeaderboardProfileAuthChallenges: typeof purgeExpiredLeaderboardProfileAuthChallenges;
   setLeaderboardIngestionState: typeof setLeaderboardIngestionState;
   upsertLeaderboardEvents: typeof upsertLeaderboardEvents;
+  backfillProofTapeMappings?: typeof backfillProofTapeMappings;
 }
 
 const DEFAULT_SYNC_DEPS: LeaderboardSyncDeps = {
@@ -312,6 +316,7 @@ export async function runScheduledLeaderboardSync(
   forward: LeaderboardSyncResult | null;
   catchup: LeaderboardSyncResult | null;
   warning: string | null;
+  backfill_tape_mappings: BackfillTapeMappingsResult | null;
 }> {
   const enabled = parseBoolean(env.LEADERBOARD_SYNC_CRON_ENABLED, true);
   if (!enabled) {
@@ -320,6 +325,7 @@ export async function runScheduledLeaderboardSync(
       forward: null,
       catchup: null,
       warning: null,
+      backfill_tape_mappings: null,
     };
   }
 
@@ -365,11 +371,19 @@ export async function runScheduledLeaderboardSync(
   // Purge expired/used auth challenges so they don't accumulate between user requests.
   await deps.purgeExpiredLeaderboardProfileAuthChallenges(env);
 
+  let backfillResult: BackfillTapeMappingsResult | null = null;
+  try {
+    backfillResult = await (deps.backfillProofTapeMappings ?? backfillProofTapeMappings)(env);
+  } catch (error) {
+    console.warn(`[leaderboard-sync] backfill: unexpected error: ${safeErrorMessage(error)}`);
+  }
+
   return {
     enabled: true,
     forward,
     catchup,
     warning,
+    backfill_tape_mappings: backfillResult,
   };
 }
 
@@ -383,4 +397,244 @@ export async function recordLeaderboardSyncFailure(
     ...existingState,
     lastError: safeErrorMessage(error),
   });
+}
+
+export interface BackfillTapeMappingsResult {
+  unmapped: number;
+  matched: number;
+  written: number;
+  errors: number;
+}
+
+interface BackfillProofTapeMappingsDeps {
+  getUnmappedLeaderboardTxHashes: typeof getUnmappedLeaderboardTxHashes;
+  writeProofTapeMapping: typeof writeProofTapeMapping;
+  listJobsForClaimant: (
+    env: WorkerEnv,
+    claimantAddress: string,
+    limit: number,
+    offset: number,
+  ) => Promise<{ jobs: ProofJobRecord[]; total: number }>;
+}
+
+const BACKFILL_UNMAPPED_BATCH_SIZE = 50;
+const BACKFILL_UNMAPPED_MAX_BATCHES = 3;
+const BACKFILL_JOBS_PAGE_SIZE = 200;
+const BACKFILL_MAX_JOBS_PER_CLAIMANT = 1_000;
+const HEX_TX_HASH_RE = /^[0-9a-f]{64}$/i;
+
+const DEFAULT_BACKFILL_DEPS: BackfillProofTapeMappingsDeps = {
+  getUnmappedLeaderboardTxHashes,
+  writeProofTapeMapping,
+  async listJobsForClaimant(env, claimantAddress, limit, offset) {
+    const { coordinatorStub } = await import("./durable/coordinator");
+    return coordinatorStub(env).listJobsForClaimant(claimantAddress, limit, offset);
+  },
+};
+
+function normalizeTxHash(txHash: string | null | undefined): string | null {
+  if (typeof txHash !== "string") {
+    return null;
+  }
+  const normalized = txHash.trim().toLowerCase();
+  return HEX_TX_HASH_RE.test(normalized) ? normalized : null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function compareJobsByFreshness(a: ProofJobRecord, b: ProofJobRecord): number {
+  const aTime = a.claim.submittedAt ?? a.createdAt;
+  const bTime = b.claim.submittedAt ?? b.createdAt;
+  return bTime.localeCompare(aTime);
+}
+
+function findBestMatchingJob(
+  jobs: ProofJobRecord[],
+  event: UnmappedLeaderboardEvent,
+  allowNonSucceeded = false,
+): ProofJobRecord | null {
+  const normalizedEventTxHash = normalizeTxHash(event.txHash);
+  const candidates = jobs.filter((job) => {
+    const jobSeed = asFiniteNumber(job.tape?.metadata?.seed);
+    const jobFinalScore = asFiniteNumber(job.tape?.metadata?.finalScore);
+    return jobSeed === event.seed && jobFinalScore === event.finalScore;
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (normalizedEventTxHash) {
+    const exactTxMatches = candidates.filter(
+      (job) => normalizeTxHash(job.claim.txHash) === normalizedEventTxHash,
+    );
+    if (exactTxMatches.length > 0) {
+      exactTxMatches.sort(compareJobsByFreshness);
+      return exactTxMatches[0];
+    }
+  }
+
+  const succeededMatches = candidates.filter((job) => job.claim.status === "succeeded");
+  if (succeededMatches.length > 0) {
+    succeededMatches.sort(compareJobsByFreshness);
+    return succeededMatches[0];
+  }
+
+  if (!allowNonSucceeded) {
+    return null;
+  }
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+
+  return null;
+}
+
+async function applyBackfillMatches(
+  env: WorkerEnv,
+  deps: BackfillProofTapeMappingsDeps,
+  jobs: ProofJobRecord[],
+  events: UnmappedLeaderboardEvent[],
+  result: BackfillTapeMappingsResult,
+  allowNonSucceeded: boolean,
+): Promise<UnmappedLeaderboardEvent[]> {
+  const unresolved: UnmappedLeaderboardEvent[] = [];
+  /* eslint-disable no-await-in-loop */
+  for (const event of events) {
+    const match = findBestMatchingJob(jobs, event, allowNonSucceeded);
+    if (!match) {
+      unresolved.push(event);
+      continue;
+    }
+
+    result.matched += 1;
+    try {
+      await deps.writeProofTapeMapping(env, event.txHash, match.jobId);
+      result.written += 1;
+    } catch (error) {
+      console.warn(
+        `[leaderboard-sync] backfill: failed to write mapping for tx ${event.txHash}: ${safeErrorMessage(error)}`,
+      );
+      result.errors += 1;
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+  return unresolved;
+}
+
+export async function backfillProofTapeMappings(
+  env: WorkerEnv,
+  deps: BackfillProofTapeMappingsDeps = DEFAULT_BACKFILL_DEPS,
+): Promise<BackfillTapeMappingsResult> {
+  const result: BackfillTapeMappingsResult = { unmapped: 0, matched: 0, written: 0, errors: 0 };
+
+  const unmapped: UnmappedLeaderboardEvent[] = [];
+  /* eslint-disable no-await-in-loop */
+  for (let batch = 0; batch < BACKFILL_UNMAPPED_MAX_BATCHES; batch += 1) {
+    const offset = batch * BACKFILL_UNMAPPED_BATCH_SIZE;
+    const page = await deps.getUnmappedLeaderboardTxHashes(
+      env,
+      BACKFILL_UNMAPPED_BATCH_SIZE,
+      offset,
+    );
+    if (page.length === 0) {
+      break;
+    }
+    unmapped.push(...page);
+    if (page.length < BACKFILL_UNMAPPED_BATCH_SIZE) {
+      break;
+    }
+  }
+
+  result.unmapped = unmapped.length;
+
+  if (unmapped.length === 0) {
+    return result;
+  }
+
+  // Group by claimant to minimise DO calls
+  const byClaimant = new Map<string, UnmappedLeaderboardEvent[]>();
+  for (const event of unmapped) {
+    const group = byClaimant.get(event.claimantAddress);
+    if (group) {
+      group.push(event);
+    } else {
+      byClaimant.set(event.claimantAddress, [event]);
+    }
+  }
+
+  for (const [claimantAddress, events] of byClaimant) {
+    let pending = [...events];
+    let jobs: ProofJobRecord[] = [];
+    let offset = 0;
+    let total = Number.POSITIVE_INFINITY;
+    let fullyScannedClaimantJobs = false;
+
+    while (
+      pending.length > 0 &&
+      !fullyScannedClaimantJobs &&
+      jobs.length < BACKFILL_MAX_JOBS_PER_CLAIMANT
+    ) {
+      let response: { jobs: ProofJobRecord[]; total: number };
+      try {
+        response = await deps.listJobsForClaimant(
+          env,
+          claimantAddress,
+          BACKFILL_JOBS_PAGE_SIZE,
+          offset,
+        );
+      } catch (error) {
+        console.warn(
+          `[leaderboard-sync] backfill: failed to list jobs for ${claimantAddress}: ${safeErrorMessage(error)}`,
+        );
+        result.errors += pending.length;
+        pending = [];
+        break;
+      }
+
+      if (response.jobs.length === 0) {
+        fullyScannedClaimantJobs = true;
+        break;
+      }
+
+      jobs = jobs.concat(response.jobs);
+      total = response.total;
+      offset += response.jobs.length;
+
+      pending = await applyBackfillMatches(env, deps, jobs, pending, result, false);
+
+      if (offset >= total || response.jobs.length < BACKFILL_JOBS_PAGE_SIZE) {
+        fullyScannedClaimantJobs = true;
+      }
+    }
+
+    if (pending.length > 0 && fullyScannedClaimantJobs && jobs.length > 0) {
+      pending = await applyBackfillMatches(env, deps, jobs, pending, result, true);
+    }
+
+    if (pending.length > 0 && jobs.length >= BACKFILL_MAX_JOBS_PER_CLAIMANT) {
+      console.warn(
+        `[leaderboard-sync] backfill: scanned ${BACKFILL_MAX_JOBS_PER_CLAIMANT} jobs for ${claimantAddress} and left ${pending.length} events unresolved`,
+      );
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+
+  if (result.written > 0) {
+    console.log(
+      `[leaderboard-sync] backfill: wrote ${result.written} tape mappings (${result.unmapped} unmapped, ${result.matched} matched, ${result.errors} errors)`,
+    );
+  }
+
+  return result;
 }

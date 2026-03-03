@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 import type { GalexieFetchResult } from "../../worker/leaderboard-ingestion";
 import {
+  backfillProofTapeMappings,
   recordLeaderboardSyncFailure,
   runLeaderboardSync,
   runScheduledLeaderboardSync,
@@ -10,6 +11,7 @@ import {
 import type {
   LeaderboardEventRecord,
   LeaderboardIngestionState,
+  ProofJobRecord,
 } from "../../worker/types";
 
 let ingestionState: LeaderboardIngestionState;
@@ -19,6 +21,7 @@ let upsertCalls: LeaderboardEventRecord[][];
 let setStateCalls: LeaderboardIngestionState[];
 let countCalls = 0;
 let purgeCalls = 0;
+let backfillCalls = 0;
 let deps: LeaderboardSyncDeps;
 
 function makeState(
@@ -66,6 +69,67 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   } as WorkerEnv;
 }
 
+function makeProofJob(args: {
+  jobId: string;
+  claimantAddress: string;
+  seed: number;
+  finalScore: number;
+  claimStatus: ProofJobRecord["claim"]["status"];
+  claimTxHash?: string | null;
+  createdAt?: string;
+  submittedAt?: string | null;
+}): ProofJobRecord {
+  const createdAt = args.createdAt ?? "2026-03-02T00:00:00.000Z";
+  return {
+    jobId: args.jobId,
+    status: args.claimStatus === "succeeded" ? "succeeded" : "failed",
+    createdAt,
+    updatedAt: createdAt,
+    completedAt: createdAt,
+    tape: {
+      sizeBytes: 1,
+      key: `proofs/${args.jobId}.json`,
+      metadata: {
+        seed: args.seed,
+        seedId: 1,
+        frameCount: 100,
+        finalScore: args.finalScore,
+        checksum: 1,
+      },
+    },
+    queue: {
+      attempts: 1,
+      lastAttemptAt: createdAt,
+      lastError: null,
+      nextRetryAt: null,
+    },
+    prover: {
+      jobId: "prover-1",
+      status: "succeeded",
+      statusUrl: null,
+      segmentLimitPo2: null,
+      lastPolledAt: createdAt,
+      pollingErrors: 0,
+    },
+    proverAttempts: [],
+    claimAttempts: [],
+    result: null,
+    claim: {
+      claimantAddress: args.claimantAddress,
+      status: args.claimStatus,
+      attempts: 1,
+      lastAttemptAt: createdAt,
+      lastError: null,
+      nextRetryAt: null,
+      submittedAt: args.submittedAt ?? createdAt,
+      txHash: args.claimTxHash ?? null,
+    },
+    error: null,
+    errorCode: null,
+    timeoutPhase: null,
+  };
+}
+
 describe("leaderboard sync behavior", () => {
   beforeEach(() => {
     ingestionState = makeState();
@@ -75,6 +139,7 @@ describe("leaderboard sync behavior", () => {
     setStateCalls = [];
     countCalls = 0;
     purgeCalls = 0;
+    backfillCalls = 0;
 
     deps = {
       fetchLeaderboardEventsFromGalexie: async (
@@ -112,6 +177,10 @@ describe("leaderboard sync behavior", () => {
       ) => {
         upsertCalls.push(events);
         return { inserted: events.length, updated: 0 };
+      },
+      backfillProofTapeMappings: async () => {
+        backfillCalls += 1;
+        return { unmapped: 0, matched: 0, written: 0, errors: 0 };
       },
     };
   });
@@ -204,6 +273,13 @@ describe("leaderboard sync behavior", () => {
     expect(fetchCalls[1]?.fromLedger).toBe(900);
     expect(fetchCalls[1]?.toLedger).toBe(1000);
     expect(purgeCalls).toBe(1);
+    expect(backfillCalls).toBe(1);
+    expect(result.backfill_tape_mappings).toEqual({
+      unmapped: 0,
+      matched: 0,
+      written: 0,
+      errors: 0,
+    });
   });
 
   it("reports warning when catchup is enabled but highest ledger is unknown", async () => {
@@ -231,5 +307,142 @@ describe("leaderboard sync behavior", () => {
       "skipped catchup backfill because highest ledger is unknown",
     );
     expect(fetchCalls).toHaveLength(1);
+    expect(backfillCalls).toBe(1);
+  });
+});
+
+describe("proof tape backfill behavior", () => {
+  it("prefers exact tx hash matches over non-exact candidates", async () => {
+    const claimantAddress =
+      "CCZV7OHNSIMTVJH2HSD62XENQJAUBNOLPO5ZMQE7MJ3TQP4XUYOKVUA3";
+    const txHash = "A".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+
+    const result = await backfillProofTapeMappings(makeEnv(), {
+      getUnmappedLeaderboardTxHashes: async (_env, _limit, offset) =>
+        offset === 0
+          ? [{ txHash, claimantAddress, seed: 42, finalScore: 12_345 }]
+          : [],
+      writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+        writes.push({ txHash: mappedTxHash, proofJobId });
+      },
+      listJobsForClaimant: async () => ({
+        jobs: [
+          makeProofJob({
+            jobId: "job-succeeded-wrong-tx",
+            claimantAddress,
+            seed: 42,
+            finalScore: 12_345,
+            claimStatus: "succeeded",
+            claimTxHash: "b".repeat(64),
+          }),
+          makeProofJob({
+            jobId: "job-exact-tx",
+            claimantAddress,
+            seed: 42,
+            finalScore: 12_345,
+            claimStatus: "failed",
+            claimTxHash: txHash.toLowerCase(),
+          }),
+        ],
+        total: 2,
+      }),
+    });
+
+    expect(result.written).toBe(1);
+    expect(writes).toEqual([{ txHash, proofJobId: "job-exact-tx" }]);
+  });
+
+  it("paginates claimant jobs and can resolve matches beyond the first page", async () => {
+    const claimantAddress =
+      "CCZTYPWXMRFS2BB23L4CT73VZRVGE7S5B474VISMYBUU3K2TLNAN33TU";
+    const txHash = "c".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+    const listOffsets: number[] = [];
+
+    const firstPage = Array.from({ length: 200 }, (_, index) =>
+      makeProofJob({
+        jobId: `job-${index}`,
+        claimantAddress,
+        seed: 1_000 + index,
+        finalScore: 9_000 + index,
+        claimStatus: "succeeded",
+        claimTxHash: null,
+      }),
+    );
+    const secondPage = [
+      makeProofJob({
+        jobId: "job-page-2-match",
+        claimantAddress,
+        seed: 777,
+        finalScore: 55_555,
+        claimStatus: "failed",
+        claimTxHash: null,
+      }),
+    ];
+
+    const result = await backfillProofTapeMappings(makeEnv(), {
+      getUnmappedLeaderboardTxHashes: async (_env, _limit, offset) =>
+        offset === 0
+          ? [{ txHash, claimantAddress, seed: 777, finalScore: 55_555 }]
+          : [],
+      writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+        writes.push({ txHash: mappedTxHash, proofJobId });
+      },
+      listJobsForClaimant: async (_env, _claimant, _limit, offset) => {
+        listOffsets.push(offset);
+        if (offset === 0) {
+          return { jobs: firstPage, total: 201 };
+        }
+        if (offset === 200) {
+          return { jobs: secondPage, total: 201 };
+        }
+        return { jobs: [], total: 201 };
+      },
+    });
+
+    expect(listOffsets).toEqual([0, 200]);
+    expect(result.written).toBe(1);
+    expect(writes).toEqual([{ txHash, proofJobId: "job-page-2-match" }]);
+  });
+
+  it("does not map ambiguous non-succeeded matches", async () => {
+    const claimantAddress =
+      "CCBXQCM5NQ7XFZL6KQ6PFFWE2PTEK4ETIYRB6MUQ4PG6JXMRKXW4YF4O";
+    const txHash = "d".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+
+    const result = await backfillProofTapeMappings(makeEnv(), {
+      getUnmappedLeaderboardTxHashes: async (_env, _limit, offset) =>
+        offset === 0
+          ? [{ txHash, claimantAddress, seed: 99, finalScore: 40_000 }]
+          : [],
+      writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+        writes.push({ txHash: mappedTxHash, proofJobId });
+      },
+      listJobsForClaimant: async () => ({
+        jobs: [
+          makeProofJob({
+            jobId: "job-a",
+            claimantAddress,
+            seed: 99,
+            finalScore: 40_000,
+            claimStatus: "failed",
+          }),
+          makeProofJob({
+            jobId: "job-b",
+            claimantAddress,
+            seed: 99,
+            finalScore: 40_000,
+            claimStatus: "retrying",
+          }),
+        ],
+        total: 2,
+      }),
+    });
+
+    expect(result.written).toBe(0);
+    expect(result.matched).toBe(0);
+    expect(writes).toHaveLength(0);
   });
 });

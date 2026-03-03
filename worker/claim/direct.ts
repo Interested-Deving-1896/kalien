@@ -310,7 +310,10 @@ export function isRetryableDirectClaimMessage(rawMessage: string): boolean {
     message.includes("http 500") ||
     message.includes("http 502") ||
     message.includes("http 503") ||
-    message.includes("http 504")
+    message.includes("http 504") ||
+    message.includes("empty or invalid response from plugin") ||
+    message.includes("pool_capacity") ||
+    message.includes("too many transactions queued")
   );
 }
 
