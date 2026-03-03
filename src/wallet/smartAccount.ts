@@ -82,6 +82,7 @@ export function getSmartAccountKit(): SmartAccountKit {
       storage: new IndexedDBStorage(),
       rpName: config.rpName,
       relayerUrl: config.relayerUrl,
+      signatureExpirationLedgers: 2160,
     });
   }
 
