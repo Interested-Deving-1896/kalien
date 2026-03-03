@@ -80,8 +80,8 @@ export function HeaderWallet() {
         </button>
 
         {open && (
-          <div className="absolute right-1/2 top-full z-50 mt-1.5 w-[260px] translate-x-1/2 overflow-hidden rounded-lg border border-border/50 bg-[rgba(8,16,29,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.5)]">
-            <div className="grid gap-3 p-3">
+          <div className="absolute right-1/2 top-full z-50 mt-1.5 w-[min(92vw,320px)] translate-x-1/2 overflow-hidden rounded-lg border border-border/50 bg-[rgba(8,16,29,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.5)]">
+            <div className="grid max-h-[min(75vh,30rem)] gap-3 overflow-y-auto p-3">
               <Input
                 type="text"
                 placeholder="Choose a username"
@@ -108,7 +108,7 @@ export function HeaderWallet() {
                   "Create Account"
                 )}
               </Button>
-              <div className="flex items-center justify-center gap-1">
+              <div className="flex flex-wrap items-center justify-center gap-1 text-center">
                 <span className="text-xs text-muted-foreground">Already have an account?</span>
                 <Button
                   variant="link"
@@ -122,7 +122,10 @@ export function HeaderWallet() {
                   {wallet.action === "connecting" ? "Connecting..." : "Sign In"}
                 </Button>
               </div>
-              <ErrorMessage message={wallet.error} />
+              <ErrorMessage
+                message={wallet.error}
+                className="text-xs leading-relaxed [overflow-wrap:anywhere]"
+              />
             </div>
           </div>
         )}
