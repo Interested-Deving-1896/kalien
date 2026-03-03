@@ -341,20 +341,60 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
 
     const { job } = createResult;
 
-    try {
-      await c.env.PROOF_ARTIFACTS.put(job.tape.key, tapeBytes, {
-        httpMetadata: {
-          contentType: "application/octet-stream",
-        },
-        customMetadata: {
-          jobId: job.jobId,
-        },
-      });
-    } catch (error) {
-      await coordinator.markFailed(
-        job.jobId,
-        `failed storing tape in R2: ${safeErrorMessage(error)}`,
-      );
+    // Store the tape in R2 and verify it is durably readable before
+    // proceeding.  A silent R2 inconsistency here caused tape loss in
+    // production — the put() resolved without error but the object was
+    // not readable when the queue consumer fetched it seconds later.
+    const TAPE_STORE_MAX_ATTEMPTS = 3;
+    const TAPE_VERIFY_DELAY_MS = 250;
+    let tapeStored = false;
+
+    for (let attempt = 1; attempt <= TAPE_STORE_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await c.env.PROOF_ARTIFACTS.put(job.tape.key, tapeBytes, {
+          httpMetadata: {
+            contentType: "application/octet-stream",
+          },
+          customMetadata: {
+            jobId: job.jobId,
+          },
+        });
+      } catch (error) {
+        if (attempt === TAPE_STORE_MAX_ATTEMPTS) {
+          // eslint-disable-next-line no-await-in-loop
+          await coordinator.markFailed(
+            job.jobId,
+            `failed storing tape in R2 after ${attempt} attempts: ${safeErrorMessage(error)}`,
+          );
+          return jsonError(c, 503, "failed storing tape artifact");
+        }
+        continue;
+      }
+
+      // Read-back verification: confirm the tape is actually retrievable.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, TAPE_VERIFY_DELAY_MS));
+
+      // eslint-disable-next-line no-await-in-loop
+      const head = await c.env.PROOF_ARTIFACTS.head(job.tape.key);
+      if (head && head.size === tapeBytes.byteLength) {
+        tapeStored = true;
+        break;
+      }
+
+      if (attempt === TAPE_STORE_MAX_ATTEMPTS) {
+        // eslint-disable-next-line no-await-in-loop
+        await coordinator.markFailed(
+          job.jobId,
+          `tape verification failed after ${attempt} attempts: R2 head returned ${head ? `size ${head.size}` : "null"}`,
+        );
+        return jsonError(c, 503, "tape storage verification failed");
+      }
+    }
+
+    if (!tapeStored) {
+      await coordinator.markFailed(job.jobId, "tape storage failed: exhausted all attempts");
       return jsonError(c, 503, "failed storing tape artifact");
     }
 
@@ -418,6 +458,12 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
 
     const coordinator = coordinatorStub(c.env);
     const { jobs, total } = await coordinator.listJobsForClaimant(claimantAddress, limit, offset);
+
+    // Restart the alarm chain if it died (e.g. server restart / DO eviction).
+    // Best-effort, don't block the response.
+    if (jobs.some((j) => !isTerminalProofStatus(j.status))) {
+      coordinator.kickAlarm().catch(() => {});
+    }
 
     const jobsWithCycleBackfill = await Promise.all(
       jobs.map(async (job) => {

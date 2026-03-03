@@ -241,9 +241,28 @@ async function prepareForSubmission(
     return null;
   }
 
-  const tapeObject = await env.PROOF_ARTIFACTS.get(startedJob.tape.key);
+  // Retry the R2 read a few times before giving up — a transient consistency
+  // delay has caused tape-not-found failures in production even though the
+  // API handler confirmed the put.
+  const TAPE_READ_MAX_ATTEMPTS = 3;
+  const TAPE_READ_RETRY_DELAY_MS = 1_000;
+  let tapeObject: R2ObjectBody | null = null;
+
+  for (let attempt = 1; attempt <= TAPE_READ_MAX_ATTEMPTS; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    tapeObject = await env.PROOF_ARTIFACTS.get(startedJob.tape.key);
+    if (tapeObject) break;
+    if (attempt < TAPE_READ_MAX_ATTEMPTS) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, TAPE_READ_RETRY_DELAY_MS));
+    }
+  }
+
   if (!tapeObject) {
-    await coordinator.markFailed(jobId, "missing tape artifact in R2");
+    await coordinator.markFailed(
+      jobId,
+      `missing tape artifact in R2 after ${TAPE_READ_MAX_ATTEMPTS} attempts`,
+    );
     message.ack();
     return null;
   }
