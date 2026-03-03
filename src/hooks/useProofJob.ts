@@ -68,6 +68,10 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   const onClaimSucceededRef = useRef(options?.onClaimSucceeded);
   onClaimSucceededRef.current = options?.onClaimSucceeded;
 
+  // Synchronous guard: set by clear(), checked by poll/restore before calling setJob.
+  // Prevents in-flight polls from overriding a clear that hasn't been rendered yet.
+  const jobClearedRef = useRef(false);
+
   const activeJobId = job?.jobId ?? null;
   const activeJobStatus = job?.status ?? null;
   const activeClaimStatus = job?.claim.status ?? null;
@@ -108,6 +112,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
 
       try {
         const response = await submitProofJob(tapeBytes, claimantAddress, run.record.seedId >>> 0);
+        jobClearedRef.current = false;
         setJob(response.job);
         return true;
       } catch (err) {
@@ -136,10 +141,12 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   }, []);
 
   const clear = useCallback(() => {
+    jobClearedRef.current = true;
     setJob(null);
   }, []);
 
   const setJobFromExternal = useCallback((externalJob: ProofJobPublic) => {
+    if (jobClearedRef.current) return;
     setJob((current: ProofJobPublic | null) => current ?? externalJob);
   }, []);
 
@@ -163,7 +170,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     const poll = async () => {
       try {
         const response = await getProofJob(activeJobId);
-        if (cancelled) {
+        if (cancelled || jobClearedRef.current) {
           return;
         }
 
@@ -182,7 +189,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
           return;
         }
       } catch (err) {
-        if (cancelled) {
+        if (cancelled || jobClearedRef.current) {
           return;
         }
 
