@@ -28,7 +28,7 @@ export interface UseProofJobReturn {
   submitRun: (run: CompletedGameRun, claimantAddress: string) => Promise<boolean>;
   clearError: () => void;
   setError: (message: string) => void;
-  clearIfTerminal: () => void;
+  clear: () => void;
   setJobFromExternal: (job: ProofJobPublic) => void;
 }
 
@@ -135,13 +135,8 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     setError(message);
   }, []);
 
-  const clearIfTerminal = useCallback(() => {
-    setJob((current: ProofJobPublic | null) => {
-      if (!current) {
-        return null;
-      }
-      return isTerminalProofStatus(current.status) ? null : current;
-    });
+  const clear = useCallback(() => {
+    setJob(null);
   }, []);
 
   const setJobFromExternal = useCallback((externalJob: ProofJobPublic) => {
@@ -225,7 +220,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     submitRun,
     clearError,
     setError: setErrorExposed,
-    clearIfTerminal,
+    clear,
     setJobFromExternal,
   };
 }

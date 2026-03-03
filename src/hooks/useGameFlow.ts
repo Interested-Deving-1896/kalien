@@ -73,7 +73,7 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     (run: CompletedGameRun) => {
       setLatestRun(run);
       proof.clearError();
-      proof.clearIfTerminal();
+      proof.clear();
     },
     [proof],
   );
@@ -108,7 +108,7 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
             endedAtMs: Date.now(),
           });
           proof.clearError();
-          proof.clearIfTerminal();
+          proof.clear();
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           proof.setError(`failed to load tape file: ${detail}`);
