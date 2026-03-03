@@ -66,8 +66,8 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- proof methods are stable refs from useProofJob
-  }, [wallet.address, wallet.isConnected, proof]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- proof.setJobFromExternal is a stable ref; only re-run on wallet changes
+  }, [wallet.address, wallet.isConnected]);
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {
