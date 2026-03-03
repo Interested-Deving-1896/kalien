@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { CompletedGameRun } from "../game/types";
-import { isTerminalProofStatus, listProofJobs } from "../proof/api";
 import { deserializeTape } from "../game/tape";
 import type { UseWalletReturn } from "./useWallet";
 import { useProofJob, type UseProofJobReturn } from "./useProofJob";
@@ -40,34 +39,6 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
   });
 
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
-
-  // Restore in-progress job on mount by fetching the user's most recent job.
-  useEffect(() => {
-    if (!wallet.address || !wallet.isConnected) return;
-
-    let cancelled = false;
-    listProofJobs(wallet.address, { limit: 1 })
-      .then((response) => {
-        if (cancelled) return undefined;
-        const latest = response.jobs[0];
-        const claimPendingAfterProofSuccess =
-          latest?.status === "succeeded" &&
-          latest.claim.status !== "succeeded" &&
-          latest.claim.status !== "failed";
-        if (latest && (!isTerminalProofStatus(latest.status) || claimPendingAfterProofSuccess)) {
-          proof.setJobFromExternal(latest);
-        }
-        return undefined;
-      })
-      .catch(() => {
-        // Job list may be empty or unavailable — ignore.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- proof.setJobFromExternal is a stable ref; only re-run on wallet changes
-  }, [wallet.address, wallet.isConnected]);
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {

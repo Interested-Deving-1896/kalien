@@ -29,7 +29,6 @@ export interface UseProofJobReturn {
   clearError: () => void;
   setError: (message: string) => void;
   clear: () => void;
-  setJobFromExternal: (job: ProofJobPublic) => void;
 }
 
 function isTerminalClaimStatus(status: ClaimStatus): boolean {
@@ -68,7 +67,7 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   const onClaimSucceededRef = useRef(options?.onClaimSucceeded);
   onClaimSucceededRef.current = options?.onClaimSucceeded;
 
-  // Synchronous guard: set by clear(), checked by poll/restore before calling setJob.
+  // Synchronous guard: set by clear(), checked by poll before calling setJob.
   // Prevents in-flight polls from overriding a clear that hasn't been rendered yet.
   const jobClearedRef = useRef(false);
 
@@ -143,11 +142,6 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
   const clear = useCallback(() => {
     jobClearedRef.current = true;
     setJob(null);
-  }, []);
-
-  const setJobFromExternal = useCallback((externalJob: ProofJobPublic) => {
-    if (jobClearedRef.current) return;
-    setJob((current: ProofJobPublic | null) => current ?? externalJob);
   }, []);
 
   // Proof status polling
@@ -228,6 +222,5 @@ export function useProofJob(options?: UseProofJobOptions): UseProofJobReturn {
     clearError,
     setError: setErrorExposed,
     clear,
-    setJobFromExternal,
   };
 }
