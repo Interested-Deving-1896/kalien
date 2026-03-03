@@ -53,6 +53,13 @@ const config: SmartAccountConfig = {
 
 let kitInstance: SmartAccountKit | null = null;
 
+function isMissingOnChainContractError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("Smart account contract not found on-chain for credential")
+  );
+}
+
 function ensureClaimantAddress(address: string): string {
   const normalized = address.trim();
   validateAddress(normalized, "claimant address");
@@ -90,17 +97,42 @@ export function getSmartAccountKit(): SmartAccountKit {
 }
 
 export async function restoreSmartWalletSession(): Promise<SmartWalletSession | null> {
-  const result = await getSmartAccountKit().connectWallet();
-  return result ? toWalletSession(result) : null;
+  const kit = getSmartAccountKit();
+  try {
+    const result = await kit.connectWallet();
+    return result ? toWalletSession(result) : null;
+  } catch (error) {
+    // smart-account-kit throws when a saved session points at a contract that
+    // was never deployed (or no longer exists on the active network).
+    if (isMissingOnChainContractError(error)) {
+      await kit.disconnect();
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function connectSmartWallet(): Promise<SmartWalletSession> {
-  const result = await getSmartAccountKit().connectWallet({ prompt: true });
-  if (!result) {
-    throw new Error("wallet connection was cancelled");
-  }
+  const kit = getSmartAccountKit();
+  try {
+    const result = await kit.connectWallet({ prompt: true });
+    if (!result) {
+      throw new Error("wallet connection was cancelled");
+    }
+    return toWalletSession(result);
+  } catch (error) {
+    if (!isMissingOnChainContractError(error)) {
+      throw error;
+    }
 
-  return toWalletSession(result);
+    // Bypass stale session state and force a fresh passkey-authenticated connect.
+    await kit.disconnect();
+    const retried = await kit.connectWallet({ prompt: true, fresh: true });
+    if (!retried) {
+      throw new Error("wallet connection was cancelled", { cause: error });
+    }
+    return toWalletSession(retried);
+  }
 }
 
 export async function createSmartWallet(userName: string): Promise<SmartWalletSession> {
@@ -136,7 +168,16 @@ export async function resolveSmartWalletSessionForClaimant(
   // Try restoring from an existing session. We intentionally omit contractId
   // because the library throws "Could not determine credential ID" when
   // contractId is provided without a matching credentialId in IndexedDB.
-  const restored = await kit.connectWallet();
+  let restored: ConnectWalletResult | null = null;
+  try {
+    restored = await kit.connectWallet();
+  } catch (error) {
+    if (isMissingOnChainContractError(error)) {
+      await kit.disconnect();
+    } else {
+      throw error;
+    }
+  }
   if (restored) {
     const restoredSession = toWalletSession(restored);
     if (restoredSession.contractId === normalizedClaimant) {
