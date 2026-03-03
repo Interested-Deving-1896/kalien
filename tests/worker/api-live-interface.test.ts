@@ -19,6 +19,12 @@ mock.module("../../worker/queue/consumer", () => ({
 }));
 
 mock.module("../../worker/leaderboard-sync", () => ({
+  backfillProofTapeMappings: async () => ({
+    unmapped: 0,
+    matched: 0,
+    written: 0,
+    errors: 0,
+  }),
   runScheduledLeaderboardSync: async () => ({
     enabled: false,
     warning: null,
@@ -79,6 +85,7 @@ mock.module("@simplewebauthn/server", () => ({
 }));
 
 mock.module("../../worker/leaderboard-store", () => ({
+  countUnmappedLeaderboardTxHashes: async () => 0,
   countLeaderboardEvents: async () => 1,
   createLeaderboardProfileAuthChallenge: async () => undefined,
   getLeaderboardIngestionState: async () => ({
@@ -162,6 +169,7 @@ mock.module("../../worker/leaderboard-store", () => ({
     },
     recentRuns: [],
   }),
+  getUnmappedLeaderboardTxHashes: async () => [],
   getLeaderboardProfileAuthChallenge: async () => null,
   getLeaderboardProfileCredential: async () => null,
   markLeaderboardProfileAuthChallengeUsed: async () => false,

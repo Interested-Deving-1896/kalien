@@ -16,6 +16,7 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
+import { fetchLeaderboardEventsFromGalexie } from "../worker/leaderboard-ingestion";
 
 const BASE_URL = "http://localhost:5173";
 const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
@@ -458,9 +459,6 @@ async function main() {
 
   if (ourEvents.length > 0) {
     // Use fetchLeaderboardEventsFromGalexie (exported) to normalize events via real RPC
-    const { fetchLeaderboardEventsFromGalexie } =
-      await import("../worker/leaderboard-ingestion");
-
     // Find the min/max ledger of our events
     const ledgers = ourEvents
       .map((e) => e.ledger as number)

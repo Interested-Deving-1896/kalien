@@ -11,7 +11,12 @@ import {
   getLeaderboardPage,
   getLeaderboardPlayer,
   getLeaderboardIngestionState,
+  countUnmappedLeaderboardTxHashes,
+  getUnmappedLeaderboardTxHashes,
+  setLeaderboardIngestionState,
+  upsertLeaderboardEvents,
   upsertLeaderboardProfile,
+  upsertLeaderboardProfiles,
   createLeaderboardProfileAuthChallenge,
   getLeaderboardProfileAuthChallenge,
   getLeaderboardProfileCredential,
@@ -33,6 +38,11 @@ import {
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { safeErrorMessage } from "../utils";
 import { validateClaimantStrKey } from "../../shared/stellar/strkey";
+import {
+  backfillProofTapeMappings,
+  runLeaderboardSync,
+  runScheduledLeaderboardSync,
+} from "../leaderboard-sync";
 
 const MAX_USERNAME_LENGTH = 32;
 const MAX_LINK_URL_LENGTH = 240;
@@ -297,7 +307,6 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
           !run.proofJobId && typeof run.claimTxHash === "string" && run.claimTxHash.length > 0,
       );
       if (readRepairEnabled && hasReplayGap) {
-        const { backfillProofTapeMappings } = await import("../leaderboard-sync");
         const repaired = await backfillProofTapeMappings(c.env, undefined, {
           claimantAddress: address,
           oldestFirst: true,
@@ -667,12 +676,9 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
   // Pass ?reset_cursor=1 to clear stale RPC cursor.
   // Pass ?from_ledger=N to override the start ledger (skips gaps).
   router.post("/sync", async (c) => {
-    const { runLeaderboardSync, runScheduledLeaderboardSync } = await import("../leaderboard-sync");
-    const { setLeaderboardIngestionState, getLeaderboardIngestionState: getIngestionState } =
-      await import("../leaderboard-store");
     try {
       if (c.req.query("reset_cursor") === "1") {
-        const state = await getIngestionState(c.env);
+        const state = await getLeaderboardIngestionState(c.env);
         await setLeaderboardIngestionState(c.env, { ...state, cursor: null });
       }
       const fromLedgerRaw = c.req.query("from_ledger");
@@ -708,7 +714,6 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
   // DEV-ONLY: Force a targeted proof-tape backfill pass.
   // Useful for old/unlucky leaderboard rows that never got auto-mapped.
   router.post("/backfill-tape-mappings", async (c) => {
-    const { backfillProofTapeMappings } = await import("../leaderboard-sync");
     const claimantRaw = c.req.query("claimant")?.trim() ?? "";
     let claimantAddress: string | null = null;
     if (claimantRaw.length > 0) {
@@ -767,8 +772,6 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
 
   // DEV-ONLY: Inspect current unmapped leaderboard tx hashes.
   router.get("/backfill-tape-mappings/status", async (c) => {
-    const { countUnmappedLeaderboardTxHashes, getUnmappedLeaderboardTxHashes } =
-      await import("../leaderboard-store");
     const claimantRaw = c.req.query("claimant")?.trim() ?? "";
     let claimantAddress: string | null = null;
     if (claimantRaw.length > 0) {
@@ -833,9 +836,6 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
     if (!Array.isArray(body.events) || body.events.length === 0) {
       return jsonError(c, 400, "events must be a non-empty array");
     }
-
-    const { upsertLeaderboardEvents, upsertLeaderboardProfiles, setLeaderboardIngestionState } =
-      await import("../leaderboard-store");
 
     const events = (body.events as Record<string, unknown>[]).map((e) => ({
       eventId: String(e.eventId ?? crypto.randomUUID()),

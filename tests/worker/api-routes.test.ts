@@ -34,6 +34,7 @@ const EXAMPLE_ENTRY = {
 };
 
 mock.module("../../worker/leaderboard-store", () => ({
+  countUnmappedLeaderboardTxHashes: async () => 0,
   countLeaderboardEvents: async () => EXAMPLE_INGESTION_STATE.totalEvents,
   createLeaderboardProfileAuthChallenge: async () => undefined,
   getLeaderboardIngestionState: async () => EXAMPLE_INGESTION_STATE,
@@ -84,6 +85,7 @@ mock.module("../../worker/leaderboard-store", () => ({
       nextOffset: null,
     },
   }),
+  getUnmappedLeaderboardTxHashes: async () => [],
   getLeaderboardProfileAuthChallenge: async () => null,
   getLeaderboardProfileCredential: async () => null,
   markLeaderboardProfileAuthChallengeUsed: async () => false,
@@ -105,6 +107,12 @@ mock.module("../../worker/leaderboard-store", () => ({
 }));
 
 mock.module("../../worker/leaderboard-sync", () => ({
+  backfillProofTapeMappings: async () => ({
+    unmapped: 0,
+    matched: 0,
+    written: 0,
+    errors: 0,
+  }),
   runScheduledLeaderboardSync: async () => ({
     enabled: false,
     warning: null,
