@@ -7,7 +7,7 @@
       "dependencies": {
         "@fontsource/monaspace-krypton": "^5.2.5",
         "@fontsource/monaspace-neon": "^5.2.5",
-        "@openzeppelin/relayer-plugin-channels": "^0.13.0",
+        "@openzeppelin/relayer-plugin-channels": "^0.14.0",
         "@simplewebauthn/browser": "^13.2.2",
         "@simplewebauthn/server": "^13.2.3",
         "@tailwindcss/vite": "^4.2.1",
@@ -240,7 +240,7 @@
 
     "@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
 
-    "@openzeppelin/relayer-plugin-channels": ["@openzeppelin/relayer-plugin-channels@0.13.0", "", { "dependencies": { "@actions/exec": "^1.1.1", "@openzeppelin/relayer-sdk": "^1.9.0", "@stellar/stellar-sdk": "^14.5.0", "axios": "^1.13.5" } }, "sha512-+tpKOX6/0ftgjuSal2Z1Bmz6KYdcnenxLqP2yNtuUcWl0/OxwZrqsAw0i0VZrLIm1BZNeqAJZ2Fns9FHOp7Okw=="],
+    "@openzeppelin/relayer-plugin-channels": ["@openzeppelin/relayer-plugin-channels@0.14.0", "", { "dependencies": { "@actions/exec": "^1.1.1", "@openzeppelin/relayer-sdk": "^1.9.0", "@stellar/stellar-sdk": "^14.5.0", "axios": "^1.13.5" } }, "sha512-0ZaMmEaqJ7wNVymRIi/6ImVzeZz9gl8c+vJZBZs0qolLAe5MEVb716L2UHLSf91Nb/pkdVg676id+GH5A4I4Tg=="],
 
     "@openzeppelin/relayer-sdk": ["@openzeppelin/relayer-sdk@1.10.0", "", { "dependencies": { "axios": "^1.7.7" } }, "sha512-C7v4C63VnFR4keISicpcDf4Ix646sa1OdokzddFeSPEGlJIY2b/XJ9sIWiXOBVJVGzbB+RdX3/fbkygAPhcVNw=="],
 
