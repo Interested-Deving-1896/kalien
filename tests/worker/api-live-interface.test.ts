@@ -19,48 +19,11 @@ mock.module("../../worker/queue/consumer", () => ({
 }));
 
 mock.module("../../worker/leaderboard-sync", () => ({
-  backfillProofTapeMappings: async () => ({
-    unmapped: 0,
-    matched: 0,
-    written: 0,
-    errors: 0,
-  }),
   runScheduledLeaderboardSync: async () => ({
     enabled: false,
     warning: null,
   }),
   recordLeaderboardSyncFailure: async () => undefined,
-  runLeaderboardSync: async () => ({
-    mode: "forward",
-    requested: {
-      cursor: null,
-      from_ledger: null,
-      to_ledger: null,
-      limit: null,
-      source: "default",
-    },
-    fetched: {
-      provider: "rpc",
-      source_mode: "rpc",
-      count: 0,
-      cursor: null,
-    },
-    upserted: {
-      inserted: 0,
-      updated: 0,
-      total_events: 1,
-    },
-    state: {
-      provider: "rpc",
-      sourceMode: "rpc",
-      cursor: "ledger:1",
-      highestLedger: 1,
-      lastSyncedAt: EXAMPLE_GENERATED_AT,
-      lastBackfillAt: null,
-      totalEvents: 1,
-      lastError: null,
-    },
-  }),
 }));
 
 mock.module("../../worker/leaderboard-profile-auth", () => ({
@@ -85,8 +48,6 @@ mock.module("@simplewebauthn/server", () => ({
 }));
 
 mock.module("../../worker/leaderboard-store", () => ({
-  countUnmappedLeaderboardTxHashes: async () => 0,
-  countLeaderboardEvents: async () => 1,
   createLeaderboardProfileAuthChallenge: async () => undefined,
   getLeaderboardIngestionState: async () => ({
     provider: "rpc",
@@ -169,14 +130,11 @@ mock.module("../../worker/leaderboard-store", () => ({
     },
     recentRuns: [],
   }),
-  getUnmappedLeaderboardTxHashes: async () => [],
   getLeaderboardProfileAuthChallenge: async () => null,
   getLeaderboardProfileCredential: async () => null,
   markLeaderboardProfileAuthChallengeUsed: async () => false,
   purgeExpiredLeaderboardProfileAuthChallenges: async () => undefined,
-  setLeaderboardIngestionState: async () => undefined,
   updateLeaderboardProfileCredentialCounter: async () => undefined,
-  upsertLeaderboardEvents: async () => ({ inserted: 0, updated: 0 }),
   upsertLeaderboardProfile: async () => null,
   upsertLeaderboardProfileCredential: async () => ({
     claimantAddress: VALID_CLAIMANT_CONTRACT,
@@ -187,7 +145,6 @@ mock.module("../../worker/leaderboard-store", () => ({
     createdAt: EXAMPLE_GENERATED_AT,
     updatedAt: EXAMPLE_GENERATED_AT,
   }),
-  upsertLeaderboardProfiles: async () => 0,
 }));
 
 mock.module("../../worker/durable/coordinator", () => ({
@@ -381,15 +338,6 @@ describe("Worker live interface", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-  });
-
-  it("removes legacy /api/leaderboard/dev/* paths", async () => {
-    const response = await requestWorker(
-      "/api/leaderboard/dev/sync",
-      { method: "POST" },
-      makeEnv(),
-    );
-    expect(response.status).toBe(404);
   });
 
   it("returns API not-found payload for unknown /api route", async () => {

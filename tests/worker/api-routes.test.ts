@@ -34,8 +34,6 @@ const EXAMPLE_ENTRY = {
 };
 
 mock.module("../../worker/leaderboard-store", () => ({
-  countUnmappedLeaderboardTxHashes: async () => 0,
-  countLeaderboardEvents: async () => EXAMPLE_INGESTION_STATE.totalEvents,
   createLeaderboardProfileAuthChallenge: async () => undefined,
   getLeaderboardIngestionState: async () => EXAMPLE_INGESTION_STATE,
   getLeaderboardPage: async () => ({
@@ -85,14 +83,11 @@ mock.module("../../worker/leaderboard-store", () => ({
       nextOffset: null,
     },
   }),
-  getUnmappedLeaderboardTxHashes: async () => [],
   getLeaderboardProfileAuthChallenge: async () => null,
   getLeaderboardProfileCredential: async () => null,
   markLeaderboardProfileAuthChallengeUsed: async () => false,
   purgeExpiredLeaderboardProfileAuthChallenges: async () => undefined,
-  setLeaderboardIngestionState: async () => undefined,
   updateLeaderboardProfileCredentialCounter: async () => undefined,
-  upsertLeaderboardEvents: async () => ({ inserted: 0, updated: 0 }),
   upsertLeaderboardProfile: async () => EXAMPLE_ENTRY.profile,
   upsertLeaderboardProfileCredential: async () => ({
     claimantAddress: VALID_CLAIMANT_CONTRACT,
@@ -103,43 +98,6 @@ mock.module("../../worker/leaderboard-store", () => ({
     createdAt: EXAMPLE_GENERATED_AT,
     updatedAt: EXAMPLE_GENERATED_AT,
   }),
-  upsertLeaderboardProfiles: async () => 0,
-}));
-
-mock.module("../../worker/leaderboard-sync", () => ({
-  backfillProofTapeMappings: async () => ({
-    unmapped: 0,
-    matched: 0,
-    written: 0,
-    errors: 0,
-  }),
-  runScheduledLeaderboardSync: async () => ({
-    enabled: false,
-    warning: null,
-  }),
-  runLeaderboardSync: async () => ({
-    mode: "forward",
-    requested: {
-      cursor: null,
-      from_ledger: null,
-      to_ledger: null,
-      limit: null,
-      source: "default",
-    },
-    fetched: {
-      provider: "rpc",
-      source_mode: "rpc",
-      count: 0,
-      cursor: null,
-    },
-    upserted: {
-      inserted: 0,
-      updated: 0,
-      total_events: EXAMPLE_INGESTION_STATE.totalEvents,
-    },
-    state: EXAMPLE_INGESTION_STATE,
-  }),
-  recordLeaderboardSyncFailure: async () => undefined,
 }));
 
 mock.module("../../worker/durable/coordinator", () => ({
@@ -628,11 +586,6 @@ describe("API routes", () => {
     expect(payload.success).toBe(true);
     expect(payload.job.jobId).toBe("job-1");
     expect(payload.job.status).toBe("queued");
-  });
-
-  it("legacy /leaderboard/dev/* paths are removed", async () => {
-    const response = await requestApi("/leaderboard/dev/sync", { method: "POST" }, makeEnv());
-    expect(response.status).toBe(404);
   });
 
   // ── GET /proofs/jobs ──────────────────────────────────────────────────────
