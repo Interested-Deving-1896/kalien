@@ -16,13 +16,8 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { TapeInputSource } from "../src/game/input-source";
 import { Autopilot } from "../src/game/Autopilot";
 import { deserializeTape } from "../src/game/tape";
-import { fetchLeaderboardEventsFromGalexie } from "../worker/leaderboard-ingestion";
 
 const BASE_URL = "http://localhost:5173";
-const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
-const devAuthHeaders: Record<string, string> = DEV_API_KEY
-  ? { Authorization: `Bearer ${DEV_API_KEY}` }
-  : {};
 const CLAIMANT = "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
 
 // Parse args
@@ -458,50 +453,10 @@ async function main() {
   }
 
   if (ourEvents.length > 0) {
-    // Use fetchLeaderboardEventsFromGalexie (exported) to normalize events via real RPC
-    // Find the min/max ledger of our events
-    const ledgers = ourEvents
-      .map((e) => e.ledger as number)
-      .filter((l) => typeof l === "number");
-    const minLedger = Math.min(...ledgers);
-    const maxLedger = Math.max(...ledgers);
-
     console.log(
-      `  Fetching events from ledger ${minLedger} to ${maxLedger + 1}...`,
+      "  Manual dev seeding has been removed; waiting for scheduled leaderboard sync...",
     );
-
-    const fetchResult = await fetchLeaderboardEventsFromGalexie(
-      {
-        SCORE_CONTRACT_ID: contractId,
-        GALEXIE_RPC_BASE_URL: rpcUrl,
-        GALEXIE_SOURCE_MODE: "rpc",
-        GALEXIE_REQUEST_TIMEOUT_MS: "30000",
-      } as import("../worker/env").WorkerEnv,
-      {
-        fromLedger: minLedger,
-        toLedger: maxLedger + 1,
-        limit: 200,
-        source: "rpc",
-      },
-    );
-
-    console.log(`  Normalized ${fetchResult.events.length} events from RPC`);
-
-    // Seed them into the local leaderboard via the dev endpoint
-    if (fetchResult.events.length > 0) {
-      const seedResp = await fetch(`${BASE_URL}/dev/api/leaderboard/seed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...devAuthHeaders },
-        body: JSON.stringify({
-          events: fetchResult.events,
-          profiles: [],
-        }),
-      });
-      const seedResult = (await seedResp.json()) as Record<string, unknown>;
-      console.log(
-        `  Seeded into leaderboard: inserted=${seedResult.inserted}, updated=${seedResult.updated}`,
-      );
-    }
+    await new Promise((r) => setTimeout(r, 15_000));
   }
 
   // Step 4: Verify leaderboard

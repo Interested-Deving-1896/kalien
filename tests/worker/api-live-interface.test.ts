@@ -387,37 +387,9 @@ describe("Worker live interface", () => {
     const response = await requestWorker(
       "/api/leaderboard/dev/sync",
       { method: "POST" },
-      makeEnv({ DEV_API_KEY: "test-dev-key-with-enough-entropy" }),
-    );
-    expect(response.status).toBe(404);
-  });
-
-  it("requires DEV_API_KEY and bearer auth for /dev/api/leaderboard/*", async () => {
-    const noKey = await requestWorker(
-      "/dev/api/leaderboard/sync",
-      { method: "POST" },
       makeEnv(),
     );
-    expect(noKey.status).toBe(404);
-
-    const noAuth = await requestWorker(
-      "/dev/api/leaderboard/sync",
-      { method: "POST" },
-      makeEnv({ DEV_API_KEY: "test-dev-key-with-enough-entropy" }),
-    );
-    expect(noAuth.status).toBe(401);
-
-    const ok = await requestWorker(
-      "/dev/api/leaderboard/sync",
-      {
-        method: "POST",
-        headers: {
-          authorization: "Bearer test-dev-key-with-enough-entropy",
-        },
-      },
-      makeEnv({ DEV_API_KEY: "test-dev-key-with-enough-entropy" }),
-    );
-    expect(ok.status).toBe(200);
+    expect(response.status).toBe(404);
   });
 
   it("returns API not-found payload for unknown /api route", async () => {

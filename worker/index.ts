@@ -4,10 +4,7 @@ import { applyApiCacheControl } from "./cache-control";
 export { ProofCoordinatorDO } from "./durable/coordinator";
 import type { WorkerEnv } from "./env";
 import { createApiRouter } from "./api/routes";
-import {
-  createLeaderboardDevRouter,
-  createLeaderboardPublicRouter,
-} from "./api/leaderboard-routes";
+import { createLeaderboardPublicRouter } from "./api/leaderboard-routes";
 import { coordinatorStub } from "./durable/coordinator";
 import { recordLeaderboardSyncFailure, runScheduledLeaderboardSync } from "./leaderboard-sync";
 import {
@@ -58,17 +55,11 @@ app.use("/api/*", async (c, next) => {
   c.res = applyApiCacheControl(c.res);
 });
 
-app.use("/dev/api/*", async (c, next) => {
-  await next();
-  c.res = applyApiCacheControl(c.res);
-});
-
 app.route("/api", createApiRouter());
 app.route("/api/leaderboard", createLeaderboardPublicRouter());
-app.route("/dev/api/leaderboard", createLeaderboardDevRouter());
 
 app.notFound((c) => {
-  if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/dev/api/")) {
+  if (c.req.path.startsWith("/api/")) {
     return c.json(
       {
         success: false,
@@ -84,7 +75,7 @@ app.notFound((c) => {
 app.onError((error, c) => {
   if (error instanceof HTTPException) {
     const response = error.getResponse();
-    if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/dev/api/")) {
+    if (c.req.path.startsWith("/api/")) {
       return applyApiCacheControl(response);
     }
     return response;
@@ -92,7 +83,7 @@ app.onError((error, c) => {
 
   console.error(`[proof-worker] ${safeErrorMessage(error)}`);
 
-  if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/dev/api/")) {
+  if (c.req.path.startsWith("/api/")) {
     return c.json(
       {
         success: false,

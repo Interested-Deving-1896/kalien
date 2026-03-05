@@ -26,10 +26,6 @@ import { AsteroidsGame } from "../src/game/AsteroidsGame";
 import { Autopilot } from "../src/game/Autopilot";
 
 const BASE_URL = "http://localhost:5173";
-const DEV_API_KEY = process.env.DEV_API_KEY ?? "";
-const devAuthHeaders: Record<string, string> = DEV_API_KEY
-  ? { Authorization: `Bearer ${DEV_API_KEY}` }
-  : {};
 const SCREENSHOT_DIR = "/private/tmp/claude-501";
 const MAX_TAPE_FRAMES = 500;
 
@@ -127,25 +123,6 @@ async function waitForProofJob(
   }
 
   throw new Error(`Job ${jobId} timed out after ${timeoutMs / 1000}s`);
-}
-
-async function triggerLeaderboardSync(): Promise<boolean> {
-  log("Triggering leaderboard sync...");
-  try {
-    const res = await fetch(
-      `${BASE_URL}/dev/api/leaderboard/sync?reset_cursor=1`,
-      {
-        method: "POST",
-        headers: devAuthHeaders,
-      },
-    );
-    const body = (await res.json()) as { success?: boolean };
-    log(`  Sync response: ${res.status} success=${body.success}`);
-    return res.ok && body.success === true;
-  } catch (err) {
-    log(`  Sync trigger failed: ${err}`);
-    return false;
-  }
 }
 
 async function main() {
@@ -410,26 +387,25 @@ async function main() {
     await page.waitForTimeout(2_000);
     await screenshot("06-proof-complete");
 
-    // Step 11: Leaderboard sync and verification
-    step(11, "Sync leaderboard and verify entry");
+    // Step 11: Leaderboard verification (scheduled sync only)
+    step(11, "Wait for scheduled leaderboard sync and verify entry");
 
     // Wait briefly for the claim tx to be confirmed on Stellar
     log("Waiting 10s for Stellar tx confirmation...");
     await new Promise((r) => setTimeout(r, 10_000));
 
-    // Retry sync up to 3 times (ledger close timing can delay event visibility)
+    // Retry leaderboard checks while scheduled sync catches up.
     let leaderboardOk = false;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      log(`Leaderboard sync attempt ${attempt}/3...`);
-      const synced = await triggerLeaderboardSync();
-      if (!synced) {
-        log("  Sync returned failure, retrying...");
-        await new Promise((r) => setTimeout(r, 5_000));
-        continue;
-      }
+    const maxLeaderboardChecks = 8;
+    for (let attempt = 1; attempt <= maxLeaderboardChecks; attempt++) {
+      log(`Leaderboard visibility check ${attempt}/${maxLeaderboardChecks}...`);
 
       // Check leaderboard API for our claimant
-      await new Promise((r) => setTimeout(r, 2_000));
+      if (attempt === 1) {
+        await new Promise((r) => setTimeout(r, 2_000));
+      } else {
+        await new Promise((r) => setTimeout(r, 10_000));
+      }
       const lbParams = new URLSearchParams({ window: "all", limit: "10" });
       if (capturedClaimantAddress)
         lbParams.set("address", capturedClaimantAddress);
@@ -481,7 +457,7 @@ async function main() {
 
     if (!leaderboardOk && capturedClaimantAddress) {
       throw new Error(
-        `Claimant ${capturedClaimantAddress} not found on leaderboard after 3 sync attempts`,
+        `Claimant ${capturedClaimantAddress} not found on leaderboard after ${maxLeaderboardChecks} visibility checks`,
       );
     }
 

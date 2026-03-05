@@ -26,15 +26,6 @@ Gateway/API layer for proof jobs, claim submission, and leaderboard services.
 - `/api/relay`
 - `/api/leaderboard/*` (public and profile routes)
 
-Dev leaderboard endpoints are under `/dev/api/leaderboard/*` and should be
-protected with `DEV_API_KEY`.
-Key maintenance routes:
-
-- `/dev/api/leaderboard/storage-status`
-- `/dev/api/leaderboard/backfill-tape-mappings` (+ `/status`)
-- `/dev/api/leaderboard/prune-stale-tape-mappings`
-- `/dev/api/leaderboard/cleanup-legacy-storage`
-
 ## Configuration
 
 Bindings and env interface are defined in `worker/env.ts` and configured via

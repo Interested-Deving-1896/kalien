@@ -156,8 +156,9 @@ afterAll(() => {
 
 const { Hono } = await import("hono");
 const { createApiRouter } = await import("../../worker/api/routes");
-const { createLeaderboardDevRouter, createLeaderboardPublicRouter } =
-  await import("../../worker/api/leaderboard-routes");
+const { createLeaderboardPublicRouter } = await import(
+  "../../worker/api/leaderboard-routes"
+);
 
 const noopExecutionContext = {
   waitUntil() {
@@ -260,7 +261,6 @@ async function requestApi(
   const app = new Hono<{ Bindings: WorkerEnv }>();
   app.route("/", createApiRouter());
   app.route("/leaderboard", createLeaderboardPublicRouter());
-  app.route("/dev/api/leaderboard", createLeaderboardDevRouter());
   const request = new Request(`https://worker.test${path}`, init);
   return app.fetch(request, env, noopExecutionContext);
 }
@@ -630,123 +630,9 @@ describe("API routes", () => {
     expect(payload.job.status).toBe("queued");
   });
 
-  // ── Dev endpoint auth guard ────────────────────────────────────────────────
-
-  const DEV_KEY = "test-dev-key-with-enough-entropy";
-  const devAuthHeaders = { authorization: `Bearer ${DEV_KEY}` };
-
-  it("POST /dev/api/leaderboard/sync returns 404 when DEV_API_KEY is not set", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/sync",
-      { method: "POST" },
-      makeEnv(),
-    );
-    expect(response.status).toBe(404);
-  });
-
   it("legacy /leaderboard/dev/* paths are removed", async () => {
-    const response = await requestApi(
-      "/leaderboard/dev/sync",
-      { method: "POST" },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
+    const response = await requestApi("/leaderboard/dev/sync", { method: "POST" }, makeEnv());
     expect(response.status).toBe(404);
-  });
-
-  it("POST /dev/api/leaderboard/sync returns 401 without valid auth", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/sync",
-      { method: "POST" },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(401);
-  });
-
-  it("POST /dev/api/leaderboard/sync triggers sync and returns result", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/sync",
-      { method: "POST", headers: devAuthHeaders },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as { success: boolean };
-    expect(payload.success).toBe(true);
-  });
-
-  it("POST /dev/api/leaderboard/sync?from_ledger=invalid returns 400", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/sync?from_ledger=abc",
-      { method: "POST", headers: devAuthHeaders },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(400);
-  });
-
-  it("POST /dev/api/leaderboard/reset clears data", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/reset",
-      { method: "POST", headers: devAuthHeaders },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as {
-      success: boolean;
-      message: string;
-    };
-    expect(payload.success).toBe(true);
-    expect(payload.message).toContain("cleared");
-  });
-
-  it("POST /dev/api/leaderboard/seed with valid events returns insert counts", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/seed",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...devAuthHeaders },
-        body: JSON.stringify({
-          events: [
-            {
-              claimantAddress: VALID_CLAIMANT_CONTRACT,
-              seed: 42,
-              finalScore: 1337,
-              previousBest: 0,
-              newBest: 1337,
-              closedAt: EXAMPLE_GENERATED_AT,
-            },
-          ],
-        }),
-      },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as { success: boolean };
-    expect(payload.success).toBe(true);
-  });
-
-  it("POST /dev/api/leaderboard/seed with empty events returns 400", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/seed",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...devAuthHeaders },
-        body: JSON.stringify({ events: [] }),
-      },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(400);
-  });
-
-  it("POST /dev/api/leaderboard/seed with invalid JSON returns 400", async () => {
-    const response = await requestApi(
-      "/dev/api/leaderboard/seed",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...devAuthHeaders },
-        body: "not json",
-      },
-      makeEnv({ DEV_API_KEY: DEV_KEY }),
-    );
-    expect(response.status).toBe(400);
   });
 
   // ── GET /proofs/jobs ──────────────────────────────────────────────────────

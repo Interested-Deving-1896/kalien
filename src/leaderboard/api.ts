@@ -32,7 +32,6 @@ export interface LeaderboardPageResponse {
   success: true;
   source?: string;
   provider?: string;
-  provider_mode?: string;
   source_mode?: string;
   window: LeaderboardWindow;
   generated_at: string;

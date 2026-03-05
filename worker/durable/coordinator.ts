@@ -37,8 +37,6 @@ import {
 } from "../utils";
 
 const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
-const LEGACY_JOB_KEY_PREFIX = "job:";
-const LEGACY_ACTIVE_JOB_IDS_KEY = "active_job_ids";
 
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
@@ -218,26 +216,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   private async scheduleAlarm(delayMs: number): Promise<void> {
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
-  }
-
-  private countSqlRows(query: string): number {
-    this.ensureTable();
-    const row = this.ctx.storage.sql.exec(query).toArray()[0] as
-      | {
-          total?: unknown;
-        }
-      | undefined;
-    const raw = row?.total;
-    if (typeof raw === "number" && Number.isFinite(raw)) {
-      return Math.max(0, Math.trunc(raw));
-    }
-    if (typeof raw === "string") {
-      const parsed = Number.parseInt(raw, 10);
-      if (Number.isFinite(parsed) && parsed >= 0) {
-        return parsed;
-      }
-    }
-    return 0;
   }
 
   /**
@@ -446,117 +424,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.pruneCompletedJobs();
     await this.flushStorageIfEmpty();
-  }
-
-  async getStorageStatus(): Promise<{
-    checkedAt: string;
-    sql: {
-      totalJobs: number;
-      activeJobs: number;
-      succeededJobs: number;
-      failedJobs: number;
-      oldestCreatedAt: string | null;
-      newestCreatedAt: string | null;
-    };
-    legacyKv: {
-      legacyJobKeyCount: number;
-      legacyActiveJobIdsCount: number;
-      legacyJobIdSample: string[];
-    };
-  }> {
-    this.ensureTable();
-
-    const oldestRow = this.ctx.storage.sql
-      .exec(`SELECT created_at FROM jobs ORDER BY created_at ASC LIMIT 1`)
-      .toArray()[0] as
-      | {
-          created_at?: unknown;
-        }
-      | undefined;
-    const newestRow = this.ctx.storage.sql
-      .exec(`SELECT created_at FROM jobs ORDER BY created_at DESC LIMIT 1`)
-      .toArray()[0] as
-      | {
-          created_at?: unknown;
-        }
-      | undefined;
-
-    const legacyJobEntries = await this.ctx.storage.list<unknown>({
-      prefix: LEGACY_JOB_KEY_PREFIX,
-    });
-    const legacyActiveJobIds = await this.ctx.storage.get<unknown>(LEGACY_ACTIVE_JOB_IDS_KEY);
-    const legacyActiveJobIdsCount = Array.isArray(legacyActiveJobIds)
-      ? legacyActiveJobIds.length
-      : 0;
-
-    return {
-      checkedAt: nowIso(),
-      sql: {
-        totalJobs: this.countSqlRows(`SELECT COUNT(*) AS total FROM jobs`),
-        activeJobs: this.countSqlRows(
-          `SELECT COUNT(*) AS total FROM jobs WHERE status NOT IN ('succeeded', 'failed')`,
-        ),
-        succeededJobs: this.countSqlRows(
-          `SELECT COUNT(*) AS total FROM jobs WHERE status = 'succeeded'`,
-        ),
-        failedJobs: this.countSqlRows(`SELECT COUNT(*) AS total FROM jobs WHERE status = 'failed'`),
-        oldestCreatedAt: typeof oldestRow?.created_at === "string" ? oldestRow.created_at : null,
-        newestCreatedAt: typeof newestRow?.created_at === "string" ? newestRow.created_at : null,
-      },
-      legacyKv: {
-        legacyJobKeyCount: legacyJobEntries.size,
-        legacyActiveJobIdsCount,
-        legacyJobIdSample: Array.from(legacyJobEntries.keys())
-          .slice(0, 20)
-          .map((key) =>
-            key.startsWith(LEGACY_JOB_KEY_PREFIX) ? key.slice(LEGACY_JOB_KEY_PREFIX.length) : key,
-          ),
-      },
-    };
-  }
-
-  async cleanupLegacyStorage(sampleLimit = 20): Promise<{
-    checkedAt: string;
-    deletedJobKeys: number;
-    deletedActiveJobIds: boolean;
-    remainingJobKeys: number;
-    remainingActiveJobIdsCount: number;
-    remainingJobIdSample: string[];
-  }> {
-    const boundedSampleLimit = Math.min(Math.max(Math.trunc(sampleLimit), 1), 1000);
-    const legacyJobEntries = await this.ctx.storage.list<unknown>({
-      prefix: LEGACY_JOB_KEY_PREFIX,
-    });
-    let deletedJobKeys = 0;
-    for (const key of legacyJobEntries.keys()) {
-      // eslint-disable-next-line no-await-in-loop -- Durable Object storage mutation
-      const deleted = await this.ctx.storage.delete(key);
-      if (deleted) {
-        deletedJobKeys += 1;
-      }
-    }
-    const deletedActiveJobIds = await this.ctx.storage.delete(LEGACY_ACTIVE_JOB_IDS_KEY);
-
-    const remainingJobEntries = await this.ctx.storage.list<unknown>({
-      prefix: LEGACY_JOB_KEY_PREFIX,
-    });
-    const remainingActiveJobIds = await this.ctx.storage.get<unknown>(LEGACY_ACTIVE_JOB_IDS_KEY);
-    const remainingActiveJobIdsCount = Array.isArray(remainingActiveJobIds)
-      ? remainingActiveJobIds.length
-      : 0;
-
-    return {
-      checkedAt: nowIso(),
-      deletedJobKeys,
-      deletedActiveJobIds,
-      remainingJobKeys: remainingJobEntries.size,
-      remainingActiveJobIdsCount,
-      remainingJobIdSample: Array.from(remainingJobEntries.keys())
-        .slice(0, boundedSampleLimit)
-        .map((key) =>
-          key.startsWith(LEGACY_JOB_KEY_PREFIX) ? key.slice(LEGACY_JOB_KEY_PREFIX.length) : key,
-        ),
-    };
   }
 
   /**
