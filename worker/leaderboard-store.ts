@@ -868,6 +868,80 @@ export async function writeProofTapeMapping(
     .run();
 }
 
+export async function deleteProofTapeMapping(env: WorkerEnv, txHash: string): Promise<boolean> {
+  const normalizedTxHash = normalizeTxHash(txHash);
+  if (!normalizedTxHash) {
+    return false;
+  }
+  await ensureSchema(env);
+  const db = getDb(env);
+  const result = await db
+    .prepare(`DELETE FROM proof_tape_index WHERE tx_hash = ?`)
+    .bind(normalizedTxHash)
+    .run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function countProofTapeMappings(env: WorkerEnv): Promise<number> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS total FROM proof_tape_index`)
+    .first<Record<string, unknown>>();
+  return toNumber(row?.total, 0);
+}
+
+export interface MappedProofTapeMapping {
+  txHash: string;
+  proofJobId: string;
+}
+
+export interface GetMappedProofTapeMappingsOptions {
+  limit?: number;
+  offset?: number;
+  oldestFirst?: boolean;
+}
+
+export async function getMappedProofTapeMappings(
+  env: WorkerEnv,
+  options: GetMappedProofTapeMappingsOptions = {},
+): Promise<MappedProofTapeMapping[]> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 100), 1), 2_000);
+  const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+  const oldestFirst = options.oldestFirst === true;
+  const orderDirection = oldestFirst ? "ASC" : "DESC";
+
+  const rows = await db
+    .prepare(
+      `SELECT
+         t.tx_hash AS tx_hash,
+         t.proof_job_id AS proof_job_id
+       FROM proof_tape_index AS t
+       ORDER BY t.tx_hash ${orderDirection}
+       LIMIT ?
+       OFFSET ?`,
+    )
+    .bind(limit, offset)
+    .all<Record<string, unknown>>();
+
+  const mappings: MappedProofTapeMapping[] = [];
+  for (const row of rows.results ?? []) {
+    const txHash = toNullableString(row.tx_hash);
+    const proofJobId = toNullableString(row.proof_job_id);
+    if (!txHash || !proofJobId) {
+      continue;
+    }
+    mappings.push({
+      txHash,
+      proofJobId,
+    });
+  }
+
+  return mappings;
+}
+
 export interface UnmappedLeaderboardEvent {
   txHash: string;
   claimantAddress: string;

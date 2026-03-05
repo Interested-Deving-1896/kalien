@@ -28,6 +28,12 @@ Gateway/API layer for proof jobs, claim submission, and leaderboard services.
 
 Dev leaderboard endpoints are under `/dev/api/leaderboard/*` and should be
 protected with `DEV_API_KEY`.
+Key maintenance routes:
+
+- `/dev/api/leaderboard/storage-status`
+- `/dev/api/leaderboard/backfill-tape-mappings` (+ `/status`)
+- `/dev/api/leaderboard/prune-stale-tape-mappings`
+- `/dev/api/leaderboard/cleanup-legacy-storage`
 
 ## Configuration
 

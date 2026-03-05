@@ -5,7 +5,7 @@ import { resolveBoundlessConfig } from "../boundless/config";
 import { DEFAULT_MAX_TAPE_BYTES } from "../constants";
 import { asPublicJob, coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
-import { resultKey } from "../keys";
+import { resultKey, tapeKey } from "../keys";
 import { parseAndValidateTape } from "../tape";
 import type { ProofJobRecord, ProverAttempt } from "../types";
 import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
@@ -523,12 +523,19 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
 
       const coordinator = coordinatorStub(c.env);
       const job = await coordinator.getJob(jobId);
-      if (!job) {
-        return jsonError(c, 404, `job not found: ${jobId}`);
+      let tape: R2ObjectBody | null = null;
+      if (job?.tape.key) {
+        tape = await c.env.PROOF_ARTIFACTS.get(job.tape.key);
       }
-
-      const tape = await c.env.PROOF_ARTIFACTS.get(job.tape.key);
       if (!tape) {
+        // Fall back to deterministic key so replay remains available even if the
+        // coordinator row has been pruned or reset.
+        tape = await c.env.PROOF_ARTIFACTS.get(tapeKey(jobId));
+      }
+      if (!tape) {
+        if (!job) {
+          return jsonError(c, 404, `job not found: ${jobId}`);
+        }
         return jsonError(c, 404, "tape not found");
       }
 

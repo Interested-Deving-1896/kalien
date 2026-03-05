@@ -11,6 +11,7 @@ import {
   getLeaderboardPage,
   getLeaderboardPlayer,
   getLeaderboardIngestionState,
+  countProofTapeMappings,
   countUnmappedLeaderboardTxHashes,
   getUnmappedLeaderboardTxHashes,
   setLeaderboardIngestionState,
@@ -40,9 +41,11 @@ import { safeErrorMessage } from "../utils";
 import { validateClaimantStrKey } from "../../shared/stellar/strkey";
 import {
   backfillProofTapeMappings,
+  pruneStaleProofTapeMappings,
   runLeaderboardSync,
   runScheduledLeaderboardSync,
 } from "../leaderboard-sync";
+import { coordinatorStub } from "../durable/coordinator";
 
 const MAX_USERNAME_LENGTH = 32;
 const MAX_LINK_URL_LENGTH = 240;
@@ -115,20 +118,6 @@ function parsePositiveIntQuery(
     return max;
   }
   return bounded;
-}
-
-function parseBooleanEnv(raw: string | undefined, fallback: boolean): boolean {
-  if (!raw) {
-    return fallback;
-  }
-  const normalized = raw.trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["0", "false", "no", "n", "off"].includes(normalized)) {
-    return false;
-  }
-  return fallback;
 }
 
 function validateLinkUrl(url: string): boolean {
@@ -300,34 +289,6 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
         limit: runsLimit,
         offset: runsOffset,
       });
-
-      const readRepairEnabled = parseBooleanEnv(c.env.LEADERBOARD_PLAYER_READ_REPAIR, true);
-      const hasReplayGap = player.recentRuns.some(
-        (run) =>
-          !run.proofJobId && typeof run.claimTxHash === "string" && run.claimTxHash.length > 0,
-      );
-      if (readRepairEnabled && hasReplayGap) {
-        try {
-          const repaired = await backfillProofTapeMappings(c.env, undefined, {
-            claimantAddress: address,
-            oldestFirst: true,
-            unmappedBatchSize: 100,
-            maxUnmappedBatches: 20,
-            jobsPageSize: 200,
-            maxJobsPerClaimant: 10_000,
-          });
-          if (repaired.written > 0) {
-            player = await getLeaderboardPlayer(c.env, address, {
-              limit: runsLimit,
-              offset: runsOffset,
-            });
-          }
-        } catch (error) {
-          console.warn(
-            `[leaderboard] read-repair skipped for ${address}: ${safeErrorMessage(error)}`,
-          );
-        }
-      }
 
       c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
       return c.json({
@@ -678,6 +639,30 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
     await next();
   });
 
+  // DEV-ONLY: Combined storage overview for SQL jobs + tape mappings.
+  router.get("/storage-status", async (c) => {
+    try {
+      const [coordinator, totalMappings, unmappedMappings] = await Promise.all([
+        coordinatorStub(c.env).getStorageStatus(),
+        countProofTapeMappings(c.env),
+        countUnmappedLeaderboardTxHashes(c.env),
+      ]);
+      return c.json({
+        success: true,
+        checked_at: new Date().toISOString(),
+        coordinator,
+        proof_tape_mappings: {
+          total: totalMappings,
+          unmapped: unmappedMappings,
+          mapped: Math.max(0, totalMappings - unmappedMappings),
+        },
+      });
+    } catch (error) {
+      console.error(`[leaderboard-sync] dev/storage-status failed: ${safeErrorMessage(error)}`);
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+  });
+
   // DEV-ONLY: Trigger leaderboard sync (same as cron handler)
   // Pass ?reset_cursor=1 to clear stale RPC cursor.
   // Pass ?from_ledger=N to override the start ledger (skips gaps).
@@ -713,6 +698,72 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
       return c.json({ success: true, ...result });
     } catch (error) {
       console.error(`[leaderboard-sync] dev/sync failed: ${safeErrorMessage(error)}`);
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+  });
+
+  // DEV-ONLY: Remove stale replay mappings (mapping row only; never leaderboard rows).
+  router.post("/prune-stale-tape-mappings", async (c) => {
+    const mappedBatchSize = parsePositiveIntQuery(c.req.query("mapped_batch_size"), 100, 1, 2000);
+    const maxMappedBatches = parsePositiveIntQuery(
+      c.req.query("max_mapped_batches"),
+      20,
+      1,
+      10_000,
+    );
+    const maxPasses = parsePositiveIntQuery(c.req.query("max_passes"), 1, 1, 100);
+    const oldestFirst = (c.req.query("oldest_first") ?? "1") !== "0";
+
+    try {
+      const before = await countProofTapeMappings(c.env);
+      const aggregate = {
+        scanned: 0,
+        stale: 0,
+        deleted: 0,
+        errors: 0,
+      };
+      let remainingMappings: number | null = null;
+      let passesRun = 0;
+
+      for (let pass = 0; pass < maxPasses; pass += 1) {
+        // eslint-disable-next-line no-await-in-loop -- intentional pass-by-pass pruning
+        const result = await pruneStaleProofTapeMappings(c.env, undefined, {
+          mappedBatchSize,
+          maxMappedBatches,
+          oldestFirst,
+        });
+        passesRun += 1;
+        aggregate.scanned += result.scanned;
+        aggregate.stale += result.stale;
+        aggregate.deleted += result.deleted;
+        aggregate.errors += result.errors;
+        remainingMappings = result.remainingMappings;
+        if (result.stale === 0 || result.deleted === 0) {
+          break;
+        }
+      }
+
+      const after = remainingMappings ?? (await countProofTapeMappings(c.env));
+      return c.json({
+        success: true,
+        passes_run: passesRun,
+        options: {
+          mapped_batch_size: mappedBatchSize,
+          max_mapped_batches: maxMappedBatches,
+          max_passes: maxPasses,
+          oldest_first: oldestFirst,
+        },
+        prune_stale_tape_mappings: aggregate,
+        proof_tape_mappings: {
+          before,
+          after,
+          delta: after - before,
+        },
+      });
+    } catch (error) {
+      console.error(
+        `[leaderboard-sync] dev/prune-stale-tape-mappings failed: ${safeErrorMessage(error)}`,
+      );
       return jsonError(c, 500, safeErrorMessage(error));
     }
   });
@@ -771,6 +822,23 @@ export function createLeaderboardDevRouter(): Hono<{ Bindings: WorkerEnv }> {
     } catch (error) {
       console.error(
         `[leaderboard-sync] dev/backfill-tape-mappings failed: ${safeErrorMessage(error)}`,
+      );
+      return jsonError(c, 500, safeErrorMessage(error));
+    }
+  });
+
+  // DEV-ONLY: Delete legacy Durable Object KV-era metadata keys.
+  router.post("/cleanup-legacy-storage", async (c) => {
+    const sampleLimit = parsePositiveIntQuery(c.req.query("sample_limit"), 20, 1, 1000);
+    try {
+      const result = await coordinatorStub(c.env).cleanupLegacyStorage(sampleLimit);
+      return c.json({
+        success: true,
+        cleanup_legacy_storage: result,
+      });
+    } catch (error) {
+      console.error(
+        `[leaderboard-sync] dev/cleanup-legacy-storage failed: ${safeErrorMessage(error)}`,
       );
       return jsonError(c, 500, safeErrorMessage(error));
     }

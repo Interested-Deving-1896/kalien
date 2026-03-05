@@ -5,18 +5,22 @@ import {
 } from "./leaderboard-ingestion";
 import {
   countLeaderboardEvents,
+  countProofTapeMappings,
   countUnmappedLeaderboardTxHashes,
+  deleteProofTapeMapping,
   getLeaderboardIngestionState,
+  getMappedProofTapeMappings,
   getUnmappedLeaderboardTxHashes,
   purgeExpiredLeaderboardProfileAuthChallenges,
   setLeaderboardIngestionState,
   upsertLeaderboardEvents,
   writeProofTapeMapping,
 } from "./leaderboard-store";
-import type { UnmappedLeaderboardEvent } from "./leaderboard-store";
+import type { MappedProofTapeMapping, UnmappedLeaderboardEvent } from "./leaderboard-store";
 import type { LeaderboardEventRecord, LeaderboardIngestionState, ProofJobRecord } from "./types";
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
+import { tapeKey } from "./keys";
 
 export interface LeaderboardSyncDeps {
   fetchLeaderboardEventsFromGalexie: typeof fetchLeaderboardEventsFromGalexie;
@@ -27,6 +31,7 @@ export interface LeaderboardSyncDeps {
   setLeaderboardIngestionState: typeof setLeaderboardIngestionState;
   upsertLeaderboardEvents: typeof upsertLeaderboardEvents;
   backfillProofTapeMappings?: typeof backfillProofTapeMappings;
+  pruneStaleProofTapeMappings?: typeof pruneStaleProofTapeMappings;
 }
 
 const DEFAULT_SYNC_DEPS: LeaderboardSyncDeps = {
@@ -169,6 +174,21 @@ function parseScheduledTapeBackfillConfig(env: WorkerEnv): {
         1,
       ),
       oldestFirst: parseBoolean(env.LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST, true),
+    },
+  };
+}
+
+function parseScheduledStaleTapePruneConfig(env: WorkerEnv): {
+  enabled: boolean;
+  options: PruneStaleProofTapeMappingsOptions;
+} {
+  const enabled = parseBoolean(env.LEADERBOARD_TAPE_STALE_PRUNE_ENABLED, true);
+  return {
+    enabled,
+    options: {
+      mappedBatchSize: parseInteger(env.LEADERBOARD_TAPE_STALE_PRUNE_BATCH_SIZE, 100, 1),
+      maxMappedBatches: parseInteger(env.LEADERBOARD_TAPE_STALE_PRUNE_MAX_BATCHES, 20, 1),
+      oldestFirst: parseBoolean(env.LEADERBOARD_TAPE_STALE_PRUNE_OLDEST_FIRST, true),
     },
   };
 }
@@ -414,6 +434,8 @@ export async function runScheduledLeaderboardSync(
   warning: string | null;
   backfill_tape_mappings: BackfillTapeMappingsResult | null;
   remaining_unmapped_tape_mappings: number | null;
+  prune_stale_tape_mappings: PruneStaleProofTapeMappingsResult | null;
+  remaining_proof_tape_mappings: number | null;
 }> {
   const enabled = parseBoolean(env.LEADERBOARD_SYNC_CRON_ENABLED, true);
   if (!enabled) {
@@ -424,6 +446,8 @@ export async function runScheduledLeaderboardSync(
       warning: null,
       backfill_tape_mappings: null,
       remaining_unmapped_tape_mappings: null,
+      prune_stale_tape_mappings: null,
+      remaining_proof_tape_mappings: null,
     };
   }
 
@@ -518,6 +542,19 @@ export async function runScheduledLeaderboardSync(
     }
   }
 
+  let pruneStaleResult: PruneStaleProofTapeMappingsResult | null = null;
+  let remainingMapped: number | null = null;
+  const stalePruneConfig = parseScheduledStaleTapePruneConfig(env);
+  if (stalePruneConfig.enabled) {
+    try {
+      const runner = deps.pruneStaleProofTapeMappings ?? pruneStaleProofTapeMappings;
+      pruneStaleResult = await runner(env, undefined, stalePruneConfig.options);
+      remainingMapped = pruneStaleResult.remainingMappings;
+    } catch (error) {
+      console.warn(`[leaderboard-sync] stale-prune: unexpected error: ${safeErrorMessage(error)}`);
+    }
+  }
+
   return {
     enabled: true,
     forward,
@@ -525,6 +562,8 @@ export async function runScheduledLeaderboardSync(
     warning,
     backfill_tape_mappings: backfillResult,
     remaining_unmapped_tape_mappings: remainingUnmapped,
+    prune_stale_tape_mappings: pruneStaleResult,
+    remaining_proof_tape_mappings: remainingMapped,
   };
 }
 
@@ -538,6 +577,141 @@ export async function recordLeaderboardSyncFailure(
     ...existingState,
     lastError: safeErrorMessage(error),
   });
+}
+
+export interface PruneStaleProofTapeMappingsResult {
+  scanned: number;
+  stale: number;
+  deleted: number;
+  errors: number;
+  remainingMappings: number | null;
+}
+
+export interface PruneStaleProofTapeMappingsOptions {
+  mappedBatchSize?: number;
+  maxMappedBatches?: number;
+  oldestFirst?: boolean;
+}
+
+interface PruneStaleProofTapeMappingsDeps {
+  getMappedProofTapeMappings: typeof getMappedProofTapeMappings;
+  deleteProofTapeMapping: typeof deleteProofTapeMapping;
+  countProofTapeMappings: typeof countProofTapeMappings;
+}
+
+const PRUNE_MAPPED_BATCH_SIZE = 100;
+const PRUNE_MAX_MAPPED_BATCHES = 20;
+const DEFAULT_PRUNE_DEPS: PruneStaleProofTapeMappingsDeps = {
+  getMappedProofTapeMappings,
+  deleteProofTapeMapping,
+  countProofTapeMappings,
+};
+
+export async function pruneStaleProofTapeMappings(
+  env: WorkerEnv,
+  deps: PruneStaleProofTapeMappingsDeps = DEFAULT_PRUNE_DEPS,
+  options: PruneStaleProofTapeMappingsOptions = {},
+): Promise<PruneStaleProofTapeMappingsResult> {
+  const result: PruneStaleProofTapeMappingsResult = {
+    scanned: 0,
+    stale: 0,
+    deleted: 0,
+    errors: 0,
+    remainingMappings: null,
+  };
+
+  const mappedBatchSize = Math.min(
+    Math.max(Math.trunc(options.mappedBatchSize ?? PRUNE_MAPPED_BATCH_SIZE), 1),
+    2_000,
+  );
+  const maxMappedBatches = Math.min(
+    Math.max(Math.trunc(options.maxMappedBatches ?? PRUNE_MAX_MAPPED_BATCHES), 1),
+    10_000,
+  );
+  const oldestFirst = options.oldestFirst !== false;
+
+  const candidates: MappedProofTapeMapping[] = [];
+  /* eslint-disable no-await-in-loop */
+  for (let batch = 0; batch < maxMappedBatches; batch += 1) {
+    const offset = batch * mappedBatchSize;
+    const page = await deps.getMappedProofTapeMappings(env, {
+      limit: mappedBatchSize,
+      offset,
+      oldestFirst,
+    });
+    if (page.length === 0) {
+      break;
+    }
+    candidates.push(...page);
+    if (page.length < mappedBatchSize) {
+      break;
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+
+  if (candidates.length === 0) {
+    try {
+      result.remainingMappings = await deps.countProofTapeMappings(env);
+    } catch {
+      result.remainingMappings = null;
+    }
+    return result;
+  }
+
+  const uniqueByTx = new Map<string, MappedProofTapeMapping>();
+  for (const row of candidates) {
+    if (!uniqueByTx.has(row.txHash)) {
+      uniqueByTx.set(row.txHash, row);
+    }
+  }
+  const uniqueCandidates = Array.from(uniqueByTx.values());
+  result.scanned = uniqueCandidates.length;
+
+  const staleChecks = await Promise.all(
+    uniqueCandidates.map(async (mapping) => {
+      try {
+        const tapeExists = Boolean(await env.PROOF_ARTIFACTS.head(tapeKey(mapping.proofJobId)));
+        return tapeExists ? null : mapping;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const staleMappings = staleChecks.filter(
+    (mapping): mapping is MappedProofTapeMapping => mapping !== null,
+  );
+  result.stale = staleMappings.length;
+
+  /* eslint-disable no-await-in-loop */
+  for (const mapping of staleMappings) {
+    try {
+      const deleted = await deps.deleteProofTapeMapping(env, mapping.txHash);
+      if (deleted) {
+        result.deleted += 1;
+      }
+    } catch (error) {
+      console.warn(
+        `[leaderboard-sync] stale-prune: failed deleting mapping for tx ${mapping.txHash}: ${safeErrorMessage(error)}`,
+      );
+      result.errors += 1;
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+
+  try {
+    result.remainingMappings = await deps.countProofTapeMappings(env);
+  } catch {
+    result.remainingMappings = null;
+  }
+
+  if (result.deleted > 0) {
+    console.log(
+      `[leaderboard-sync] stale-prune: deleted ${result.deleted} stale tape mappings (scanned=${result.scanned}, stale=${result.stale}, errors=${result.errors})`,
+    );
+  }
+
+  return result;
 }
 
 export interface BackfillTapeMappingsResult {
