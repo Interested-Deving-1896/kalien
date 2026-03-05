@@ -21,6 +21,19 @@ import type { LeaderboardEventRecord, LeaderboardIngestionState, ProofJobRecord 
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
 import { tapeKey } from "./keys";
+import {
+  DEFAULT_LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS,
+  DEFAULT_LEADERBOARD_SYNC_MAX_PAGES,
+  DEFAULT_LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE,
+  DEFAULT_LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE,
+  DEFAULT_LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES,
+  DEFAULT_LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT,
+  DEFAULT_LEADERBOARD_TAPE_BACKFILL_MAX_PASSES,
+  DEFAULT_LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST,
+  DEFAULT_LEADERBOARD_TAPE_STALE_PRUNE_BATCH_SIZE,
+  DEFAULT_LEADERBOARD_TAPE_STALE_PRUNE_MAX_BATCHES,
+  DEFAULT_LEADERBOARD_TAPE_STALE_PRUNE_OLDEST_FIRST,
+} from "./constants";
 
 export interface LeaderboardSyncDeps {
   fetchLeaderboardEventsFromGalexie: typeof fetchLeaderboardEventsFromGalexie;
@@ -101,12 +114,24 @@ function shouldRunCatchup(
     return true;
   }
 
-  const lastBackfillMs = new Date(state.lastBackfillAt).getTime();
-  if (!Number.isFinite(lastBackfillMs)) {
+  return hasIntervalElapsed(state.lastBackfillAt, nowMs, intervalMinutes);
+}
+
+function hasIntervalElapsed(
+  lastRunAt: string | null | undefined,
+  nowMs: number,
+  intervalMinutes: number,
+): boolean {
+  if (!lastRunAt) {
     return true;
   }
 
-  return nowMs - lastBackfillMs >= intervalMinutes * 60_000;
+  const lastRunMs = new Date(lastRunAt).getTime();
+  if (!Number.isFinite(lastRunMs)) {
+    return true;
+  }
+
+  return nowMs - lastRunMs >= intervalMinutes * 60_000;
 }
 
 function parseLedgerCursor(cursor: string | null | undefined): number | null {
@@ -151,44 +176,47 @@ function extractLedgerFromOpaqueCursor(cursor: string | null | undefined): numbe
 }
 
 function parseForwardReplayWindowLedgers(env: WorkerEnv): number {
-  return parseInteger(env.LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS, 8_000, 1);
+  void env;
+  return DEFAULT_LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS;
 }
 
 function parseScheduledTapeBackfillConfig(env: WorkerEnv): {
   enabled: boolean;
+  intervalMinutes: number;
   maxPasses: number;
   options: BackfillProofTapeMappingsOptions;
 } {
   const enabled = parseBoolean(env.LEADERBOARD_TAPE_BACKFILL_ENABLED, true);
-  const maxPasses = parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_PASSES, 4, 1);
+  const intervalMinutes = parseInteger(env.LEADERBOARD_TAPE_BACKFILL_INTERVAL_MINUTES, 10, 1);
+  const maxPasses = DEFAULT_LEADERBOARD_TAPE_BACKFILL_MAX_PASSES;
   return {
     enabled,
+    intervalMinutes,
     maxPasses,
     options: {
-      unmappedBatchSize: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE, 100, 1),
-      maxUnmappedBatches: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES, 20, 1),
-      jobsPageSize: parseInteger(env.LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE, 200, 1),
-      maxJobsPerClaimant: parseInteger(
-        env.LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT,
-        5_000,
-        1,
-      ),
-      oldestFirst: parseBoolean(env.LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST, true),
+      unmappedBatchSize: DEFAULT_LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE,
+      maxUnmappedBatches: DEFAULT_LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES,
+      jobsPageSize: DEFAULT_LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE,
+      maxJobsPerClaimant: DEFAULT_LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT,
+      oldestFirst: DEFAULT_LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST,
     },
   };
 }
 
 function parseScheduledStaleTapePruneConfig(env: WorkerEnv): {
   enabled: boolean;
+  intervalMinutes: number;
   options: PruneStaleProofTapeMappingsOptions;
 } {
   const enabled = parseBoolean(env.LEADERBOARD_TAPE_STALE_PRUNE_ENABLED, true);
+  const intervalMinutes = parseInteger(env.LEADERBOARD_TAPE_STALE_PRUNE_INTERVAL_MINUTES, 30, 1);
   return {
     enabled,
+    intervalMinutes,
     options: {
-      mappedBatchSize: parseInteger(env.LEADERBOARD_TAPE_STALE_PRUNE_BATCH_SIZE, 100, 1),
-      maxMappedBatches: parseInteger(env.LEADERBOARD_TAPE_STALE_PRUNE_MAX_BATCHES, 20, 1),
-      oldestFirst: parseBoolean(env.LEADERBOARD_TAPE_STALE_PRUNE_OLDEST_FIRST, true),
+      mappedBatchSize: DEFAULT_LEADERBOARD_TAPE_STALE_PRUNE_BATCH_SIZE,
+      maxMappedBatches: DEFAULT_LEADERBOARD_TAPE_STALE_PRUNE_MAX_BATCHES,
+      oldestFirst: DEFAULT_LEADERBOARD_TAPE_STALE_PRUNE_OLDEST_FIRST,
     },
   };
 }
@@ -259,7 +287,7 @@ export async function runLeaderboardSync(
   deps: LeaderboardSyncDeps = DEFAULT_SYNC_DEPS,
 ): Promise<LeaderboardSyncResult> {
   const existingState = await deps.getLeaderboardIngestionState(env);
-  const maxPages = parseInteger(env.LEADERBOARD_SYNC_MAX_PAGES, 5, 1);
+  const maxPages = DEFAULT_LEADERBOARD_SYNC_MAX_PAGES;
 
   const replayWindowLedgers = parseForwardReplayWindowLedgers(env);
   const persistedCursor =
@@ -493,10 +521,20 @@ export async function runScheduledLeaderboardSync(
   // Purge expired/used auth challenges so they don't accumulate between user requests.
   await deps.purgeExpiredLeaderboardProfileAuthChallenges(env);
 
+  let maintenanceState = catchup?.state ?? forward.state;
+  const maintenanceTimestamp = new Date(scheduledTimeMs).toISOString();
+
   let backfillResult: BackfillTapeMappingsResult | null = null;
   let remainingUnmapped: number | null = null;
   const backfillConfig = parseScheduledTapeBackfillConfig(env);
-  if (backfillConfig.enabled) {
+  if (
+    backfillConfig.enabled &&
+    hasIntervalElapsed(
+      maintenanceState.lastTapeBackfillAt,
+      scheduledTimeMs,
+      backfillConfig.intervalMinutes,
+    )
+  ) {
     try {
       const runner = deps.backfillProofTapeMappings ?? backfillProofTapeMappings;
       const aggregate: BackfillTapeMappingsResult = {
@@ -537,6 +575,11 @@ export async function runScheduledLeaderboardSync(
           `[leaderboard-sync] failed counting unmapped tape mappings: ${safeErrorMessage(error)}`,
         );
       }
+      maintenanceState = {
+        ...maintenanceState,
+        lastTapeBackfillAt: maintenanceTimestamp,
+      };
+      await deps.setLeaderboardIngestionState(env, maintenanceState);
     } catch (error) {
       console.warn(`[leaderboard-sync] backfill: unexpected error: ${safeErrorMessage(error)}`);
     }
@@ -545,11 +588,23 @@ export async function runScheduledLeaderboardSync(
   let pruneStaleResult: PruneStaleProofTapeMappingsResult | null = null;
   let remainingMapped: number | null = null;
   const stalePruneConfig = parseScheduledStaleTapePruneConfig(env);
-  if (stalePruneConfig.enabled) {
+  if (
+    stalePruneConfig.enabled &&
+    hasIntervalElapsed(
+      maintenanceState.lastTapePruneAt,
+      scheduledTimeMs,
+      stalePruneConfig.intervalMinutes,
+    )
+  ) {
     try {
       const runner = deps.pruneStaleProofTapeMappings ?? pruneStaleProofTapeMappings;
       pruneStaleResult = await runner(env, undefined, stalePruneConfig.options);
       remainingMapped = pruneStaleResult.remainingMappings;
+      maintenanceState = {
+        ...maintenanceState,
+        lastTapePruneAt: maintenanceTimestamp,
+      };
+      await deps.setLeaderboardIngestionState(env, maintenanceState);
     } catch (error) {
       console.warn(`[leaderboard-sync] stale-prune: unexpected error: ${safeErrorMessage(error)}`);
     }

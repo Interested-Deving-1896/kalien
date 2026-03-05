@@ -104,6 +104,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return parseInteger(this.env.MAX_PROVER_RUN_TIME_MS, DEFAULT_MAX_PROVER_RUN_TIME_MS, 60_000);
   }
 
+  private resolveProverPollIntervalMs(): number {
+    return DEFAULT_POLL_INTERVAL_MS;
+  }
+
   private updateQueueWaitElapsed(job: ProofJobRecord): void {
     const startedAt = this.timestampMs(job.queue.waitStartedAt ?? job.createdAt);
     if (startedAt <= 0) {
@@ -412,11 +416,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       const currentAlarm = await this.ctx.storage.getAlarm();
       const alarmMissing = currentAlarm == null || currentAlarm < Date.now();
       if (alarmMissing) {
-        const pollIntervalMs = parseInteger(
-          this.env.PROVER_POLL_INTERVAL_MS,
-          DEFAULT_POLL_INTERVAL_MS,
-          MIN_PROVER_POLL_INTERVAL_MS,
-        );
+        const pollIntervalMs = this.resolveProverPollIntervalMs();
         await this.scheduleAlarm(pollIntervalMs);
       }
       return;
@@ -660,11 +660,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     // Re-delivered queue message after crash: prover job already exists,
     // ensure alarm is running so polling resumes. Consumer will just ack.
     if (job.prover.jobId) {
-      const pollIntervalMs = parseInteger(
-        this.env.PROVER_POLL_INTERVAL_MS,
-        DEFAULT_POLL_INTERVAL_MS,
-        MIN_PROVER_POLL_INTERVAL_MS,
-      );
+      const pollIntervalMs = this.resolveProverPollIntervalMs();
       await this.scheduleAlarm(pollIntervalMs);
     }
 
@@ -772,11 +768,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       await this.saveJob(job);
     }
 
-    const pollIntervalMs = parseInteger(
-      this.env.PROVER_POLL_INTERVAL_MS,
-      DEFAULT_POLL_INTERVAL_MS,
-      MIN_PROVER_POLL_INTERVAL_MS,
-    );
+    const pollIntervalMs = this.resolveProverPollIntervalMs();
     await this.scheduleAlarm(pollIntervalMs);
 
     return job;
@@ -1384,11 +1376,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     pollResult: ProverPollResult,
     scheduleNext: boolean,
   ): Promise<void> {
-    const pollIntervalMs = parseInteger(
-      this.env.PROVER_POLL_INTERVAL_MS,
-      DEFAULT_POLL_INTERVAL_MS,
-      MIN_PROVER_POLL_INTERVAL_MS,
-    );
+    const pollIntervalMs = this.resolveProverPollIntervalMs();
 
     if (pollResult.type === "running") {
       job.prover.pollingErrors = 0;
@@ -1668,11 +1656,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     /* eslint-enable no-await-in-loop */
 
     if (anyStillActive) {
-      const pollIntervalMs = parseInteger(
-        this.env.PROVER_POLL_INTERVAL_MS,
-        DEFAULT_POLL_INTERVAL_MS,
-        MIN_PROVER_POLL_INTERVAL_MS,
-      );
+      const pollIntervalMs = this.resolveProverPollIntervalMs();
       await this.scheduleAlarm(pollIntervalMs);
     }
   }

@@ -26,8 +26,8 @@ The worker now uses two explicit wall-time controls:
 
 | Setting | Current value | Env var | Source |
 |---|---:|---|---|
-| Poll interval | 3000 ms | `PROVER_POLL_INTERVAL_MS` | `worker/constants.ts`, `wrangler.jsonc` |
-| Per-request prover HTTP timeout | 30000 ms | `PROVER_REQUEST_TIMEOUT_MS` | `worker/constants.ts`, `wrangler.jsonc` |
+| Poll interval | 3000 ms | (constant) | `worker/constants.ts` |
+| Per-request prover HTTP timeout | 30000 ms | (constant) | `worker/constants.ts` |
 | Total proof wall-time cap | 3900000 ms (65 min) | `MAX_PROOF_TOTAL_WALL_TIME_MS` | `worker/constants.ts`, `wrangler.jsonc` |
 | Active prover run cap | 660000 ms (11 min) | `MAX_PROVER_RUN_TIME_MS` | `worker/constants.ts`, `wrangler.jsonc` |
 | Max queue retries (Boundless queue) | 10 | queue `max_retries` + `MAX_QUEUE_RETRIES` | `wrangler.jsonc`, `worker/constants.ts` |
@@ -85,7 +85,7 @@ The public job response can also include:
 | Job sweep interval | 60 s | `JOB_SWEEP_SECS` | `.env.example`, `src/main.rs` |
 | Max jobs stored | 64 | `MAX_JOBS` | `.env.example`, `src/main.rs` |
 | Max frames | 36000 | `MAX_FRAMES` | `.env.example`, `src/main.rs` |
-| Max tape bytes | 2097152 (2 MiB) | `MAX_TAPE_BYTES` | `.env.example`, `src/main.rs` |
+| Max tape bytes | 2097152 (2 MiB) | `MAX_TAPE_BYTES` | `kalien-verifier/api-server/.env.example`, `src/main.rs` |
 | HTTP max connections | 25000 | `HTTP_MAX_CONNECTIONS` | `.env.example`, `src/main.rs` |
 | HTTP keep alive | 75 s | `HTTP_KEEP_ALIVE_SECS` | `.env.example`, `src/main.rs` |
 
@@ -96,11 +96,9 @@ The public job response can also include:
 - VAST queue wait can legitimately be much longer than 30 minutes when backlog exists, up to the 65-minute total wall cap.
 - If you observe repeated `prover_run_timeout` or `vast_slot_wait_timeout`, treat this as capacity or stuck-job pressure, not a normal transient.
 
-## Current Deployed Worker Vars (wrangler)
+## Current Deployed Worker Tunables (wrangler)
 
 ```jsonc
-"PROVER_POLL_INTERVAL_MS": "3000",
-"PROVER_REQUEST_TIMEOUT_MS": "30000",
 "MAX_PROOF_TOTAL_WALL_TIME_MS": "3900000",
 "MAX_PROVER_RUN_TIME_MS": "660000"
 ```

@@ -37,7 +37,7 @@ Required query params:
 
 Ingress checks:
 - tape format/version/rules tag/checksum
-- size <= `MAX_TAPE_BYTES`
+- size <= `DEFAULT_MAX_TAPE_BYTES` (2 MiB)
 - `final_score > 0`
 - sliding-window rate limit (IP + claimant)
 
@@ -116,10 +116,10 @@ Successful proofs are stored as `ProofArtifactV4` in R2:
 ## Key Config
 
 Worker:
-- `MAX_TAPE_BYTES`
+- `DEFAULT_MAX_TAPE_BYTES` (constant)
 - `MAX_PROOF_TOTAL_WALL_TIME_MS`
 - `MAX_PROVER_RUN_TIME_MS`
-- `PROVER_POLL_INTERVAL_MS`
+- `DEFAULT_POLL_INTERVAL_MS` (constant)
 - `COMPLETED_JOB_RETENTION_MS` (7 days by default)
 
 Prover API (`kalien-verifier/api-server`):

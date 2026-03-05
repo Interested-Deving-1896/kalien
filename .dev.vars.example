@@ -4,6 +4,14 @@
 # Non-secret vars (tuning, policy, contract IDs, network passphrase, etc.)
 # live in wrangler.jsonc under "vars". Only secrets and local-dev overrides
 # belong here.
+#
+# Core gateway/prover pacing limits are now code-level constants in
+# worker/constants.ts and are not exposed as env vars anymore:
+# - DEFAULT_MAX_TAPE_BYTES
+# - DEFAULT_POLL_INTERVAL_MS
+# - DEFAULT_PROVER_REQUEST_TIMEOUT_MS
+# - DEFAULT_PROVER_HEALTH_CACHE_MS
+# - DEFAULT_RELAYER_REQUEST_TIMEOUT_MS
 
 # ── Secrets ────────────────────────────────────────────────────────────────
 # These MUST be in .dev.vars for local dev (they are `wrangler secret` in prod).
@@ -50,7 +58,8 @@ PROVER_ACCESS_CLIENT_SECRET=
 # LEADERBOARD_SYNC_CRON_ENABLED=0
 # STELLAR_RPC_URL=https://soroban-rpc.testnet.stellar.gateway.fm/
 # SMART_ACCOUNT_INDEXER_URL=https://smart-account-indexer.sdf-ecosystem.workers.dev
-# LEADERBOARD_SYNC_MAX_PAGES=5
+# LEADERBOARD_TAPE_BACKFILL_INTERVAL_MINUTES=10
+# LEADERBOARD_TAPE_STALE_PRUNE_INTERVAL_MINUTES=30
 
 # ── Galexie (mainnet only) ────────────────────────────────────────────────
 # On testnet, source mode "auto" resolves to RPC-only (no Galexie datastore

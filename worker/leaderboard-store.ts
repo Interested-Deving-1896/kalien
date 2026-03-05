@@ -87,6 +87,10 @@ function toNullableString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function normalizeTxHash(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -214,6 +218,18 @@ function getWindowRange(
   };
 }
 
+async function addColumnIfMissing(db: D1Database, statement: string): Promise<void> {
+  try {
+    await db.prepare(statement).run();
+  } catch (error) {
+    const message = safeErrorMessage(error).toLowerCase();
+    if (message.includes("duplicate column name")) {
+      return;
+    }
+    throw error;
+  }
+}
+
 async function ensureSchema(env: WorkerEnv): Promise<void> {
   const db = getDb(env);
   let schemaInitPromise = schemaInitByDb.get(db);
@@ -245,7 +261,8 @@ async function ensureSchema(env: WorkerEnv): Promise<void> {
         )`,
         `CREATE TABLE IF NOT EXISTS proof_tape_index (
           tx_hash TEXT PRIMARY KEY,
-          proof_job_id TEXT NOT NULL
+          proof_job_id TEXT NOT NULL,
+          mapped_at TEXT NOT NULL
         )`,
         `CREATE TABLE IF NOT EXISTS leaderboard_profile_credentials (
           credential_id TEXT PRIMARY KEY,
@@ -279,6 +296,8 @@ async function ensureSchema(env: WorkerEnv): Promise<void> {
           highest_ledger INTEGER,
           last_synced_at TEXT,
           last_backfill_at TEXT,
+          last_tape_backfill_at TEXT,
+          last_tape_prune_at TEXT,
           total_events INTEGER NOT NULL DEFAULT 0,
           last_error TEXT
         )`,
@@ -301,9 +320,33 @@ async function ensureSchema(env: WorkerEnv): Promise<void> {
           ON leaderboard_events(closed_at DESC, new_best DESC, claimant_address, event_id ASC)`,
         `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_seed_closed_at
           ON leaderboard_events(seed, closed_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_leaderboard_events_tx_hash
+          ON leaderboard_events(tx_hash)`,
       ]) {
         await db.prepare(statement).run();
       }
+      await addColumnIfMissing(db, `ALTER TABLE proof_tape_index ADD COLUMN mapped_at TEXT`);
+      await db
+        .prepare(
+          `UPDATE proof_tape_index
+           SET mapped_at = COALESCE(mapped_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+           WHERE mapped_at IS NULL`,
+        )
+        .run();
+      await addColumnIfMissing(
+        db,
+        `ALTER TABLE leaderboard_ingestion_state ADD COLUMN last_tape_backfill_at TEXT`,
+      );
+      await addColumnIfMissing(
+        db,
+        `ALTER TABLE leaderboard_ingestion_state ADD COLUMN last_tape_prune_at TEXT`,
+      );
+      await db
+        .prepare(
+          `CREATE INDEX IF NOT EXISTS idx_proof_tape_index_mapped_at
+           ON proof_tape_index(mapped_at ASC, tx_hash ASC)`,
+        )
+        .run();
       /* eslint-enable no-await-in-loop */
     })().catch((error) => {
       schemaInitByDb.delete(db);
@@ -326,6 +369,8 @@ function normalizeIngestionStateRow(
       highestLedger: null,
       lastSyncedAt: null,
       lastBackfillAt: null,
+      lastTapeBackfillAt: null,
+      lastTapePruneAt: null,
       totalEvents: 0,
       lastError: null,
     };
@@ -349,6 +394,8 @@ function normalizeIngestionStateRow(
         : null,
     lastSyncedAt: toNullableString(row.last_synced_at),
     lastBackfillAt: toNullableString(row.last_backfill_at),
+    lastTapeBackfillAt: toNullableString(row.last_tape_backfill_at),
+    lastTapePruneAt: toNullableString(row.last_tape_prune_at),
     totalEvents: toNumber(row.total_events, 0),
     lastError: toNullableString(row.last_error),
   };
@@ -401,7 +448,8 @@ export async function getLeaderboardIngestionState(
   const db = getDb(env);
   const row = await db
     .prepare(
-      `SELECT provider, source_mode, cursor, highest_ledger, last_synced_at, last_backfill_at, total_events, last_error
+      `SELECT provider, source_mode, cursor, highest_ledger, last_synced_at, last_backfill_at,
+              last_tape_backfill_at, last_tape_prune_at, total_events, last_error
        FROM leaderboard_ingestion_state
        WHERE singleton_id = 1`,
     )
@@ -428,9 +476,10 @@ export async function setLeaderboardIngestionState(
   await db
     .prepare(
       `INSERT INTO leaderboard_ingestion_state (
-          singleton_id, provider, source_mode, cursor, highest_ledger, last_synced_at, last_backfill_at, total_events, last_error
+          singleton_id, provider, source_mode, cursor, highest_ledger, last_synced_at, last_backfill_at,
+          last_tape_backfill_at, last_tape_prune_at, total_events, last_error
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(singleton_id) DO UPDATE SET
           provider = excluded.provider,
           source_mode = excluded.source_mode,
@@ -438,6 +487,8 @@ export async function setLeaderboardIngestionState(
           highest_ledger = excluded.highest_ledger,
           last_synced_at = excluded.last_synced_at,
           last_backfill_at = excluded.last_backfill_at,
+          last_tape_backfill_at = excluded.last_tape_backfill_at,
+          last_tape_prune_at = excluded.last_tape_prune_at,
           total_events = excluded.total_events,
           last_error = excluded.last_error`,
     )
@@ -448,6 +499,8 @@ export async function setLeaderboardIngestionState(
       state.highestLedger,
       state.lastSyncedAt,
       state.lastBackfillAt,
+      state.lastTapeBackfillAt ?? null,
+      state.lastTapePruneAt ?? null,
       state.totalEvents,
       state.lastError,
     )
@@ -858,13 +911,16 @@ export async function writeProofTapeMapping(
   }
   await ensureSchema(env);
   const db = getDb(env);
+  const mappedAt = new Date().toISOString();
   await db
     .prepare(
-      `INSERT INTO proof_tape_index (tx_hash, proof_job_id)
-       VALUES (?, ?)
-       ON CONFLICT(tx_hash) DO UPDATE SET proof_job_id = excluded.proof_job_id`,
+      `INSERT INTO proof_tape_index (tx_hash, proof_job_id, mapped_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(tx_hash) DO UPDATE SET
+         proof_job_id = excluded.proof_job_id,
+         mapped_at = excluded.mapped_at`,
     )
-    .bind(normalizedTxHash, proofJobId)
+    .bind(normalizedTxHash, proofJobId, mappedAt)
     .run();
 }
 
@@ -919,7 +975,7 @@ export async function getMappedProofTapeMappings(
          t.tx_hash AS tx_hash,
          t.proof_job_id AS proof_job_id
        FROM proof_tape_index AS t
-       ORDER BY t.tx_hash ${orderDirection}
+       ORDER BY t.mapped_at ${orderDirection}, t.tx_hash ${orderDirection}
        LIMIT ?
        OFFSET ?`,
     )
@@ -971,7 +1027,7 @@ export async function countUnmappedLeaderboardTxHashes(
     .prepare(
       `SELECT COUNT(*) AS total
        FROM leaderboard_events e
-       LEFT JOIN proof_tape_index t ON lower(trim(t.tx_hash)) = lower(trim(e.tx_hash))
+       LEFT JOIN proof_tape_index t ON t.tx_hash = lower(trim(e.tx_hash))
        WHERE e.tx_hash IS NOT NULL
          AND e.final_score IS NOT NULL
          ${claimantWhere}
@@ -1001,7 +1057,7 @@ export async function getUnmappedLeaderboardTxHashes(
     .prepare(
       `SELECT e.tx_hash, e.claimant_address, e.seed, e.final_score
        FROM leaderboard_events e
-       LEFT JOIN proof_tape_index t ON lower(trim(t.tx_hash)) = lower(trim(e.tx_hash))
+       LEFT JOIN proof_tape_index t ON t.tx_hash = lower(trim(e.tx_hash))
        WHERE e.tx_hash IS NOT NULL
          AND e.final_score IS NOT NULL
          ${claimantWhere}
@@ -1180,7 +1236,7 @@ export async function getLeaderboardPage(
        LEFT JOIN leaderboard_profiles AS p
          ON p.claimant_address = ranked.claimant_address
        LEFT JOIN proof_tape_index AS t
-         ON lower(trim(t.tx_hash)) = lower(trim(ranked.tx_hash))
+         ON t.tx_hash = lower(trim(ranked.tx_hash))
        ORDER BY ranked.rank ASC
        LIMIT ? OFFSET ?`,
     )
@@ -1212,7 +1268,7 @@ export async function getLeaderboardPage(
          LEFT JOIN leaderboard_profiles AS p
            ON p.claimant_address = ranked.claimant_address
          LEFT JOIN proof_tape_index AS t
-           ON lower(trim(t.tx_hash)) = lower(trim(ranked.tx_hash))
+           ON t.tx_hash = lower(trim(ranked.tx_hash))
          WHERE ranked.claimant_address = ?
          LIMIT 1`,
       )
@@ -1338,15 +1394,15 @@ export async function getLeaderboardPlayer(
            e.minted_delta AS minted_delta,
            e.seed,
            e.frame_count AS frame_count,
-           e.closed_at AS completed_at,
-           e.tx_hash AS claim_tx_hash,
-           t.proof_job_id AS proof_job_id
-         FROM leaderboard_events AS e
-         LEFT JOIN proof_tape_index AS t
-           ON lower(trim(t.tx_hash)) = lower(trim(e.tx_hash))
-         WHERE e.claimant_address = ?
-         ORDER BY e.closed_at DESC, e.new_best DESC, e.event_id ASC
-         LIMIT ? OFFSET ?`,
+         e.closed_at AS completed_at,
+         e.tx_hash AS claim_tx_hash,
+         t.proof_job_id AS proof_job_id
+       FROM leaderboard_events AS e
+       LEFT JOIN proof_tape_index AS t
+         ON t.tx_hash = lower(trim(e.tx_hash))
+       WHERE e.claimant_address = ?
+       ORDER BY e.closed_at DESC, e.new_best DESC, e.event_id ASC
+       LIMIT ? OFFSET ?`,
       )
       .bind(claimantAddress, runsLimit, runsOffset)
       .all<Record<string, unknown>>(),

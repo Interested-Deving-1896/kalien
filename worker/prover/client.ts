@@ -161,7 +161,7 @@ export async function getValidatedProverHealth(
   options?: { forceRefresh?: boolean },
 ): Promise<ValidatedProverHealth> {
   const forceRefresh = options?.forceRefresh ?? false;
-  const cacheMs = parseInteger(env.PROVER_HEALTH_CACHE_MS, DEFAULT_PROVER_HEALTH_CACHE_MS, 1_000);
+  const cacheMs = DEFAULT_PROVER_HEALTH_CACHE_MS;
   const cacheKey = cacheKeyForHealthCheck(env);
   const now = Date.now();
 
@@ -174,11 +174,7 @@ export async function getValidatedProverHealth(
     return proverHealthCache.value;
   }
 
-  const timeoutMs = parseInteger(
-    env.PROVER_REQUEST_TIMEOUT_MS,
-    DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
-    1_000,
-  );
+  const timeoutMs = DEFAULT_PROVER_REQUEST_TIMEOUT_MS;
 
   let response: Response;
   try {
@@ -301,11 +297,7 @@ export async function submitToProver(
     };
   }
 
-  const timeoutMs = parseInteger(
-    env.PROVER_REQUEST_TIMEOUT_MS,
-    DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
-    1_000,
-  );
+  const timeoutMs = DEFAULT_PROVER_REQUEST_TIMEOUT_MS;
 
   const createUrl = buildProverCreateUrlWithOptions(env, options);
   const submittedSegmentLimitPo2 = parseInteger(
@@ -402,11 +394,7 @@ export async function pollProverOnce(
   env: WorkerEnv,
   proverJobId: string,
 ): Promise<ProverPollResult> {
-  const requestTimeoutMs = parseInteger(
-    env.PROVER_REQUEST_TIMEOUT_MS,
-    DEFAULT_PROVER_REQUEST_TIMEOUT_MS,
-    1_000,
-  );
+  const requestTimeoutMs = DEFAULT_PROVER_REQUEST_TIMEOUT_MS;
 
   let response: Response;
   try {

@@ -22,6 +22,7 @@ let setStateCalls: LeaderboardIngestionState[];
 let countCalls = 0;
 let purgeCalls = 0;
 let backfillCalls = 0;
+let pruneCalls = 0;
 let deps: LeaderboardSyncDeps;
 
 function makeState(
@@ -159,6 +160,7 @@ describe("leaderboard sync behavior", () => {
     countCalls = 0;
     purgeCalls = 0;
     backfillCalls = 0;
+    pruneCalls = 0;
 
     deps = {
       fetchLeaderboardEventsFromGalexie: async (
@@ -202,6 +204,10 @@ describe("leaderboard sync behavior", () => {
         backfillCalls += 1;
         return { unmapped: 0, matched: 0, written: 0, errors: 0 };
       },
+      pruneStaleProofTapeMappings: async () => {
+        pruneCalls += 1;
+        return { scanned: 0, stale: 0, deleted: 0, errors: 0, remainingMappings: 0 };
+      },
     };
   });
 
@@ -212,7 +218,7 @@ describe("leaderboard sync behavior", () => {
     );
 
     await runLeaderboardSync(
-      makeEnv({ LEADERBOARD_SYNC_MAX_PAGES: "5" }),
+      makeEnv(),
       {
         mode: "backfill",
         fromLedger: 100,
@@ -278,7 +284,7 @@ describe("leaderboard sync behavior", () => {
     );
 
     const result = await runLeaderboardSync(
-      makeEnv({ LEADERBOARD_SYNC_MAX_PAGES: "5" }),
+      makeEnv(),
       { mode: "forward", limit: 2 },
       deps,
     );
@@ -357,6 +363,7 @@ describe("leaderboard sync behavior", () => {
     expect(fetchCalls[1]?.toLedger).toBe(1000);
     expect(purgeCalls).toBe(1);
     expect(backfillCalls).toBe(1);
+    expect(pruneCalls).toBe(1);
     expect(result.backfill_tape_mappings).toEqual({
       unmapped: 0,
       matched: 0,
@@ -391,6 +398,33 @@ describe("leaderboard sync behavior", () => {
     );
     expect(fetchCalls).toHaveLength(1);
     expect(backfillCalls).toBe(1);
+    expect(pruneCalls).toBe(1);
+  });
+
+  it("skips tape maintenance passes when interval windows have not elapsed", async () => {
+    ingestionState = makeState({
+      highestLedger: 1000,
+      lastTapeBackfillAt: "2026-03-02T11:55:00.000Z",
+      lastTapePruneAt: "2026-03-02T11:45:00.000Z",
+    });
+    fetchQueue.push(makeFetchResult());
+
+    const result = await runScheduledLeaderboardSync(
+      makeEnv({
+        LEADERBOARD_SYNC_CRON_ENABLED: "1",
+        LEADERBOARD_SYNC_CRON_LIMIT: "50",
+        LEADERBOARD_CATCHUP_INTERVAL_MINUTES: "0",
+      }),
+      Date.parse("2026-03-02T12:00:00.000Z"),
+      deps,
+    );
+
+    expect(result.forward).toBeTruthy();
+    expect(result.catchup).toBeNull();
+    expect(backfillCalls).toBe(0);
+    expect(pruneCalls).toBe(0);
+    expect(result.backfill_tape_mappings).toBeNull();
+    expect(result.prune_stale_tape_mappings).toBeNull();
   });
 });
 

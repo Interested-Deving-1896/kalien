@@ -336,7 +336,9 @@ fn get_or_materialize_current_seed(env: &Env) -> CurrentSeed {
     let seed = env.prng().gen_range::<u64>(0..=u32::MAX as u64) as u32;
     let key = DataKey::SeedById(seed_id);
     env.storage().temporary().set(&key, &seed);
-    env.storage().temporary().extend_ttl(&key, TEMP_TTL, TEMP_TTL);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, TEMP_TTL, TEMP_TTL);
 
     CurrentSeed { seed_id, seed }
 }

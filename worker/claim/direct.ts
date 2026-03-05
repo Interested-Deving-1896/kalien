@@ -12,7 +12,7 @@ import {
 import type { WorkerEnv } from "../env";
 import { JOURNAL_LEN } from "../../shared/stellar/journal";
 import { hexToBytes, sha256Hex, STELLAR_GROTH16_SEAL_LEN } from "../proof-artifact";
-import { parseInteger, safeErrorMessage } from "../utils";
+import { safeErrorMessage } from "../utils";
 import type { RelayClaimRequest, RelaySubmitResult } from "./types";
 
 interface ChannelsConfig {
@@ -110,11 +110,7 @@ function resolveChannelsConfig(env: WorkerEnv): ChannelsConfig | null {
     baseUrl: relayUrl.toString(),
     apiKey,
     pluginId,
-    timeoutMs: parseInteger(
-      env.RELAYER_REQUEST_TIMEOUT_MS,
-      DEFAULT_RELAYER_REQUEST_TIMEOUT_MS,
-      1_000,
-    ),
+    timeoutMs: DEFAULT_RELAYER_REQUEST_TIMEOUT_MS,
   };
 }
 

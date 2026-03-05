@@ -227,6 +227,9 @@ export interface LeaderboardIngestionState {
   highestLedger: number | null;
   lastSyncedAt: string | null;
   lastBackfillAt: string | null;
+  // Optional maintenance timestamps (added in newer schema revisions).
+  lastTapeBackfillAt?: string | null;
+  lastTapePruneAt?: string | null;
   totalEvents: number;
   lastError: string | null;
 }

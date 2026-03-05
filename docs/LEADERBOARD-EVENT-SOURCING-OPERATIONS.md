@@ -36,14 +36,12 @@ Set non-secret vars in `wrangler.jsonc`:
 - `LEADERBOARD_SYNC_CRON_LIMIT`
 - `LEADERBOARD_CATCHUP_INTERVAL_MINUTES`
 - `LEADERBOARD_CATCHUP_WINDOW_LEDGERS`
-- `LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS`
 - `LEADERBOARD_TAPE_BACKFILL_ENABLED`
-- `LEADERBOARD_TAPE_BACKFILL_MAX_PASSES`
-- `LEADERBOARD_TAPE_BACKFILL_BATCH_SIZE`
-- `LEADERBOARD_TAPE_BACKFILL_MAX_BATCHES`
-- `LEADERBOARD_TAPE_BACKFILL_JOBS_PAGE_SIZE`
-- `LEADERBOARD_TAPE_BACKFILL_MAX_JOBS_PER_CLAIMANT`
-- `LEADERBOARD_TAPE_BACKFILL_OLDEST_FIRST`
+- `LEADERBOARD_TAPE_BACKFILL_INTERVAL_MINUTES`
+- `LEADERBOARD_TAPE_STALE_PRUNE_ENABLED`
+- `LEADERBOARD_TAPE_STALE_PRUNE_INTERVAL_MINUTES`
+
+Detailed replay/backfill/prune tuning values are intentionally code-level constants in `worker/constants.ts`.
 
 Defaulted in this worktree for Quasar Pro:
 - `GALEXIE_API_BASE_URL=https://galexie-pro.lightsail.network`
@@ -54,7 +52,8 @@ Defaulted in this worktree for Quasar Pro:
 - `GALEXIE_ENABLE_EVENTS_API_FALLBACK=0` (default; set to `1` to include `events_api` as final fallback in `auto`/`rpc` mode)
 - `GALEXIE_DATASTORE_ROOT_PATH=/v1`
 - `GALEXIE_DATASTORE_OBJECT_EXTENSION=zst`
-- cron: `*/5 * * * *`
+- leaderboard sync cron: `*/1 * * * *`
+- seed refresh cron: `*/10 * * * *`
 
 Set secrets:
 
@@ -91,10 +90,11 @@ If your provider key is labeled as a Lightsail key, use that value for `GALEXIE_
 - Periodic overlapping backfill is optional and controlled by:
   - `LEADERBOARD_CATCHUP_INTERVAL_MINUTES`
   - `LEADERBOARD_CATCHUP_WINDOW_LEDGERS`
-- Forward sync also replays a small overlapping window (`LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS`) and relies on idempotent upserts to heal transient provider/cursor gaps.
+- Forward sync also replays a small fixed overlapping window (8,000 ledgers) and relies on idempotent upserts to heal transient provider/cursor gaps.
 - Catch-up backfill requests are forced through `datalake` first and then degrade to RPC if Galexie is unavailable.
 - This overlap is the automatic recovery path for missed files/events and short RPC retention windows.
-- Tape mapping recovery now runs as multi-pass reconciliation on each cron tick (defaults: oldest-first, 4 passes, 100x20 unmapped scan per pass) and reports `remaining_unmapped_tape_mappings` in sync responses.
+- Tape mapping recovery runs as multi-pass reconciliation on a periodic interval (`LEADERBOARD_TAPE_BACKFILL_INTERVAL_MINUTES`, default `10`) and reports `remaining_unmapped_tape_mappings` in sync responses.
+- Stale replay mapping cleanup runs on its own interval (`LEADERBOARD_TAPE_STALE_PRUNE_INTERVAL_MINUTES`, default `30`) to remove `proof_tape_index` rows whose R2 tape has expired.
 
 ## Public Read Endpoints
 - `GET /api/leaderboard?window=10m|day|all&limit=<n>&offset=<n>&address=<G...|C...>`

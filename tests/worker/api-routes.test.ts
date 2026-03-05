@@ -435,17 +435,17 @@ describe("API routes", () => {
     expect(response.status).toBe(400);
   });
 
-  it("POST /proofs/jobs enforces MAX_TAPE_BYTES before reading body", async () => {
+  it("POST /proofs/jobs enforces the tape size cap before reading body", async () => {
     const response = await requestApi(
       "/proofs/jobs",
       {
         method: "POST",
         headers: {
-          "content-length": "10",
+          "content-length": "2097153",
         },
         body: "0123456789",
       },
-      makeEnv({ MAX_TAPE_BYTES: "5" }),
+      makeEnv(),
     );
     expect(response.status).toBe(413);
   });

@@ -132,7 +132,16 @@ export default {
       console.warn(`[proof-worker] coordinator maintenance failed: ${safeErrorMessage(error)}`);
     }
 
-    if (!controller.cron || controller.cron === SEED_REFRESH_CRON) {
+    const cronSpec = controller.cron ?? null;
+    const runSeedRefresh = cronSpec === null || cronSpec === SEED_REFRESH_CRON;
+    const runLeaderboardSync = cronSpec === null || cronSpec === LEADERBOARD_SYNC_CRON;
+
+    if (!runSeedRefresh && !runLeaderboardSync) {
+      console.warn(`[scheduled] ignoring unrecognized cron spec: ${cronSpec}`);
+      return;
+    }
+
+    if (runSeedRefresh) {
       // Materialize/index the on-chain seed for the current 10-min window so
       // players don't need to trigger seed creation themselves.
       // Retry up to 3 times with short gaps under a strict wall-time budget;
@@ -191,7 +200,7 @@ export default {
       }
     }
 
-    if (controller.cron && controller.cron !== LEADERBOARD_SYNC_CRON) {
+    if (!runLeaderboardSync) {
       return;
     }
 

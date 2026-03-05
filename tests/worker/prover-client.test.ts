@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import {
   describeProverHealthError,
   summarizeProof,
@@ -20,7 +20,6 @@ const TEST_CLAIMANT =
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
     PROVER_BASE_URL: "https://prover.test",
-    PROVER_HEALTH_CACHE_MS: "0",
     ...overrides,
   } as WorkerEnv;
 }
@@ -84,11 +83,6 @@ function validProverGetJobResponse(
 }
 
 describe("prover client", () => {
-  // Clear the module-level health cache before each test
-  beforeEach(() => {
-    // Force cache to expire by using PROVER_HEALTH_CACHE_MS=0 in env
-  });
-
   describe("describeProverHealthError", () => {
     it("extracts retryable=true from ProverHealthCheckError", async () => {
       // Trigger a real ProverHealthCheckError by calling getValidatedProverHealth

@@ -8,7 +8,7 @@ import type { WorkerEnv } from "../env";
 import { resultKey, tapeKey } from "../keys";
 import { parseAndValidateTape } from "../tape";
 import type { ProofJobRecord, ProverAttempt } from "../types";
-import { isTerminalProofStatus, parseInteger, safeErrorMessage } from "../utils";
+import { isTerminalProofStatus, safeErrorMessage } from "../utils";
 import {
   JOB_LIST_CACHE_CONTROL,
   JOB_STATUS_CACHE_CONTROL,
@@ -271,7 +271,7 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
   const router = new Hono<{ Bindings: WorkerEnv }>();
 
   router.post("/jobs", async (c) => {
-    const maxTapeBytes = parseInteger(c.env.MAX_TAPE_BYTES, DEFAULT_MAX_TAPE_BYTES, 1);
+    const maxTapeBytes = DEFAULT_MAX_TAPE_BYTES;
     const declaredLength = parseContentLength(c.req.header("content-length"));
     if (declaredLength !== null && declaredLength > maxTapeBytes) {
       return jsonError(
