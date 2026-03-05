@@ -343,29 +343,7 @@ export function ProofJobCard({
   const canRetryProof = !readOnly && job.status === "failed" && !job.result;
   const hasProverAttempts = (job.proverAttempts?.length ?? 0) > 0;
   const showProverAttempts = hasProverAttempts || canRetryProof || proofRetryError != null;
-
-  // Synthesize a single legacy attempt from aggregate tracking when
-  // claimAttempts[] is empty but claim work has been done.
-  let claimAttempts = job.claimAttempts ?? [];
-  if (claimAttempts.length === 0 && job.claim.attempts > 0) {
-    const outcome =
-      job.claim.status === "succeeded"
-        ? ("success" as const)
-        : job.claim.status === "failed"
-          ? ("failed" as const)
-          : ("in_progress" as const);
-    claimAttempts = [
-      {
-        index: 0,
-        startedAt: job.claim.lastAttemptAt ?? job.updatedAt,
-        endedAt: outcome !== "in_progress" ? (job.claim.submittedAt ?? job.updatedAt) : null,
-        outcome,
-        error: job.claim.lastError,
-        errorDetail: null,
-        txHash: job.claim.txHash,
-      },
-    ];
-  }
+  const claimAttempts = job.claimAttempts;
 
   const showClaimInfo = job.status === "succeeded";
   const detailsId = `proof-job-details-${job.jobId}`;

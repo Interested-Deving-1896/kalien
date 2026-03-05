@@ -83,9 +83,9 @@ Claim statuses:
 
 ## Coordinator Behavior
 
-- Multiple active jobs are tracked via `ACTIVE_JOBS_KEY = "active_job_ids"`.
+- Active jobs are derived from non-terminal statuses (`status NOT IN ('succeeded', 'failed')`).
 - Durable Object alarm drives polling and retries.
-- Terminal jobs are retained by retention/max-count policy.
+- Terminal jobs are retained by time-based policy (`COMPLETED_JOB_RETENTION_MS`, default 7 days).
 - Result artifacts are kept in R2; DO record cleanup does not immediately delete result artifacts.
 - Timeout attribution is explicit:
   - `job_total_wall_timeout` (`timeoutPhase=total_wall`)
@@ -120,8 +120,7 @@ Worker:
 - `MAX_PROOF_TOTAL_WALL_TIME_MS`
 - `MAX_PROVER_RUN_TIME_MS`
 - `PROVER_POLL_INTERVAL_MS`
-- `MAX_COMPLETED_JOBS`
-- `COMPLETED_JOB_RETENTION_MS`
+- `COMPLETED_JOB_RETENTION_MS` (7 days by default)
 
 Prover API (`kalien-verifier/api-server`):
 - `MAX_FRAMES`

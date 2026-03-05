@@ -56,8 +56,7 @@ export function PublicProofsPage() {
           }
         } catch (reason) {
           if (!silent) {
-            const detail =
-              reason instanceof Error ? reason.message : "failed to load proof jobs";
+            const detail = reason instanceof Error ? reason.message : "failed to load proof jobs";
             setError(detail);
           }
         } finally {
@@ -94,9 +93,7 @@ export function PublicProofsPage() {
       >
         <div className="flex items-center gap-2">
           {lastRefreshAt && (
-            <span className="text-xs text-muted-foreground">
-              Updated {timeAgo(lastRefreshAt)}
-            </span>
+            <span className="text-xs text-muted-foreground">Updated {timeAgo(lastRefreshAt)}</span>
           )}
           <Button size="sm" onClick={() => fetchJobs(false)} disabled={loading} title="Refresh">
             <RefreshCw className="size-3.5" />

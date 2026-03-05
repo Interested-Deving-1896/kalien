@@ -1,14 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  ACTIVE_JOBS_KEY,
   COORDINATOR_OBJECT_NAME,
   DEFAULT_COMPLETED_JOB_RETENTION_MS,
   DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS,
   DEFAULT_MAX_PROVER_RUN_TIME_MS,
-  DEFAULT_MAX_COMPLETED_JOBS,
   DEFAULT_POLL_INTERVAL_MS,
   MIN_PROVER_POLL_INTERVAL_MS,
-  JOB_KEY_PREFIX,
   MAX_TOTAL_PROVER_ATTEMPTS,
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
@@ -16,7 +13,7 @@ import { BoundlessClient, fetchBoundlessCycles } from "../boundless/sdk/client";
 import { fetchEthPriceUsd, weiToUsd } from "../boundless/pricing";
 import { unpinInput } from "../boundless/storage";
 import type { WorkerEnv } from "../env";
-import { jobKey, resultKey, tapeKey } from "../keys";
+import { resultKey, tapeKey } from "../keys";
 import { pollProverOnce } from "../prover/client";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import type {
@@ -125,18 +122,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.runElapsedMs = Math.max(0, Date.now() - startedAt);
   }
 
-  private async deleteArtifact(key: string | null | undefined): Promise<void> {
-    if (!key) {
-      return;
-    }
-
-    try {
-      await this.env.PROOF_ARTIFACTS.delete(key);
-    } catch (error) {
-      console.warn(`[proof-worker] failed deleting artifact ${key}: ${safeErrorMessage(error)}`);
-    }
-  }
-
   private async unpinIpfsInput(job: ProofJobRecord): Promise<void> {
     const cid = job.prover.ipfsCid;
     if (!cid) {
@@ -152,124 +137,81 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     this.ctx.waitUntil(unpinInput(pinataJwt, cid));
   }
 
-  private async pruneCompletedJobs(): Promise<void> {
-    const maxCompletedJobs = parseInteger(
-      this.env.MAX_COMPLETED_JOBS,
-      DEFAULT_MAX_COMPLETED_JOBS,
-      1,
-    );
+  private pruneCompletedJobs(): void {
+    this.ensureTable();
     const retentionMs = parseInteger(
       this.env.COMPLETED_JOB_RETENTION_MS,
       DEFAULT_COMPLETED_JOB_RETENTION_MS,
       60_000,
     );
-    const nowMs = Date.now();
-
-    const completed: Array<{
-      storageKey: string;
-      job: ProofJobRecord;
-      terminalAtMs: number;
-    }> = [];
-
-    const listPageSize = 128;
-    let startAfter: string | undefined;
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.ctx.storage.list<ProofJobRecord>({
-        prefix: JOB_KEY_PREFIX,
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.size === 0) {
-        break;
-      }
-
-      for (const [storageKey, value] of page) {
-        if (!value || !isTerminalProofStatus(value.status)) {
-          continue;
-        }
-
-        completed.push({
-          storageKey,
-          job: value,
-          terminalAtMs: Math.max(
-            this.timestampMs(value.completedAt),
-            this.timestampMs(value.updatedAt),
-            this.timestampMs(value.createdAt),
-          ),
-        });
-      }
-
-      const pageKeys = Array.from(page.keys());
-      const lastKey = pageKeys[pageKeys.length - 1];
-      if (!lastKey || page.size < listPageSize) {
-        break;
-      }
-
-      startAfter = lastKey;
-    }
-    /* eslint-enable no-await-in-loop */
-
-    if (completed.length === 0) {
-      return;
-    }
-
-    completed.sort((a, b) => a.terminalAtMs - b.terminalAtMs);
-
-    const toDelete = new Set<string>();
-    for (const entry of completed) {
-      if (nowMs - entry.terminalAtMs > retentionMs) {
-        toDelete.add(entry.storageKey);
-      }
-    }
-
-    const overflow = Math.max(0, completed.length - maxCompletedJobs);
-    for (let index = 0; index < overflow; index += 1) {
-      toDelete.add(completed[index].storageKey);
-    }
-
-    if (toDelete.size === 0) {
-      return;
-    }
-
-    /* eslint-disable no-await-in-loop */
-    for (const entry of completed) {
-      if (!toDelete.has(entry.storageKey)) {
-        continue;
-      }
-
-      await this.ctx.storage.delete(entry.storageKey);
-      await this.deleteArtifact(entry.job.tape.key);
-      // result.json is intentionally kept in R2 so users can fetch proof
-      // data after the DO record is pruned.  The R2 lifecycle rule
-      // (expire-proof-jobs, 7 days) handles cleanup.
-    }
-    /* eslint-enable no-await-in-loop */
+    const cutoff = new Date(Date.now() - retentionMs).toISOString();
+    this.ctx.storage.sql.exec(
+      `DELETE FROM jobs
+       WHERE status IN ('succeeded', 'failed')
+         AND (
+           (completed_at IS NOT NULL AND completed_at < ?)
+           OR (completed_at IS NULL AND created_at < ?)
+         )`,
+      cutoff,
+      cutoff,
+    );
   }
 
-  private async getActiveJobIds(): Promise<string[]> {
-    return (await this.ctx.storage.get<string[]>(ACTIVE_JOBS_KEY)) ?? [];
+  // ── SQLite schema ──────────────────────────────────────────────────
+
+  private tableReady = false;
+
+  private ensureTable(): void {
+    if (this.tableReady) return;
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS jobs (
+        job_id           TEXT PRIMARY KEY,
+        status           TEXT NOT NULL,
+        claimant_address TEXT NOT NULL,
+        created_at       TEXT NOT NULL,
+        completed_at     TEXT,
+        data             TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_jobs_claimant_created
+        ON jobs (claimant_address, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_jobs_status_completed
+        ON jobs (status, completed_at ASC);
+    `);
+    this.tableReady = true;
   }
 
-  private async addActiveJobId(jobId: string): Promise<void> {
-    const current = await this.getActiveJobIds();
-    if (!current.includes(jobId)) {
-      await this.ctx.storage.put(ACTIVE_JOBS_KEY, [...current, jobId]);
-    }
-  }
+  // ── Storage accessors (SQLite) ────────────────────────────────────
 
-  private async removeActiveJobId(jobId: string): Promise<void> {
-    const current = await this.getActiveJobIds();
-    const updated = current.filter((id) => id !== jobId);
-    await this.ctx.storage.put(ACTIVE_JOBS_KEY, updated);
+  private getActiveJobIds(): string[] {
+    this.ensureTable();
+    return this.ctx.storage.sql
+      .exec(`SELECT job_id FROM jobs WHERE status NOT IN ('succeeded', 'failed')`)
+      .toArray()
+      .map((r) => r.job_id as string);
   }
 
   private async loadJob(jobId: string): Promise<ProofJobRecord | null> {
-    return (await this.ctx.storage.get<ProofJobRecord>(jobKey(jobId))) ?? null;
+    this.ensureTable();
+    const rows = this.ctx.storage.sql
+      .exec(`SELECT data FROM jobs WHERE job_id = ?`, jobId)
+      .toArray();
+    return rows.length === 0 ? null : (JSON.parse(rows[0].data as string) as ProofJobRecord);
   }
 
   private async saveJob(job: ProofJobRecord): Promise<void> {
-    await this.ctx.storage.put(jobKey(job.jobId), job);
+    this.ensureTable();
+    const completedAt =
+      job.completedAt ??
+      (isTerminalProofStatus(job.status) ? (job.updatedAt ?? job.createdAt) : null);
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO jobs (job_id, status, claimant_address, created_at, completed_at, data) VALUES (?, ?, ?, ?, ?, ?)`,
+      job.jobId,
+      job.status,
+      job.claim.claimantAddress,
+      job.createdAt,
+      completedAt,
+      JSON.stringify(job),
+    );
   }
 
   private async scheduleAlarm(delayMs: number): Promise<void> {
@@ -281,20 +223,19 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
    * object can be fully deallocated.
    */
   private async flushStorageIfEmpty(): Promise<boolean> {
-    const activeJobIds = await this.getActiveJobIds();
+    const activeJobIds = this.getActiveJobIds();
     if (activeJobIds.length > 0) {
       return false;
     }
 
-    const remainingJobs = await this.ctx.storage.list<ProofJobRecord>({
-      prefix: JOB_KEY_PREFIX,
-      limit: 1,
-    });
-    if (remainingJobs.size > 0) {
+    this.ensureTable();
+    const remaining = this.ctx.storage.sql.exec(`SELECT 1 FROM jobs LIMIT 1`).toArray();
+    if (remaining.length > 0) {
       return false;
     }
 
     await this.ctx.storage.deleteAll();
+    this.tableReady = false;
     return true;
   }
 
@@ -446,7 +387,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     };
 
     await this.saveJob(job);
-    await this.addActiveJobId(jobId);
 
     return {
       accepted: true,
@@ -461,11 +401,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   /**
    * Lightweight periodic maintenance:
    * - keep the alarm chain alive while active jobs exist
-   * - prune completed jobs by retention/count policy
+   * - prune completed jobs by time-based retention policy
    * - fully clear storage when the coordinator is empty
    */
   async runMaintenance(): Promise<void> {
-    const activeJobIds = await this.getActiveJobIds();
+    const activeJobIds = this.getActiveJobIds();
     if (activeJobIds.length > 0) {
       // Keep the alarm chain alive even if no reads/queue activity happen.
       // This avoids request-path watchdog logic and keeps progress cron/alarm-driven.
@@ -513,7 +453,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     // Fast path: cycles already exist on the attempt but canonical summary stats
-    // were never updated (legacy records). Persist canonical stats on read.
+    // are missing. Persist canonical stats on read.
     if (hasAttemptCycles && summaryMissingCycles) {
       if (this.syncResultCycleStats(job, attempt.programCycles, attempt.totalCycles)) {
         await this.saveJob(job);
@@ -573,7 +513,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     };
     firstJobId: string | null;
   }> {
-    const activeJobIds = await this.getActiveJobIds();
+    const activeJobIds = this.getActiveJobIds();
     let total = 0;
     let boundless = 0;
     let vast = 0;
@@ -648,7 +588,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async getActiveJob(): Promise<ProofJobRecord | null> {
-    const activeJobIds = await this.getActiveJobIds();
+    const activeJobIds = this.getActiveJobIds();
     for (const jobId of activeJobIds) {
       // eslint-disable-next-line no-await-in-loop -- sequential DO storage reads
       const job = await this.loadJob(jobId);
@@ -668,7 +608,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async getActiveVastJob(): Promise<ProofJobRecord | null> {
-    const activeJobIds = await this.getActiveJobIds();
+    const activeJobIds = this.getActiveJobIds();
     for (const jobId of activeJobIds) {
       // eslint-disable-next-line no-await-in-loop -- sequential DO storage reads
       const job = await this.loadJob(jobId);
@@ -685,36 +625,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async listSucceededJobs(): Promise<ProofJobRecord[]> {
-    const listPageSize = 128;
+    const rows = this.ctx.storage.sql
+      .exec(`SELECT data FROM jobs WHERE status = 'succeeded'`)
+      .toArray();
     const jobs: ProofJobRecord[] = [];
-    let startAfter: string | undefined;
-
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.ctx.storage.list<ProofJobRecord>({
-        prefix: JOB_KEY_PREFIX,
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.size === 0) {
-        break;
+    for (const row of rows) {
+      const job = JSON.parse(row.data as string) as ProofJobRecord;
+      if (job.result?.summary) {
+        jobs.push(job);
       }
-
-      for (const [, value] of page) {
-        if (value?.status === "succeeded" && value.result?.summary) {
-          jobs.push(value);
-        }
-      }
-
-      const pageKeys = Array.from(page.keys());
-      const lastKey = pageKeys[pageKeys.length - 1];
-      if (!lastKey || page.size < listPageSize) {
-        break;
-      }
-      startAfter = lastKey;
     }
-    /* eslint-enable no-await-in-loop */
-
     return jobs;
   }
 
@@ -730,11 +650,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.queue.attempts = Math.max(job.queue.attempts, attempts);
     job.queue.lastAttemptAt = now;
     job.queue.nextRetryAt = null;
-    if (job.prover.jobId && !job.prover.runStartedAt) {
-      // Legacy backfill for pre-runStartedAt records: use "now" so we don't
-      // incorrectly inherit long queue age as prover runtime.
-      job.prover.runStartedAt = now;
-    }
     if (!job.prover.jobId && !job.queue.waitStartedAt) {
       job.queue.waitStartedAt = job.createdAt;
     }
@@ -923,11 +838,10 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.saveJob(job);
     await this.recordAttemptEnd(job, "success", null, enrichment);
-    await this.removeActiveJobId(jobId);
     await this.unpinIpfsInput(job);
     await this.enqueueClaimJob(jobId);
     try {
-      await this.pruneCompletedJobs();
+      this.pruneCompletedJobs();
       await this.flushStorageIfEmpty();
     } catch (error) {
       console.warn(`[proof-worker] prune after success failed: ${safeErrorMessage(error)}`);
@@ -983,10 +897,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     await this.saveJob(job);
-    await this.removeActiveJobId(jobId);
     await this.unpinIpfsInput(job);
     try {
-      await this.pruneCompletedJobs();
+      this.pruneCompletedJobs();
       await this.flushStorageIfEmpty();
     } catch (error) {
       console.warn(`[proof-worker] prune after failure failed: ${safeErrorMessage(error)}`);
@@ -1270,7 +1183,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
     await this.saveJob(job);
-    await this.addActiveJobId(jobId);
 
     const queue = nextBackend === "boundless" ? this.env.PROOF_QUEUE : this.env.VAST_QUEUE;
     try {
@@ -1616,7 +1528,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async alarm(): Promise<void> {
-    let activeJobIds = await this.getActiveJobIds();
+    let activeJobIds = this.getActiveJobIds();
     const maxWallTimeMs = this.resolveMaxProofTotalWallTimeMs();
     const maxProverRunTimeMs = this.resolveMaxProverRunTimeMs();
 
@@ -1628,12 +1540,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     /* eslint-disable no-await-in-loop */
     for (const jobId of activeJobIds) {
       const job = await this.loadJob(jobId);
-      if (!job) {
-        await this.removeActiveJobId(jobId);
-        continue;
-      }
-      if (isTerminalProofStatus(job.status)) {
-        await this.removeActiveJobId(jobId);
+      if (!job || isTerminalProofStatus(job.status)) {
         continue;
       }
 
@@ -1771,7 +1678,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async kickAlarm(): Promise<void> {
-    const activeJobIds = await this.getActiveJobIds();
+    const activeJobIds = this.getActiveJobIds();
     if (activeJobIds.length === 0) {
       return;
     }
@@ -1880,7 +1787,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const currentAlarm = await this.ctx.storage.getAlarm();
     const alarmMissing = currentAlarm == null || currentAlarm < Date.now();
     if (alarmMissing) {
-      const remaining = await this.getActiveJobIds();
+      const remaining = this.getActiveJobIds();
       if (remaining.length > 0) {
         await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
       }
@@ -1892,41 +1799,21 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     limit: number,
     offset: number,
   ): Promise<{ jobs: ProofJobRecord[]; total: number }> {
-    const all: ProofJobRecord[] = [];
-    const listPageSize = 128;
-    let startAfter: string | undefined;
+    const countRow = this.ctx.storage.sql
+      .exec(`SELECT COUNT(*) as cnt FROM jobs WHERE claimant_address = ?`, claimantAddress)
+      .toArray();
+    const total = Number((countRow[0] as { cnt: number }).cnt);
 
-    /* eslint-disable no-await-in-loop */
-    while (true) {
-      const page = await this.ctx.storage.list<ProofJobRecord>({
-        prefix: JOB_KEY_PREFIX,
-        startAfter,
-        limit: listPageSize,
-      });
-      if (page.size === 0) {
-        break;
-      }
+    const rows = this.ctx.storage.sql
+      .exec(
+        `SELECT data FROM jobs WHERE claimant_address = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        claimantAddress,
+        limit,
+        offset,
+      )
+      .toArray();
 
-      for (const [, value] of page) {
-        if (value?.claim?.claimantAddress === claimantAddress) {
-          all.push(value);
-        }
-      }
-
-      const pageKeys = Array.from(page.keys());
-      const lastKey = pageKeys[pageKeys.length - 1];
-      if (!lastKey || page.size < listPageSize) {
-        break;
-      }
-      startAfter = lastKey;
-    }
-    /* eslint-enable no-await-in-loop */
-
-    // Sort newest first
-    all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    const total = all.length;
-    const jobs = all.slice(offset, offset + limit);
+    const jobs = rows.map((r) => JSON.parse(r.data as string) as ProofJobRecord);
     return { jobs, total };
   }
 }

@@ -518,7 +518,10 @@ describe("handleVastQueueBatch (VastAI)", () => {
     const coordinator = makeCoordinator({
       hasActiveVastJob: async () => slotBusy,
       getActiveVastJob: async () => (slotBusy ? staleVastJob : null),
-      kickAlarm: async () => undefined,
+      kickAlarm: async () => {
+        // Current stale-slot recovery delegates timeout/fallback to kickAlarm().
+        slotBusy = false;
+      },
       getJob: async (jobId: string) => {
         if (jobId === "job-active-vast") {
           return slotBusy ? staleVastJob : null;
@@ -532,12 +535,7 @@ describe("handleVastQueueBatch (VastAI)", () => {
           claim: { claimantAddress: "GABC" },
         };
       },
-      markFailed: async (jobId: string) => {
-        if (jobId === "job-active-vast") {
-          slotBusy = false;
-        }
-        return null;
-      },
+      markFailed: async () => null,
       beginQueueAttempt: async () => ({
         jobId: "job-1",
         status: "dispatching",
@@ -577,7 +575,8 @@ describe("handleVastQueueBatch (VastAI)", () => {
     const staleFailCall = calls.find(
       (c) => c.method === "markFailed" && c.args[0] === "job-active-vast",
     );
-    expect(staleFailCall).toBeDefined();
+    expect(staleFailCall).toBeUndefined();
+    expect(calls.some((c) => c.method === "kickAlarm")).toBe(true);
     expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
   });
 

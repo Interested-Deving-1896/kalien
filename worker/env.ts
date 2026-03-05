@@ -20,7 +20,6 @@ export interface WorkerEnv {
   MAX_TAPE_BYTES?: string;
   MAX_PROOF_TOTAL_WALL_TIME_MS?: string;
   MAX_PROVER_RUN_TIME_MS?: string;
-  MAX_COMPLETED_JOBS?: string;
   COMPLETED_JOB_RETENTION_MS?: string;
   ALLOW_INSECURE_PROVER_URL?: string;
   RELAYER_URL?: string;

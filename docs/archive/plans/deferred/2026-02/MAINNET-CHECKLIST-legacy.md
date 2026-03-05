@@ -246,7 +246,8 @@ Harden the Cloudflare Workers deployment for mainnet traffic.
       `kalien-proof-artifacts` has no public access rules. All access should
       be through the Worker binding only.
 - [ ] **Set R2 lifecycle rule** to auto-expire proof artifacts as a safety net.
-      The DO already prunes at 24hr/200 jobs, but orphaned R2 objects from edge
+      The DO already prunes by time-based retention (`COMPLETED_JOB_RETENTION_MS`,
+      default 7 days), but orphaned R2 objects from edge
       cases (crashes between R2 write and DO tracking) need a backstop:
       ```bash
       npx wrangler r2 bucket lifecycle add kalien-proof-artifacts \

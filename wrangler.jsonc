@@ -39,7 +39,6 @@
 		"MAX_TAPE_BYTES": "2097152",
 		"MAX_PROOF_TOTAL_WALL_TIME_MS": "3900000",
 		"MAX_PROVER_RUN_TIME_MS": "660000",
-		"MAX_COMPLETED_JOBS": "200",
 		"COMPLETED_JOB_RETENTION_MS": "604800000",
 		// Relayer (OpenZeppelin Channels testnet)
 		"RELAYER_URL": "https://channels.openzeppelin.com/testnet",
@@ -212,7 +211,6 @@
 				"MAX_TAPE_BYTES": "2097152",
 				"MAX_PROOF_TOTAL_WALL_TIME_MS": "3900000",
 				"MAX_PROVER_RUN_TIME_MS": "660000",
-				"MAX_COMPLETED_JOBS": "200",
 				"COMPLETED_JOB_RETENTION_MS": "604800000",
 				// Relayer (OpenZeppelin Channels mainnet)
 				"RELAYER_URL": "https://channels.openzeppelin.com",

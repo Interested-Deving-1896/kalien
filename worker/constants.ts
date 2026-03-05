@@ -23,7 +23,6 @@ export const DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS = 180 * 60_000; // 3 hours
 // Max time a single active prover run should occupy the slot in the gateway.
 // Keep slightly above the prover API timeout so status propagation can finish.
 export const DEFAULT_MAX_PROVER_RUN_TIME_MS = 11 * 60_000; // 11 minutes
-export const DEFAULT_MAX_COMPLETED_JOBS = 200;
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 7 * 24 * 60 * 60_000; // 7 days
 export const MAX_TOTAL_PROVER_ATTEMPTS = 4; // 2 Boundless + 2 Vast.ai interleaved
 
@@ -50,9 +49,6 @@ export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "proof_error",
   "internal_error",
 ]);
-
-export const ACTIVE_JOBS_KEY = "active_job_ids";
-export const JOB_KEY_PREFIX = "job:";
 
 // Boundless proving defaults
 export const DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS = 30 * 60_000; // Full lock window: flat (1m) + lockTimeout (29m from rampUpStart)
