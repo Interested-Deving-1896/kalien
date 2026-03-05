@@ -465,6 +465,10 @@ export class AsteroidsGame {
       this.accumulator = 0;
       // Still update game time for menu animations
       this.gameTime += 1 / 60;
+      // Keep visual effects (death anim, particles, shockwaves) ticking after game ends
+      if (this.mode === "game-over") {
+        this.renderer?.updateVisuals(FIXED_TIMESTEP);
+      }
     }
 
     const alpha = this.accumulator / FIXED_TIMESTEP;
@@ -1376,7 +1380,7 @@ export class AsteroidsGame {
 
         const adjustedRadius = (asteroid.radius * 225) >> 8;
         if (collidesQ12_4(ship.x, ship.y, ship.radius, asteroid.x, asteroid.y, adjustedRadius)) {
-          this.destroyShip();
+          this.destroyShip(asteroid.x, asteroid.y);
           return;
         }
       }
@@ -1387,7 +1391,7 @@ export class AsteroidsGame {
       if (!bullet.alive) continue;
       if (collidesQ12_4(ship.x, ship.y, ship.radius, bullet.x, bullet.y, bullet.radius)) {
         bullet.alive = false;
-        this.destroyShip();
+        this.destroyShip(bullet.x, bullet.y);
         return;
       }
     }
@@ -1397,7 +1401,7 @@ export class AsteroidsGame {
       if (!saucer.alive) continue;
       if (collidesQ12_4(ship.x, ship.y, ship.radius, saucer.x, saucer.y, saucer.radius)) {
         saucer.alive = false;
-        this.destroyShip();
+        this.destroyShip(saucer.x, saucer.y);
         return;
       }
     }
@@ -1466,14 +1470,21 @@ export class AsteroidsGame {
     return aliveAsteroids;
   }
 
-  private destroyShip(): void {
+  private destroyShip(impactorX?: number, impactorY?: number): void {
+    const shipAngle = BAMToRadians(this.ship.angle);
     this.queueShipRespawn(SHIP_RESPAWN_FRAMES);
     this.lives -= 1;
 
     if (this.renderer) {
       const px = fromQ12_4(this.ship.x);
       const py = fromQ12_4(this.ship.y);
-      this.renderer.onShipDestroyed(px, py);
+      this.renderer.onShipDestroyed(
+        px,
+        py,
+        impactorX != null ? fromQ12_4(impactorX) : undefined,
+        impactorY != null ? fromQ12_4(impactorY) : undefined,
+        shipAngle,
+      );
       this.renderer.addScreenShake(SHAKE_INTENSITY_LARGE);
       this.audio.playExplosion("large");
     }

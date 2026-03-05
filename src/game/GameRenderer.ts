@@ -15,6 +15,18 @@ import type {
   Star,
 } from "./types";
 
+const DEATH_ANIM_DURATION_MS = 600;
+
+interface ShipDeathAnim {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  spin: number;
+  startMs: number;
+}
+
 // ============================================================================
 // Interpolation helpers
 // ============================================================================
@@ -100,6 +112,9 @@ export class GameRenderer {
   private shakeIntensity = 0;
   private shakeRotation = 0;
 
+  // Ship death animation (visual-only knockback + red flash)
+  private shipDeathAnim: ShipDeathAnim | null = null;
+
   // Unique ID counter (only for visual entities)
   private nextVisualId = 1_000_000;
 
@@ -148,6 +163,7 @@ export class GameRenderer {
     this.shakeX = 0;
     this.shakeY = 0;
     this.shakeRotation = 0;
+    this.shipDeathAnim = null;
   }
 
   seedStars(count: number): void {
@@ -184,6 +200,7 @@ export class GameRenderer {
     this.updateShockwaves(dt);
     this.updateScorePopups(dt);
     this.updateScreenShake();
+    this.updateShipDeathAnim(dt);
   }
 
   pruneVisuals(): void {
@@ -242,6 +259,22 @@ export class GameRenderer {
     }
   }
 
+  private updateShipDeathAnim(dt: number): void {
+    const anim = this.shipDeathAnim;
+    if (!anim) return;
+
+    if (performance.now() - anim.startMs >= DEATH_ANIM_DURATION_MS) {
+      this.shipDeathAnim = null;
+      return;
+    }
+
+    anim.x = wrapX(anim.x + anim.vx * dt);
+    anim.y = wrapY(anim.y + anim.vy * dt);
+    anim.vx *= 0.95;
+    anim.vy *= 0.95;
+    anim.angle += anim.spin * dt;
+  }
+
   // ============================================================================
   // Visual effect hooks (called by game on events)
   // ============================================================================
@@ -286,9 +319,42 @@ export class GameRenderer {
     });
   }
 
-  onShipDestroyed(x: number, y: number): void {
+  onShipDestroyed(
+    x: number,
+    y: number,
+    impactorX?: number,
+    impactorY?: number,
+    shipAngle?: number,
+  ): void {
     this.onExplosion(x, y, "large");
     this.spawnDebris(x, y, "large");
+
+    // Visual-only knockback + red flash animation
+    const KNOCKBACK_SPEED = 120;
+
+    let kvx: number;
+    let kvy: number;
+    if (impactorX != null && impactorY != null) {
+      const dx = x - impactorX;
+      const dy = y - impactorY;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      kvx = (dx / dist) * KNOCKBACK_SPEED;
+      kvy = (dy / dist) * KNOCKBACK_SPEED;
+    } else {
+      const angle = visualRandomRange(0, Math.PI * 2);
+      kvx = Math.cos(angle) * KNOCKBACK_SPEED;
+      kvy = Math.sin(angle) * KNOCKBACK_SPEED;
+    }
+
+    this.shipDeathAnim = {
+      x,
+      y,
+      vx: kvx,
+      vy: kvy,
+      angle: shipAngle ?? 0,
+      spin: visualRandomRange(-4, 4),
+      startMs: performance.now(),
+    };
   }
 
   onBulletFired(x: number, y: number): void {
@@ -465,7 +531,44 @@ export class GameRenderer {
   private drawShip(ctx: CanvasRenderingContext2D, state: GameRenderState, alpha: number): void {
     const ship = state.ship;
 
-    if (!ship.canControl && (state.mode === "game-over" || state.lives <= 0)) {
+    // Draw death animation (red knockback ghost) if active
+    if (this.shipDeathAnim) {
+      const anim = this.shipDeathAnim;
+      const elapsedMs = performance.now() - anim.startMs;
+      if (elapsedMs < DEATH_ANIM_DURATION_MS) {
+        const progress = elapsedMs / DEATH_ANIM_DURATION_MS;
+        const fadeAlpha = 1 - progress;
+
+        ctx.save();
+        ctx.globalAlpha = fadeAlpha;
+        ctx.translate(anim.x, anim.y);
+        ctx.rotate(anim.angle + Math.PI * 0.5);
+
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = "#ef4444";
+        ctx.strokeStyle = "#ff4444";
+
+        ctx.beginPath();
+        ctx.moveTo(0, -ship.radius);
+        ctx.lineTo(ship.radius * 0.72, ship.radius);
+        ctx.lineTo(0, ship.radius * 0.45);
+        ctx.lineTo(-ship.radius * 0.72, ship.radius);
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.restore();
+
+        // Reset stroke for subsequent draws
+        ctx.strokeStyle = "#b8ffe3";
+        ctx.shadowColor = "#4ade80";
+        ctx.shadowBlur = 8;
+        return;
+      }
+      this.shipDeathAnim = null;
+    }
+
+    // Hide the frozen ship during respawn wait (death anim has ended)
+    if (!ship.canControl) {
       return;
     }
 
@@ -492,7 +595,7 @@ export class GameRenderer {
     ctx.closePath();
     ctx.stroke();
 
-    if (ship.canControl && state.thrustActive && state.mode !== "menu") {
+    if (state.thrustActive && state.mode !== "menu") {
       ctx.shadowBlur = 20;
       ctx.shadowColor = "#ff6b35";
       ctx.strokeStyle = "#ffaa44";

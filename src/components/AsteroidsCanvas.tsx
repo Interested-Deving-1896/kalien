@@ -32,7 +32,10 @@ export function AsteroidsCanvas({ onGameOver, onGameReady }: AsteroidsCanvasProp
 
     let modeBefore = game.getMode();
     let watcherFrame: number | null = null;
+    let gameOverDelayTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
+
+    const GAME_OVER_DELAY_MS = 1250;
 
     const watchModeTransitions = () => {
       if (disposed) {
@@ -43,11 +46,15 @@ export function AsteroidsCanvas({ onGameOver, onGameReady }: AsteroidsCanvasProp
       if (modeNow === "game-over" && modeBefore !== "game-over") {
         const record = game.getRunRecord();
         if (record) {
-          onGameOverRef.current?.({
-            record,
-            frameCount: record.inputs.length,
-            endedAtMs: Date.now(),
-          });
+          gameOverDelayTimer = setTimeout(() => {
+            if (!disposed) {
+              onGameOverRef.current?.({
+                record,
+                frameCount: record.inputs.length,
+                endedAtMs: Date.now(),
+              });
+            }
+          }, GAME_OVER_DELAY_MS);
         }
       }
 
@@ -61,6 +68,9 @@ export function AsteroidsCanvas({ onGameOver, onGameReady }: AsteroidsCanvasProp
       disposed = true;
       if (watcherFrame !== null) {
         window.cancelAnimationFrame(watcherFrame);
+      }
+      if (gameOverDelayTimer !== null) {
+        clearTimeout(gameOverDelayTimer);
       }
       game.dispose();
     };
