@@ -30,11 +30,11 @@ Last reviewed: 2026-02-27
 
 ## Verification Commands
 
-`bun run verify-tape` uses a default frame cap of `18000`, so it works for
+`bun run scripts/verify-tape.ts` uses a default frame cap of `18000`, so it works for
 short/medium/real fixtures but not `test-long.tape`.
 
 ```bash
-bun run verify-tape test-fixtures/test-real-game-26360.tape
+bun run scripts/verify-tape.ts test-fixtures/test-real-game-26360.tape
 ```
 
 For long tapes, use autopilot verifier with explicit max frames:
