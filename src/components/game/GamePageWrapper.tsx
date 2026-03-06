@@ -317,6 +317,13 @@ export function GamePageWrapper() {
   const submittedFeedbackRunKeyRef = useRef<string | null>(null);
   const waitingForAutoRestartRef = useRef(false);
   const isMountedRef = useRef(true);
+  const endlessSubmitContextRef = useRef({
+    enabled: false,
+    replayJobId: null as string | null,
+    walletAddress: "",
+    walletConnected: false,
+    networkPassphrase: "",
+  });
   const [recentSubmissionAtMs, setRecentSubmissionAtMs] = useState<number | null>(null);
 
   const handleGameInstance = useCallback((game: import("@/game/AsteroidsGame").AsteroidsGame) => {
@@ -372,6 +379,13 @@ export function GamePageWrapper() {
       recentSubmissionActive,
     ],
   );
+  endlessSubmitContextRef.current = {
+    enabled: endlessModeEnabled,
+    replayJobId,
+    walletAddress: flow.wallet.address,
+    walletConnected: flow.wallet.isConnected,
+    networkPassphrase: flow.wallet.networkPassphrase,
+  };
 
   const recordSubmissionFeedback = useCallback((runKey: string) => {
     if (submittedFeedbackRunKeyRef.current === runKey) {
@@ -523,7 +537,18 @@ export function GamePageWrapper() {
     waitingForAutoRestartRef.current = true;
     dismissOverlay();
 
-    let cancelled = false;
+    const submitContext = endlessSubmitContextRef.current;
+    const isSubmitContextCurrent = () => {
+      const currentContext = endlessSubmitContextRef.current;
+      return (
+        isMountedRef.current &&
+        currentContext.enabled === submitContext.enabled &&
+        currentContext.replayJobId === submitContext.replayJobId &&
+        currentContext.walletAddress === submitContext.walletAddress &&
+        currentContext.walletConnected === submitContext.walletConnected &&
+        currentContext.networkPassphrase === submitContext.networkPassphrase
+      );
+    };
     const clearPendingScore = () => {
       const pendingScore = pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
       if (pendingScore <= completedRunScore) {
@@ -549,7 +574,7 @@ export function GamePageWrapper() {
         refreshedSeedBest = null;
       }
 
-      if (cancelled || !isMountedRef.current) {
+      if (!isSubmitContextCurrent()) {
         return;
       }
 
@@ -568,7 +593,7 @@ export function GamePageWrapper() {
       );
 
       const submitted = await submitRunForProof(completedRun);
-      if (cancelled || !isMountedRef.current) {
+      if (!isSubmitContextCurrent()) {
         clearPendingScore();
         return;
       }
@@ -586,10 +611,6 @@ export function GamePageWrapper() {
         recordSubmissionFeedback(latestRunKey);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     dismissOverlay,
     endlessModeEnabled,
