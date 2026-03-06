@@ -4,6 +4,7 @@ import {
   validateAddress,
   type ConnectWalletResult,
 } from "smart-account-kit";
+import type { Keypair, Transaction } from "@stellar/stellar-sdk";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import {
   DEFAULT_ACCOUNT_WASM_HASH,
@@ -53,6 +54,38 @@ const config: SmartAccountConfig = {
 
 let kitInstance: SmartAccountKit | null = null;
 
+interface AssembledDeploymentTransaction {
+  built?: Transaction;
+  signed?: Transaction;
+}
+
+type SmartAccountKitPatchTarget = {
+  deployerKeypair: Keypair;
+  signWithDeployer(tx: AssembledDeploymentTransaction): Promise<void>;
+};
+
+export function signBuiltDeploymentTransaction(
+  tx: AssembledDeploymentTransaction,
+  deployerKeypair: Keypair,
+): void {
+  if (!tx.built) {
+    throw new Error("deployment transaction has not been built");
+  }
+
+  // The deploy transaction is already fully assembled at this point. Routing it
+  // back through AssembledTransaction.sign() re-clones Soroban fees and breaks
+  // Channels relayer submission with FEE_MISMATCH.
+  tx.built.sign(deployerKeypair);
+  tx.signed = tx.built;
+}
+
+function patchSmartAccountKitDeployerSigning(kit: SmartAccountKit): void {
+  const internalKit = kit as unknown as SmartAccountKitPatchTarget;
+  internalKit.signWithDeployer = async (tx: AssembledDeploymentTransaction) => {
+    signBuiltDeploymentTransaction(tx, internalKit.deployerKeypair);
+  };
+}
+
 function isMissingOnChainContractError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -91,6 +124,7 @@ export function getSmartAccountKit(): SmartAccountKit {
       relayerUrl: config.relayerUrl,
       signatureExpirationLedgers: 2160,
     });
+    patchSmartAccountKitDeployerSigning(kitInstance);
   }
 
   return kitInstance;
