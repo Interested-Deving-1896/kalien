@@ -90,14 +90,15 @@ export async function fetchSeedFromContract(
 /**
  * Read a claimant's best score for a specific seed_id from the contract.
  *
- * Returns `0` when the query fails or no prior score exists.
+ * Returns `null` when the query fails. A successful read may still return `0`
+ * when no prior score exists for that seed.
  */
 export async function fetchBestScoreForSeed(
   contractId: string,
   rpcUrl: string,
   claimant: string,
   seedId: number,
-): Promise<number> {
+): Promise<number | null> {
   try {
     const client = new ScoreClient({
       contractId,
@@ -107,6 +108,6 @@ export async function fetchBestScoreForSeed(
     const tx = await client.best_score({ claimant, seed_id: seedId });
     return tx.result;
   } catch {
-    return 0;
+    return null;
   }
 }

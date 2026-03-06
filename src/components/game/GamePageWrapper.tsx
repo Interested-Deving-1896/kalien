@@ -20,6 +20,7 @@ import { formatFramesAsTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { HIGH_SCORE_THRESHOLD } from "@/consts";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useEndlessSeedScoreGate } from "@/hooks/useEndlessSeedScoreGate";
 import { navigate, useLocation } from "@/hooks/useLocation";
 import { useSeed } from "@/hooks/useSeed";
 import type { CompletedGameRun } from "@/game/types";
@@ -68,30 +69,21 @@ function getRunKey(flow: ReturnType<typeof useGameFlow>): string | null {
   );
 }
 
-function shouldHoldForNextSeed(
-  currentSeedId: number | null,
-  lastCompletedSeedId: number | null,
-): boolean {
-  return (
-    currentSeedId !== null && lastCompletedSeedId !== null && currentSeedId === lastCompletedSeedId
-  );
-}
-
 function getEndlessModeDetail(params: {
   enabled: boolean;
   replayJobId: string | null;
   walletConnected: boolean;
-  latestRun: ReturnType<typeof useGameFlow>["latestRun"];
-  hasPositiveScore: boolean;
   isSubmitting: boolean;
   proofError: string | null;
   seed: number | null;
   seedId: number | null;
   secondsLeft: number;
-  lastCompletedSeedId: number | null;
   recentSubmissionActive: boolean;
+  currentSeedScoreToBeat: number;
+  isCurrentSeedScoreLoading: boolean;
+  isCurrentSeedScoreReady: boolean;
 }): string | null {
-  const nextSeedLabel = `Next ${formatCountdown(params.secondsLeft)}`;
+  const timeLeftLabel = `${formatCountdown(params.secondsLeft)} left`;
 
   if (!params.enabled) {
     return null;
@@ -99,31 +91,31 @@ function getEndlessModeDetail(params: {
   if (params.replayJobId) {
     return null;
   }
-  if (!params.walletConnected) {
-    return "Connect wallet";
-  }
-  if (params.latestRun && params.proofError) {
+  if (params.proofError) {
     return "Submit failed";
   }
-  if (params.latestRun && params.isSubmitting) {
+  if (params.isSubmitting) {
     return "Submitting";
-  }
-  if (params.latestRun) {
-    if (!params.hasPositiveScore) {
-      return nextSeedLabel;
-    }
-    return params.recentSubmissionActive ? `Run submitted | ${nextSeedLabel}` : "Submitting";
   }
   if (params.seed === null || params.seedId === null) {
     return params.recentSubmissionActive ? "Run submitted | Waiting seed" : "Waiting seed";
   }
-  if (shouldHoldForNextSeed(params.seedId, params.lastCompletedSeedId)) {
-    return params.recentSubmissionActive ? `Run submitted | ${nextSeedLabel}` : nextSeedLabel;
-  }
   if (params.recentSubmissionActive) {
-    return "Run submitted";
+    return `Run submitted | ${timeLeftLabel}`;
   }
-  return null;
+  if (!params.walletConnected) {
+    return `Looping | ${timeLeftLabel}`;
+  }
+  if (params.isCurrentSeedScoreLoading) {
+    return `Checking best | ${timeLeftLabel}`;
+  }
+  if (!params.isCurrentSeedScoreReady) {
+    return `Best unavailable | ${timeLeftLabel}`;
+  }
+  if (params.currentSeedScoreToBeat > 0) {
+    return `Beat ${params.currentSeedScoreToBeat.toLocaleString()} | ${timeLeftLabel}`;
+  }
+  return `Any score | ${timeLeftLabel}`;
 }
 
 function GameOverOverlay({
@@ -234,7 +226,7 @@ function GameOverOverlay({
               claimError={flow.claimError}
               hintText={
                 endlessModeEnabled
-                  ? "Endless mode will queue this run now, then wait for the next seed before starting again."
+                  ? "Endless mode keeps playing while submitted runs verify in the background."
                   : undefined
               }
             />
@@ -314,18 +306,17 @@ export function GamePageWrapper() {
   const wallet = useWalletState();
   const balance = useBalanceState();
   const flow = useGameFlow({ wallet, balance });
-  const { dismissOverlay, handleGameOver: handleFlowGameOver, submitForProof } = flow;
+  const { dismissOverlay, handleGameOver: handleFlowGameOver, submitRunForProof } = flow;
   const { seed, seedId, secondsLeft } = useSeed();
   const gameRef = useRef<import("@/game/AsteroidsGame").AsteroidsGame | null>(null);
   const [autopilotEnabled, setAutopilotEnabled] = useState(false);
   const [endlessModeEnabled, setEndlessModeEnabled] = useState(false);
   const [autoStartSignal, setAutoStartSignal] = useState(0);
-  const autoSubmittedRunKeyRef = useRef<string | null>(null);
-  const autoDismissedRunKeyRef = useRef<string | null>(null);
+  const handledEndlessRunKeyRef = useRef<string | null>(null);
+  const pendingEndlessSubmissionScoresRef = useRef(new Map<number, number>());
   const submittedFeedbackRunKeyRef = useRef<string | null>(null);
-  const lastCompletedSeedIdRef = useRef<number | null>(null);
-  const lastAutoStartedSeedIdRef = useRef<number | null>(null);
-  const waitingForNextSeedRef = useRef(false);
+  const waitingForAutoRestartRef = useRef(false);
+  const isMountedRef = useRef(true);
   const [recentSubmissionAtMs, setRecentSubmissionAtMs] = useState<number | null>(null);
 
   const handleGameInstance = useCallback((game: import("@/game/AsteroidsGame").AsteroidsGame) => {
@@ -337,30 +328,45 @@ export function GamePageWrapper() {
   const latestRunKey = getRunKey(flow);
   const recentSubmissionActive =
     recentSubmissionAtMs !== null && Date.now() - recentSubmissionAtMs < 6_000;
+  const {
+    currentSeedScoreToBeat,
+    isCurrentSeedScoreLoading,
+    isCurrentSeedScoreReady,
+    getKnownSeedScoreToBeat,
+    refreshSeedScoreToBeat,
+    noteSubmittedScore,
+  } = useEndlessSeedScoreGate({
+    enabled: endlessModeEnabled,
+    walletAddress: flow.wallet.address,
+    walletConnected: flow.wallet.isConnected,
+    networkPassphrase: flow.wallet.networkPassphrase,
+    currentSeedId: seedId,
+  });
   const endlessModeDetail = useMemo(
     () =>
       getEndlessModeDetail({
         enabled: endlessModeEnabled,
         replayJobId,
         walletConnected: flow.wallet.isConnected,
-        latestRun: flow.latestRun,
-        hasPositiveScore: flow.hasPositiveScore,
         isSubmitting: flow.proof.isSubmitting,
         proofError: flow.proof.error,
         seed,
         seedId,
         secondsLeft,
-        lastCompletedSeedId: lastCompletedSeedIdRef.current,
         recentSubmissionActive,
+        currentSeedScoreToBeat,
+        isCurrentSeedScoreLoading,
+        isCurrentSeedScoreReady,
       }),
     [
+      currentSeedScoreToBeat,
       endlessModeEnabled,
       replayJobId,
       flow.wallet.isConnected,
-      flow.latestRun,
-      flow.hasPositiveScore,
       flow.proof.isSubmitting,
       flow.proof.error,
+      isCurrentSeedScoreLoading,
+      isCurrentSeedScoreReady,
       seed,
       seedId,
       secondsLeft,
@@ -377,6 +383,12 @@ export function GamePageWrapper() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!replayJobId) {
       const id = new URLSearchParams(window.location.search).get("replay");
       if (id) navigate(`/replay/${id}`);
@@ -385,22 +397,25 @@ export function GamePageWrapper() {
 
   useEffect(() => {
     if (!latestRunKey) {
-      autoSubmittedRunKeyRef.current = null;
-      autoDismissedRunKeyRef.current = null;
+      handledEndlessRunKeyRef.current = null;
     }
   }, [latestRunKey]);
 
   useEffect(() => {
     if (!endlessModeEnabled) {
-      waitingForNextSeedRef.current = false;
-      autoSubmittedRunKeyRef.current = null;
+      waitingForAutoRestartRef.current = false;
+      pendingEndlessSubmissionScoresRef.current.clear();
     }
   }, [endlessModeEnabled]);
+
+  useEffect(() => {
+    pendingEndlessSubmissionScoresRef.current.clear();
+  }, [flow.wallet.address, flow.wallet.networkPassphrase]);
 
   const handleAutopilotStateChange = useCallback((enabled: boolean) => {
     setAutopilotEnabled(enabled);
     if (!enabled) {
-      waitingForNextSeedRef.current = false;
+      waitingForAutoRestartRef.current = false;
       setEndlessModeEnabled(false);
     }
   }, []);
@@ -411,9 +426,9 @@ export function GamePageWrapper() {
         return;
       }
 
-      waitingForNextSeedRef.current = false;
-      autoSubmittedRunKeyRef.current = null;
-      autoDismissedRunKeyRef.current = null;
+      waitingForAutoRestartRef.current = false;
+      handledEndlessRunKeyRef.current = null;
+      pendingEndlessSubmissionScoresRef.current.clear();
       setRecentSubmissionAtMs(null);
       setAutopilotEnabled(autopilot);
       setEndlessModeEnabled(endless);
@@ -488,105 +503,87 @@ export function GamePageWrapper() {
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {
-      lastCompletedSeedIdRef.current = run.record.seedId >>> 0;
       handleFlowGameOver(run);
     },
     [handleFlowGameOver],
   );
 
   useEffect(() => {
-    if (
-      !endlessModeEnabled ||
-      replayJobId ||
-      !latestRunKey ||
-      !flow.latestRun ||
-      flow.hasPositiveScore
-    ) {
+    if (!endlessModeEnabled || replayJobId || !latestRunKey || !flow.latestRun) {
       return;
     }
-    if (autoDismissedRunKeyRef.current === latestRunKey) {
+    if (handledEndlessRunKeyRef.current === latestRunKey) {
       return;
     }
+    handledEndlessRunKeyRef.current = latestRunKey;
 
-    waitingForNextSeedRef.current = true;
-    autoDismissedRunKeyRef.current = latestRunKey;
+    const completedRun = flow.latestRun;
+    const completedRunSeedId = completedRun.record.seedId >>> 0;
+    const completedRunScore = completedRun.record.finalScore >>> 0;
+
+    waitingForAutoRestartRef.current = true;
     dismissOverlay();
-  }, [
-    dismissOverlay,
-    endlessModeEnabled,
-    flow.hasPositiveScore,
-    flow.latestRun,
-    latestRunKey,
-    replayJobId,
-  ]);
-
-  useEffect(() => {
-    if (!endlessModeEnabled || replayJobId || !latestRunKey) {
-      return;
-    }
-    if (!flow.hasPositiveScore || !flow.canSubmitForProof) {
-      return;
-    }
-    if (autoSubmittedRunKeyRef.current === latestRunKey) {
-      return;
-    }
-
-    let cancelled = false;
-    autoSubmittedRunKeyRef.current = latestRunKey;
 
     void (async () => {
-      const submitted = await submitForProof();
-      if (cancelled || !submitted) {
+      if (!flow.wallet.isConnected || completedRunScore <= 0) {
         return;
       }
-      recordSubmissionFeedback(latestRunKey);
-      waitingForNextSeedRef.current = true;
-      autoDismissedRunKeyRef.current = latestRunKey;
-      dismissOverlay();
+
+      const pendingSeedBest =
+        pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
+      const knownSeedBest = Math.max(getKnownSeedScoreToBeat(completedRunSeedId), pendingSeedBest);
+      if (completedRunScore <= knownSeedBest) {
+        return;
+      }
+
+      const refreshedSeedBest = await refreshSeedScoreToBeat(completedRunSeedId, { force: true });
+      if (!isMountedRef.current || typeof refreshedSeedBest !== "number") {
+        return;
+      }
+      const latestPendingSeedBest =
+        pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
+      if (completedRunScore <= Math.max(refreshedSeedBest, latestPendingSeedBest)) {
+        return;
+      }
+
+      pendingEndlessSubmissionScoresRef.current.set(
+        completedRunSeedId,
+        Math.max(latestPendingSeedBest, completedRunScore),
+      );
+
+      const submitted = await submitRunForProof(completedRun);
+      const clearPendingScore = () => {
+        const pendingScore = pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
+        if (pendingScore <= completedRunScore) {
+          pendingEndlessSubmissionScoresRef.current.delete(completedRunSeedId);
+        }
+      };
+
+      if (!submitted) {
+        clearPendingScore();
+        return;
+      }
+
+      if (isMountedRef.current) {
+        noteSubmittedScore(completedRunSeedId, completedRunScore);
+      }
+      clearPendingScore();
+      if (isMountedRef.current) {
+        recordSubmissionFeedback(latestRunKey);
+      }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     dismissOverlay,
     endlessModeEnabled,
-    flow.canSubmitForProof,
-    flow.hasPositiveScore,
-    submitForProof,
-    latestRunKey,
-    recordSubmissionFeedback,
-    replayJobId,
-  ]);
-
-  useEffect(() => {
-    if (
-      !endlessModeEnabled ||
-      replayJobId ||
-      !latestRunKey ||
-      !flow.latestRun ||
-      !flow.hasPositiveScore ||
-      !flow.proof.job
-    ) {
-      return;
-    }
-    if (autoDismissedRunKeyRef.current === latestRunKey) {
-      return;
-    }
-
-    recordSubmissionFeedback(latestRunKey);
-    waitingForNextSeedRef.current = true;
-    autoDismissedRunKeyRef.current = latestRunKey;
-    dismissOverlay();
-  }, [
-    dismissOverlay,
-    endlessModeEnabled,
-    flow.hasPositiveScore,
     flow.latestRun,
-    flow.proof.job,
+    flow.wallet.isConnected,
+    getKnownSeedScoreToBeat,
     latestRunKey,
+    noteSubmittedScore,
     recordSubmissionFeedback,
+    refreshSeedScoreToBeat,
     replayJobId,
+    submitRunForProof,
   ]);
 
   useEffect(() => {
@@ -596,7 +593,7 @@ export function GamePageWrapper() {
       flow.latestRun ||
       seed === null ||
       seedId === null ||
-      !waitingForNextSeedRef.current
+      !waitingForAutoRestartRef.current
     ) {
       return;
     }
@@ -604,15 +601,8 @@ export function GamePageWrapper() {
     if (liveMode === "playing" || liveMode === "paused" || liveMode === "replay") {
       return;
     }
-    if (shouldHoldForNextSeed(seedId, lastCompletedSeedIdRef.current)) {
-      return;
-    }
-    if (lastAutoStartedSeedIdRef.current === seedId) {
-      return;
-    }
 
-    waitingForNextSeedRef.current = false;
-    lastAutoStartedSeedIdRef.current = seedId;
+    waitingForAutoRestartRef.current = false;
     setAutoStartSignal((signal) => signal + 1);
   }, [endlessModeEnabled, flow.latestRun, replayJobId, seed, seedId]);
 
