@@ -70,7 +70,7 @@ export function HeaderWallet() {
         <button
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            "flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-3 py-2 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
+            "flex max-w-full min-h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-border/40 bg-surface-dim px-2.5 py-2 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)] sm:gap-2 sm:px-3",
             open && "border-primary/40",
           )}
           aria-expanded={open}
@@ -146,7 +146,7 @@ export function HeaderWallet() {
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-3 py-2 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
+          "flex max-w-full min-h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-border/40 bg-surface-dim px-2.5 py-2 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)] sm:gap-2 sm:px-3",
           open && "border-primary/40",
         )}
         aria-expanded={open}
@@ -154,17 +154,17 @@ export function HeaderWallet() {
         aria-label="Account menu"
       >
         {/* Balance pill */}
-        <span className="flex items-center gap-1.5">
+        <span className="flex min-w-0 items-center gap-1.5">
           <Coins className="size-3.5 text-secondary" aria-hidden="true" />
-          <span className="font-display text-xs tabular-nums tracking-wide text-card-foreground">
+          <span className="truncate font-display text-xs tabular-nums tracking-wide text-card-foreground">
             {balance.formattedBalance}
           </span>
         </span>
 
-        <span className="h-4 w-px bg-border/40" aria-hidden="true" />
+        <span className="hidden h-4 w-px bg-border/40 xl:block" aria-hidden="true" />
 
         {/* Address */}
-        <span className="hidden items-center gap-1 sm:flex">
+        <span className="hidden items-center gap-1 xl:flex">
           <User className="size-3 text-muted-foreground" aria-hidden="true" />
           <span className="font-display text-xs text-muted-foreground">
             {abbreviateAddress(wallet.address)}

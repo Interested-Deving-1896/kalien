@@ -112,7 +112,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
       >
         <table
           data-slot="table"
-          className={cn("w-full border-collapse text-sm", className)}
+          className={cn("min-w-full border-collapse text-sm", className)}
           {...props}
         />
       </div>
@@ -142,7 +142,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "sticky top-0 z-[1] border-b border-[rgba(104,161,237,0.2)] bg-[rgba(6,14,24,0.94)] px-2 py-2 text-left align-top whitespace-normal break-words sm:py-2.5 sm:whitespace-nowrap",
+        "sticky top-0 z-[1] border-b border-[rgba(104,161,237,0.2)] bg-[rgba(6,14,24,0.94)] px-2 py-2 text-left align-middle whitespace-nowrap sm:py-2.5",
         "font-display text-xs tracking-wider uppercase text-[rgba(161,201,255,0.95)]",
         className,
       )}
@@ -166,7 +166,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "px-2 py-2 text-left align-top whitespace-normal break-words sm:py-2.5 sm:whitespace-nowrap",
+        "px-2 py-2 text-left align-middle whitespace-nowrap sm:py-2.5",
         className,
       )}
       {...props}

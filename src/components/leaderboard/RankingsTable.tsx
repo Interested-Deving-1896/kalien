@@ -71,9 +71,9 @@ function ReplayRunButton({
     <Button
       type="button"
       variant="ghost"
-      size="sm"
+      size="xs"
       className={cn(
-        "justify-center px-3 text-primary hover:bg-primary/10 hover:text-primary",
+        "justify-center px-2.5 text-primary hover:bg-primary/10 hover:text-primary sm:px-3",
         className,
       )}
       onClick={() => navigate(`/replay/${proofJobId}`)}

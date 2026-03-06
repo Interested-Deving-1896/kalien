@@ -44,8 +44,8 @@ export function RecentRunsTable({
       <Button
         type="button"
         variant="ghost"
-        size="sm"
-        className="justify-center px-3 text-primary hover:bg-primary/10 hover:text-primary"
+        size="xs"
+        className="justify-center px-2.5 text-primary hover:bg-primary/10 hover:text-primary sm:px-3"
         onClick={() => navigate(`/replay/${proofJobId}`)}
         title="Replay this run"
       >
