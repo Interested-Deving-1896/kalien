@@ -58,6 +58,17 @@ app.use("/api/*", async (c, next) => {
 app.route("/api", createApiRouter());
 app.route("/api/leaderboard", createLeaderboardPublicRouter());
 
+// Dev-only: manually trigger leaderboard sync (requires DEV_API_KEY)
+app.post("/api/dev/sync", async (c) => {
+  const key = c.env.DEV_API_KEY;
+  if (!key) return c.json({ success: false, error: "endpoint disabled" }, 404);
+  const auth = c.req.header("authorization");
+  if (auth !== `Bearer ${key}`) return c.json({ success: false, error: "unauthorized" }, 401);
+
+  const result = await runScheduledLeaderboardSync(c.env, Date.now());
+  return c.json({ success: true, result });
+});
+
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) {
     return c.json(
