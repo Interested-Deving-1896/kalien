@@ -73,6 +73,8 @@ export interface GameRenderState {
   gameTime: number;
   thrustActive: boolean;
   autopilotEnabled: boolean;
+  endlessModeEnabled: boolean;
+  endlessModeDetail: string | null;
   replayInfo: ReplayInfo | null;
   isReplaySession: boolean;
 }
@@ -888,14 +890,37 @@ export class GameRenderer {
 
     if (state.autopilotEnabled) {
       ctx.save();
+      ctx.textAlign = "center";
       ctx.font = "600 16px 'Monaspace Neon', 'Monaspace Krypton', monospace";
       ctx.shadowBlur = 15;
       ctx.shadowColor = "#22d3ee";
       ctx.fillStyle = "#22d3ee";
       const pulse = 0.7 + Math.sin(state.gameTime * 4) * 0.3;
       ctx.globalAlpha = pulse;
-      ctx.fillText("AUTOPILOT", WORLD_WIDTH / 2 - 50, 18);
+      ctx.fillText("AUTOPILOT", WORLD_WIDTH / 2, 18);
       ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    if (state.autopilotEnabled || state.endlessModeEnabled || state.endlessModeDetail) {
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = state.endlessModeEnabled ? "#22d3ee" : "#94a3b8";
+      ctx.fillStyle = state.endlessModeEnabled ? "#d6fff0" : "#b8c3d1";
+      ctx.font = "600 13px 'Monaspace Neon', 'Monaspace Krypton', monospace";
+      const endlessStatus = `ENDLESS ${state.endlessModeEnabled ? "ON" : "OFF"}`;
+      const statusY = state.autopilotEnabled ? 38 : 18;
+      ctx.fillText(endlessStatus, WORLD_WIDTH / 2, statusY);
+
+      if (state.endlessModeDetail) {
+        ctx.font = "500 10px 'Monaspace Krypton', monospace";
+        ctx.fillStyle = "#9ed6df";
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = "#164e63";
+        ctx.fillText(state.endlessModeDetail.toUpperCase(), WORLD_WIDTH / 2, statusY + 16);
+      }
+
       ctx.restore();
     }
 

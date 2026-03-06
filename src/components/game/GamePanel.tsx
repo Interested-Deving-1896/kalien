@@ -21,6 +21,12 @@ export interface GamePanelProps {
   onGameInstance?: (game: AsteroidsGame) => void;
   overlay?: React.ReactNode;
   replayJobId?: string | null;
+  autopilotEnabled?: boolean;
+  endlessModeEnabled?: boolean;
+  endlessModeDetail?: string | null;
+  onAutopilotStateChange?: (enabled: boolean) => void;
+  onToggleEndlessMode?: () => void;
+  autoStartSignal?: number;
   className?: string;
 }
 
@@ -98,6 +104,12 @@ export function GamePanel({
   onGameInstance,
   overlay,
   replayJobId,
+  autopilotEnabled = false,
+  endlessModeEnabled = false,
+  endlessModeDetail,
+  onAutopilotStateChange,
+  onToggleEndlessMode,
+  autoStartSignal = 0,
   className,
 }: GamePanelProps) {
   const gameRef = useRef<AsteroidsGame | null>(null);
@@ -107,6 +119,14 @@ export function GamePanel({
   const [isReplayLoading, setIsReplayLoading] = useState(Boolean(replayJobId));
   const [replayState, setReplayState] = useState<ReplaySessionState>(DEFAULT_REPLAY_STATE);
   const isReplayRoute = Boolean(replayJobId);
+
+  const syncAutopilotState = useCallback(
+    (enabled: boolean) => {
+      setAutopilotOn(enabled);
+      onAutopilotStateChange?.(enabled);
+    },
+    [onAutopilotStateChange],
+  );
 
   // Keep the game's pending seed in sync without re-rendering the full panel every second.
   useEffect(() => {
@@ -123,13 +143,13 @@ export function GamePanel({
     (g: AsteroidsGame) => {
       gameRef.current = g;
       setGameReady(true);
-      setAutopilotOn(false);
       const { seed, seedId, secondsLeft } = getSeedSnapshot();
       g.setCurrentSeed(seed, seedId, secondsLeft);
       g.setReplayPending(Boolean(replayJobId));
+      setAutopilotOn(autopilotEnabled || g.isAutopilotEnabled());
       onGameInstance?.(g);
     },
-    [replayJobId, onGameInstance],
+    [autopilotEnabled, onGameInstance, replayJobId],
   );
 
   // Keep onReplayStateChange in sync with the current replayJobId
@@ -157,10 +177,11 @@ export function GamePanel({
     fetchProofTape(replayJobId)
       .then(({ bytes }) => {
         if (controller.signal.aborted) {
-          return;
+          return undefined;
         }
         game.loadReplay(bytes);
         setIsReplayLoading(false);
+        return undefined;
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
@@ -168,6 +189,7 @@ export function GamePanel({
           setReplayError(err.message);
           setIsReplayLoading(false);
         }
+        return undefined;
       });
 
     return () => {
@@ -187,11 +209,78 @@ export function GamePanel({
     setReplayState(DEFAULT_REPLAY_STATE);
   }, [replayJobId]);
 
+  useEffect(() => {
+    if (!gameReady) {
+      return;
+    }
+
+    const game = gameRef.current;
+    if (!game) {
+      return;
+    }
+
+    game.onAutopilotStateChange = syncAutopilotState;
+    setAutopilotOn(autopilotEnabled || game.isAutopilotEnabled());
+
+    return () => {
+      if (game.onAutopilotStateChange === syncAutopilotState) {
+        game.onAutopilotStateChange = null;
+      }
+    };
+  }, [autopilotEnabled, gameReady, syncAutopilotState]);
+
+  useEffect(() => {
+    if (!gameReady || isReplayRoute || replayState.active) {
+      return;
+    }
+
+    const game = gameRef.current;
+    if (!game) {
+      return;
+    }
+
+    game.setAutopilotOnStart(autopilotEnabled);
+    if (game.getMode() !== "playing" && game.getMode() !== "paused") {
+      setAutopilotOn(autopilotEnabled);
+    }
+  }, [autopilotEnabled, gameReady, isReplayRoute, replayState.active]);
+
+  useEffect(() => {
+    if (!gameReady) {
+      return;
+    }
+
+    const game = gameRef.current;
+    if (!game) {
+      return;
+    }
+
+    if (isReplayRoute || replayState.active) {
+      game.setEndlessHudState(false, null);
+      return;
+    }
+
+    game.setEndlessHudState(endlessModeEnabled, endlessModeDetail ?? null);
+  }, [endlessModeDetail, endlessModeEnabled, gameReady, isReplayRoute, replayState.active]);
+
+  useEffect(() => {
+    if (!gameReady || isReplayRoute || autoStartSignal === 0) {
+      return;
+    }
+
+    const game = gameRef.current;
+    if (!game) {
+      return;
+    }
+
+    game.startNewGame();
+    syncAutopilotState(game.isAutopilotEnabled());
+  }, [autoStartSignal, gameReady, isReplayRoute, syncAutopilotState]);
+
   const handleToggleAutopilot = useCallback(() => {
     const current = gameRef.current;
     if (!current) return;
     current.toggleAutopilot();
-    setAutopilotOn(current.isAutopilotEnabled());
   }, []);
 
   const handleToggleReplayPause = useCallback(() => {
@@ -208,7 +297,6 @@ export function GamePanel({
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {
-      setAutopilotOn(false);
       onGameOver(run);
     },
     [onGameOver],
@@ -239,7 +327,12 @@ export function GamePanel({
         <AsteroidsCanvas onGameOver={handleGameOver} onGameReady={handleGameReady} />
 
         {!isReplayRoute && !replayState.active && (
-          <MobileAutopilotButton active={autopilotOn} onToggle={handleToggleAutopilot} />
+          <MobileAutopilotButton
+            active={autopilotOn}
+            onToggle={handleToggleAutopilot}
+            endlessEnabled={endlessModeEnabled}
+            onToggleEndless={onToggleEndlessMode}
+          />
         )}
 
         {replayState.active && !overlay && !replayError && (
@@ -295,7 +388,7 @@ export function GamePanel({
         )}
       </div>
 
-      <ControlsHint mode={controlsHintMode} />
+      <ControlsHint mode={controlsHintMode} endlessModeEnabled={endlessModeEnabled} />
     </section>
   );
 }

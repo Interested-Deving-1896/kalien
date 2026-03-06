@@ -24,6 +24,7 @@ export interface ProofProgressProps {
   claimStatus?: "idle" | "submitting" | "succeeded" | "failed";
   claimTxHash?: string | null;
   claimError?: string | null;
+  hintText?: string | null;
   className?: string;
 }
 
@@ -39,6 +40,7 @@ export function ProofProgress({
   claimStatus = "idle",
   claimTxHash,
   claimError,
+  hintText,
   className,
 }: ProofProgressProps) {
   const isSucceeded = status === "succeeded";
@@ -146,7 +148,8 @@ export function ProofProgress({
       {isBusy && (
         <>
           <p className="m-0 text-xs text-muted-foreground">
-            This can take a while. Feel free to play again or check your pending proofs.
+            {hintText ??
+              "This can take a while. Feel free to play again or check your pending proofs."}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             {onPlayAgain && (

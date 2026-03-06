@@ -6,9 +6,11 @@ type ControlsHintMode = "play" | "replay" | "replay-loading" | "replay-error";
 export function ControlsHint({
   className,
   mode = "play",
+  endlessModeEnabled = false,
 }: {
   className?: string;
   mode?: ControlsHintMode;
+  endlessModeEnabled?: boolean;
 }) {
   const isReplay = mode === "replay";
   const isReplayLoading = mode === "replay-loading";
@@ -46,6 +48,8 @@ export function ControlsHint({
             <Sep />
             <Kbd>Space</Kbd> fire
             <Sep />
+            <Kbd>E</Kbd> endless {endlessModeEnabled ? "on" : "off"}
+            <Sep />
             <Kbd>P</Kbd> pause
             <Sep />
             <Kbd>R</Kbd> restart
@@ -67,7 +71,7 @@ export function ControlsHint({
             ? "Loading replay. Live gameplay is locked."
             : isReplay
               ? "Use the replay controls below to pause, change speed, or exit."
-              : "Tap to start. Use the Autopilot button to play."}
+              : "Tap to start. Use the Auto and Endless controls to loop runs."}
       </p>
     </div>
   );

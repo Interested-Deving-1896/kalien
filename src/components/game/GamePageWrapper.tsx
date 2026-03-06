@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2";
 import Clock from "lucide-react/dist/esm/icons/clock";
 import ExternalLink from "lucide-react/dist/esm/icons/external-link";
@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils";
 import { HIGH_SCORE_THRESHOLD } from "@/consts";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { navigate, useLocation } from "@/hooks/useLocation";
+import { useSeed } from "@/hooks/useSeed";
+import type { CompletedGameRun } from "@/game/types";
 
 const FLOW_STEPS: Step[] = [
   { key: "play", label: "Play" },
@@ -40,14 +42,100 @@ function displayStepKey(step: GameFlowStep): string {
   return step === "wallet" ? "score" : step;
 }
 
+function formatCountdown(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT")
+  );
+}
+
+function getRunKey(flow: ReturnType<typeof useGameFlow>): string | null {
+  const run = flow.latestRun;
+  if (!run) {
+    return null;
+  }
+  return [run.endedAtMs, run.frameCount, run.record.seedId >>> 0, run.record.finalScore >>> 0].join(
+    ":",
+  );
+}
+
+function shouldHoldForNextSeed(
+  currentSeedId: number | null,
+  lastCompletedSeedId: number | null,
+): boolean {
+  return (
+    currentSeedId !== null && lastCompletedSeedId !== null && currentSeedId === lastCompletedSeedId
+  );
+}
+
+function getEndlessModeDetail(params: {
+  enabled: boolean;
+  replayJobId: string | null;
+  walletConnected: boolean;
+  latestRun: ReturnType<typeof useGameFlow>["latestRun"];
+  hasPositiveScore: boolean;
+  isSubmitting: boolean;
+  proofError: string | null;
+  seed: number | null;
+  seedId: number | null;
+  secondsLeft: number;
+  lastCompletedSeedId: number | null;
+  recentSubmissionActive: boolean;
+}): string | null {
+  const nextSeedLabel = `Next ${formatCountdown(params.secondsLeft)}`;
+
+  if (!params.enabled) {
+    return null;
+  }
+  if (params.replayJobId) {
+    return null;
+  }
+  if (!params.walletConnected) {
+    return "Connect wallet";
+  }
+  if (params.latestRun && params.proofError) {
+    return "Submit failed";
+  }
+  if (params.latestRun && params.isSubmitting) {
+    return "Submitting";
+  }
+  if (params.latestRun) {
+    if (!params.hasPositiveScore) {
+      return nextSeedLabel;
+    }
+    return params.recentSubmissionActive ? `Run submitted | ${nextSeedLabel}` : "Submitting";
+  }
+  if (params.seed === null || params.seedId === null) {
+    return params.recentSubmissionActive ? "Run submitted | Waiting seed" : "Waiting seed";
+  }
+  if (shouldHoldForNextSeed(params.seedId, params.lastCompletedSeedId)) {
+    return params.recentSubmissionActive ? `Run submitted | ${nextSeedLabel}` : nextSeedLabel;
+  }
+  if (params.recentSubmissionActive) {
+    return "Run submitted";
+  }
+  return null;
+}
+
 function GameOverOverlay({
   flow,
   replayJobId,
+  endlessModeEnabled,
   onRestartReplay,
   onPlayLive,
 }: {
   flow: ReturnType<typeof useGameFlow>;
   replayJobId: string | null;
+  endlessModeEnabled: boolean;
   onRestartReplay: () => void;
   onPlayLive: () => void;
 }) {
@@ -70,7 +158,6 @@ function GameOverOverlay({
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-[rgba(3,7,14,0.82)] backdrop-blur-sm">
       <div className="w-full max-w-sm px-4">
         <div className="flex max-h-[calc(100%-1rem)] flex-col gap-3 overflow-y-auto rounded-xl border border-border-subtle bg-[radial-gradient(circle_at_12%_8%,rgba(94,165,255,0.12),transparent_42%),linear-gradient(160deg,rgba(8,16,29,0.92),rgba(6,13,24,0.98))] p-[clamp(0.8rem,2vw,1.2rem)] shadow-elevated">
-          {/* Score display — compact inline */}
           <div className="flex items-center gap-3">
             <div
               className={cn(
@@ -99,7 +186,6 @@ function GameOverOverlay({
             </div>
           </div>
 
-          {/* Step Indicator */}
           {!isReplay && (
             <StepIndicator
               steps={FLOW_STEPS}
@@ -108,7 +194,6 @@ function GameOverOverlay({
             />
           )}
 
-          {/* Wallet Connect (only when not connected) */}
           {showWalletConnect && (
             <WalletConnect
               isConnected={flow.wallet.isConnected}
@@ -124,7 +209,6 @@ function GameOverOverlay({
             />
           )}
 
-          {/* Submit for Proof */}
           {showSubmitButton && !showProofProgress && (
             <SubmitScore
               onSubmit={flow.submitForProof}
@@ -135,7 +219,6 @@ function GameOverOverlay({
             />
           )}
 
-          {/* Proof Progress */}
           {showProofProgress && (
             <ProofProgress
               status={flow.proof.status}
@@ -145,14 +228,18 @@ function GameOverOverlay({
               error={flow.proof.error}
               elapsedMs={flow.proof.job?.result?.summary?.elapsedMs}
               verifiedScore={flow.proof.job?.result?.summary?.journal.final_score}
-              onPlayAgain={flow.dismissOverlay}
+              onPlayAgain={endlessModeEnabled ? undefined : flow.dismissOverlay}
               claimStatus={flow.claimStatus}
               claimTxHash={flow.claimTxHash}
               claimError={flow.claimError}
+              hintText={
+                endlessModeEnabled
+                  ? "Endless mode will queue this run now, then wait for the next seed before starting again."
+                  : undefined
+              }
             />
           )}
 
-          {/* Success state */}
           {showSuccessBanner && (
             <div className="flex flex-col items-center gap-2 rounded-lg border border-secondary/30 bg-[rgba(26,108,71,0.15)] px-3 py-3 text-center">
               <CheckCircle2 className="size-5 text-secondary" aria-hidden="true" />
@@ -179,7 +266,6 @@ function GameOverOverlay({
             </div>
           )}
 
-          {/* Dismiss actions */}
           {!flow.proof.isBusy &&
             !flow.proof.isSubmitting &&
             (isReplay ? (
@@ -228,23 +314,307 @@ export function GamePageWrapper() {
   const wallet = useWalletState();
   const balance = useBalanceState();
   const flow = useGameFlow({ wallet, balance });
-  const { dismissOverlay } = flow;
+  const { dismissOverlay, handleGameOver: handleFlowGameOver, submitForProof } = flow;
+  const { seed, seedId, secondsLeft } = useSeed();
   const gameRef = useRef<import("@/game/AsteroidsGame").AsteroidsGame | null>(null);
+  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
+  const [endlessModeEnabled, setEndlessModeEnabled] = useState(false);
+  const [autoStartSignal, setAutoStartSignal] = useState(0);
+  const autoSubmittedRunKeyRef = useRef<string | null>(null);
+  const autoDismissedRunKeyRef = useRef<string | null>(null);
+  const submittedFeedbackRunKeyRef = useRef<string | null>(null);
+  const lastCompletedSeedIdRef = useRef<number | null>(null);
+  const lastAutoStartedSeedIdRef = useRef<number | null>(null);
+  const waitingForNextSeedRef = useRef(false);
+  const [recentSubmissionAtMs, setRecentSubmissionAtMs] = useState<number | null>(null);
 
-  const handleGameInstance = useCallback((g: import("@/game/AsteroidsGame").AsteroidsGame) => {
-    gameRef.current = g;
+  const handleGameInstance = useCallback((game: import("@/game/AsteroidsGame").AsteroidsGame) => {
+    gameRef.current = game;
   }, []);
 
   const pathname = useLocation();
   const replayJobId = pathname.match(/^\/replay\/(.+)$/)?.[1] ?? null;
+  const latestRunKey = getRunKey(flow);
+  const recentSubmissionActive =
+    recentSubmissionAtMs !== null && Date.now() - recentSubmissionAtMs < 6_000;
+  const endlessModeDetail = useMemo(
+    () =>
+      getEndlessModeDetail({
+        enabled: endlessModeEnabled,
+        replayJobId,
+        walletConnected: flow.wallet.isConnected,
+        latestRun: flow.latestRun,
+        hasPositiveScore: flow.hasPositiveScore,
+        isSubmitting: flow.proof.isSubmitting,
+        proofError: flow.proof.error,
+        seed,
+        seedId,
+        secondsLeft,
+        lastCompletedSeedId: lastCompletedSeedIdRef.current,
+        recentSubmissionActive,
+      }),
+    [
+      endlessModeEnabled,
+      replayJobId,
+      flow.wallet.isConnected,
+      flow.latestRun,
+      flow.hasPositiveScore,
+      flow.proof.isSubmitting,
+      flow.proof.error,
+      seed,
+      seedId,
+      secondsLeft,
+      recentSubmissionActive,
+    ],
+  );
 
-  // Redirect legacy ?replay=<id> query param to /replay/<id> route
+  const recordSubmissionFeedback = useCallback((runKey: string) => {
+    if (submittedFeedbackRunKeyRef.current === runKey) {
+      return;
+    }
+    submittedFeedbackRunKeyRef.current = runKey;
+    setRecentSubmissionAtMs(Date.now());
+  }, []);
+
   useEffect(() => {
     if (!replayJobId) {
       const id = new URLSearchParams(window.location.search).get("replay");
       if (id) navigate(`/replay/${id}`);
     }
   }, [replayJobId]);
+
+  useEffect(() => {
+    if (!latestRunKey) {
+      autoSubmittedRunKeyRef.current = null;
+      autoDismissedRunKeyRef.current = null;
+    }
+  }, [latestRunKey]);
+
+  useEffect(() => {
+    if (!endlessModeEnabled) {
+      waitingForNextSeedRef.current = false;
+      autoSubmittedRunKeyRef.current = null;
+    }
+  }, [endlessModeEnabled]);
+
+  const handleAutopilotStateChange = useCallback((enabled: boolean) => {
+    setAutopilotEnabled(enabled);
+    if (!enabled) {
+      waitingForNextSeedRef.current = false;
+      setEndlessModeEnabled(false);
+    }
+  }, []);
+
+  const startLiveRunWithMode = useCallback(
+    ({ autopilot, endless }: { autopilot: boolean; endless: boolean }) => {
+      if (replayJobId || gameRef.current?.getMode() === "replay") {
+        return;
+      }
+
+      waitingForNextSeedRef.current = false;
+      autoSubmittedRunKeyRef.current = null;
+      autoDismissedRunKeyRef.current = null;
+      setRecentSubmissionAtMs(null);
+      setAutopilotEnabled(autopilot);
+      setEndlessModeEnabled(endless);
+
+      const game = gameRef.current;
+      if (!game) {
+        setAutoStartSignal((signal) => signal + 1);
+        return;
+      }
+
+      game.setAutopilotOnStart(autopilot);
+      game.startNewGame();
+      game.clearBufferedInput();
+    },
+    [replayJobId],
+  );
+
+  const handleToggleEndlessMode = useCallback(() => {
+    if (replayJobId || gameRef.current?.getMode() === "replay") {
+      return;
+    }
+    if (!autopilotEnabled) {
+      setAutopilotEnabled(true);
+      setEndlessModeEnabled(true);
+      return;
+    }
+    setEndlessModeEnabled((enabled) => !enabled);
+  }, [autopilotEnabled, replayJobId]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isAutopilotHotkey = event.code === "KeyA";
+      const isEndlessHotkey = event.code === "KeyE";
+      const mode = gameRef.current?.getMode() ?? null;
+
+      if (
+        event.repeat ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey ||
+        (!isAutopilotHotkey && !isEndlessHotkey) ||
+        replayJobId ||
+        mode === "replay" ||
+        isEditableTarget(event.target)
+      ) {
+        return;
+      }
+
+      if (mode === null || mode === "menu") {
+        event.preventDefault();
+        startLiveRunWithMode({
+          autopilot: true,
+          endless: isEndlessHotkey,
+        });
+        return;
+      }
+
+      if (!isEndlessHotkey) {
+        return;
+      }
+
+      event.preventDefault();
+      handleToggleEndlessMode();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleToggleEndlessMode, replayJobId, startLiveRunWithMode]);
+
+  const handleGameOver = useCallback(
+    (run: CompletedGameRun) => {
+      lastCompletedSeedIdRef.current = run.record.seedId >>> 0;
+      handleFlowGameOver(run);
+    },
+    [handleFlowGameOver],
+  );
+
+  useEffect(() => {
+    if (
+      !endlessModeEnabled ||
+      replayJobId ||
+      !latestRunKey ||
+      !flow.latestRun ||
+      flow.hasPositiveScore
+    ) {
+      return;
+    }
+    if (autoDismissedRunKeyRef.current === latestRunKey) {
+      return;
+    }
+
+    waitingForNextSeedRef.current = true;
+    autoDismissedRunKeyRef.current = latestRunKey;
+    dismissOverlay();
+  }, [
+    dismissOverlay,
+    endlessModeEnabled,
+    flow.hasPositiveScore,
+    flow.latestRun,
+    latestRunKey,
+    replayJobId,
+  ]);
+
+  useEffect(() => {
+    if (!endlessModeEnabled || replayJobId || !latestRunKey) {
+      return;
+    }
+    if (!flow.hasPositiveScore || !flow.canSubmitForProof) {
+      return;
+    }
+    if (autoSubmittedRunKeyRef.current === latestRunKey) {
+      return;
+    }
+
+    let cancelled = false;
+    autoSubmittedRunKeyRef.current = latestRunKey;
+
+    void (async () => {
+      const submitted = await submitForProof();
+      if (cancelled || !submitted) {
+        return;
+      }
+      recordSubmissionFeedback(latestRunKey);
+      waitingForNextSeedRef.current = true;
+      autoDismissedRunKeyRef.current = latestRunKey;
+      dismissOverlay();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    dismissOverlay,
+    endlessModeEnabled,
+    flow.canSubmitForProof,
+    flow.hasPositiveScore,
+    submitForProof,
+    latestRunKey,
+    recordSubmissionFeedback,
+    replayJobId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !endlessModeEnabled ||
+      replayJobId ||
+      !latestRunKey ||
+      !flow.latestRun ||
+      !flow.hasPositiveScore ||
+      !flow.proof.job
+    ) {
+      return;
+    }
+    if (autoDismissedRunKeyRef.current === latestRunKey) {
+      return;
+    }
+
+    recordSubmissionFeedback(latestRunKey);
+    waitingForNextSeedRef.current = true;
+    autoDismissedRunKeyRef.current = latestRunKey;
+    dismissOverlay();
+  }, [
+    dismissOverlay,
+    endlessModeEnabled,
+    flow.hasPositiveScore,
+    flow.latestRun,
+    flow.proof.job,
+    latestRunKey,
+    recordSubmissionFeedback,
+    replayJobId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !endlessModeEnabled ||
+      replayJobId ||
+      flow.latestRun ||
+      seed === null ||
+      seedId === null ||
+      !waitingForNextSeedRef.current
+    ) {
+      return;
+    }
+    const liveMode = gameRef.current?.getMode() ?? null;
+    if (liveMode === "playing" || liveMode === "paused" || liveMode === "replay") {
+      return;
+    }
+    if (shouldHoldForNextSeed(seedId, lastCompletedSeedIdRef.current)) {
+      return;
+    }
+    if (lastAutoStartedSeedIdRef.current === seedId) {
+      return;
+    }
+
+    waitingForNextSeedRef.current = false;
+    lastAutoStartedSeedIdRef.current = seedId;
+    setAutoStartSignal((signal) => signal + 1);
+  }, [endlessModeEnabled, flow.latestRun, replayJobId, seed, seedId]);
 
   const handleRestartReplay = useCallback(() => {
     if (replayJobId) {
@@ -264,6 +634,7 @@ export function GamePageWrapper() {
     <GameOverOverlay
       flow={flow}
       replayJobId={replayJobId}
+      endlessModeEnabled={endlessModeEnabled}
       onRestartReplay={handleRestartReplay}
       onPlayLive={handlePlayLive}
     />
@@ -273,10 +644,16 @@ export function GamePageWrapper() {
     <PageShell className="grid-rows-[auto_1fr] content-start">
       <h1 className="sr-only">Kalien: Play and prove your Asteroids score</h1>
       <GamePanel
-        onGameOver={flow.handleGameOver}
+        onGameOver={handleGameOver}
         onGameInstance={handleGameInstance}
         overlay={overlay}
         replayJobId={replayJobId}
+        autopilotEnabled={autopilotEnabled}
+        endlessModeEnabled={endlessModeEnabled}
+        endlessModeDetail={endlessModeDetail}
+        onAutopilotStateChange={handleAutopilotStateChange}
+        onToggleEndlessMode={handleToggleEndlessMode}
+        autoStartSignal={autoStartSignal}
       />
     </PageShell>
   );

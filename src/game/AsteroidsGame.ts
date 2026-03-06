@@ -164,6 +164,22 @@ function clearanceSqQ12_4(
   return dx * dx + dy * dy - hitDistQ12_4 * hitDistQ12_4;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    return true;
+  }
+
+  if (target instanceof HTMLSelectElement) {
+    return true;
+  }
+
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
 export interface GameConfig {
   canvas?: HTMLCanvasElement;
   headless?: boolean;
@@ -195,6 +211,9 @@ export class AsteroidsGame {
   private readonly audio = new AudioSystem();
 
   private readonly autopilot: Autopilot;
+  private autopilotOnStart = false;
+  private endlessModeEnabled = false;
+  private endlessModeDetail: string | null = null;
 
   private mode: GameMode = "menu";
 
@@ -270,6 +289,7 @@ export class AsteroidsGame {
 
   // Notifies UI when entering or exiting a replay session
   onReplayStateChange: ((state: ReplaySessionState) => void) | null = null;
+  onAutopilotStateChange: ((enabled: boolean) => void) | null = null;
 
   // Current frame input (read at start of updateSimulation, used by updateShip)
   private currentFrameInput: {
@@ -287,11 +307,19 @@ export class AsteroidsGame {
   private shipFireLatch = false;
 
   private readonly keyDownHandler = (event: KeyboardEvent): void => {
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
+      this.audio.enable();
+    }
     this.input.handleKeyDown(event);
   };
 
   private readonly keyUpHandler = (event: KeyboardEvent): void => {
     this.input.handleKeyUp(event);
+  };
+
+  // Prime audio from any trusted tap/click, even if the gesture lands on UI chrome instead of the canvas.
+  private readonly userGesturePointerHandler = (): void => {
+    this.audio.enable();
   };
 
   private readonly visibilityHandler = (): void => {
@@ -386,6 +414,7 @@ export class AsteroidsGame {
   private attachEvents(): void {
     window.addEventListener("keydown", this.keyDownHandler, { passive: false });
     window.addEventListener("keyup", this.keyUpHandler, { passive: false });
+    window.addEventListener("pointerdown", this.userGesturePointerHandler, { passive: true });
     window.addEventListener("resize", this.resizeHandler);
     document.addEventListener("visibilitychange", this.visibilityHandler);
     this.canvas?.addEventListener("pointerdown", this.pointerDownHandler);
@@ -394,6 +423,7 @@ export class AsteroidsGame {
   private detachEvents(): void {
     window.removeEventListener("keydown", this.keyDownHandler);
     window.removeEventListener("keyup", this.keyUpHandler);
+    window.removeEventListener("pointerdown", this.userGesturePointerHandler);
     window.removeEventListener("resize", this.resizeHandler);
     document.removeEventListener("visibilitychange", this.visibilityHandler);
     this.canvas?.removeEventListener("pointerdown", this.pointerDownHandler);
@@ -519,7 +549,7 @@ export class AsteroidsGame {
 
     // Toggle autopilot with 'A' key
     if (this.input.consumePress("KeyA") && this.mode === "playing") {
-      this.autopilot.toggle();
+      this.toggleAutopilot();
     }
 
     // Download tape with 'D' key in game-over
@@ -604,7 +634,7 @@ export class AsteroidsGame {
     this.ship = this.createShip();
     this.shipFireLatch = false;
     this.renderer?.reset();
-    this.autopilot.setEnabled(false);
+    this.setAutopilotEnabled(this.autopilotOnStart, { notify: false });
 
     // Set up recording
     this.recorder = new TapeRecorder();
@@ -1523,6 +1553,13 @@ export class AsteroidsGame {
 
   /** Build the render state snapshot for the renderer. */
   private buildRenderState(): GameRenderState {
+    const autopilotHudEnabled =
+      this.autopilot.isEnabled() ||
+      (this.autopilotOnStart &&
+        !this.replayPending &&
+        this.replayTape === null &&
+        this.mode !== "replay");
+
     return {
       ship: this.ship,
       asteroids: this.asteroids,
@@ -1539,7 +1576,9 @@ export class AsteroidsGame {
       pendingSeedSecondsLeft: this.pendingSeedSecondsLeft,
       gameTime: this.gameTime,
       thrustActive: this.currentFrameInput.thrust,
-      autopilotEnabled: this.autopilot.isEnabled(),
+      autopilotEnabled: autopilotHudEnabled,
+      endlessModeEnabled: this.endlessModeEnabled,
+      endlessModeDetail: this.endlessModeDetail,
       replayInfo: this.replayTapeSource
         ? {
             currentFrame: this.replayTapeSource.getCurrentFrame(),
@@ -1593,17 +1632,34 @@ export class AsteroidsGame {
   /** Toggle autopilot on/off (for mobile UI button). */
   toggleAutopilot(): void {
     if (this.mode === "playing") {
-      this.autopilot.toggle();
+      this.setAutopilotEnabled(!this.autopilot.isEnabled());
+    }
+  }
+
+  /** Keep autopilot armed for the current run and the next live game start. */
+  setAutopilotOnStart(enabled: boolean): void {
+    this.autopilotOnStart = enabled;
+    if (enabled && (this.mode === "playing" || this.mode === "paused")) {
+      this.setAutopilotEnabled(true);
+    } else if (!enabled && this.mode !== "playing" && this.mode !== "paused") {
+      this.setAutopilotEnabled(false, { notify: false });
     }
   }
 
   isAutopilotEnabled(): boolean {
     return this.autopilot.isEnabled();
   }
+  clearBufferedInput(): void {
+    this.input.clearPressed();
+  }
+  setEndlessHudState(enabled: boolean, detail: string | null): void {
+    this.endlessModeEnabled = enabled;
+    this.endlessModeDetail = detail;
+  }
   setReplayPending(pending: boolean): void {
     this.replayPending = pending;
     if (pending) {
-      this.autopilot.setEnabled(false);
+      this.setAutopilotEnabled(false, { notify: false });
     }
   }
   getReplaySessionState(): ReplaySessionState {
@@ -1717,6 +1773,13 @@ export class AsteroidsGame {
     this.onReplayStateChange?.(this.getReplaySessionState());
   }
 
+  private setAutopilotEnabled(enabled: boolean, options?: { notify?: boolean }): void {
+    this.autopilot.setEnabled(enabled);
+    if (options?.notify !== false) {
+      this.onAutopilotStateChange?.(this.autopilot.isEnabled());
+    }
+  }
+
   private resetToMenu(): void {
     const wasReplay = this.replayTape !== null;
     this.mode = "menu";
@@ -1729,7 +1792,7 @@ export class AsteroidsGame {
     this.ship = this.createShip();
     this.shipFireLatch = false;
     this.renderer?.reset();
-    this.autopilot.setEnabled(false);
+    this.setAutopilotEnabled(false, { notify: false });
     this.replayPending = false;
     this.replayTapeSource = null;
     this.replayTape = null;

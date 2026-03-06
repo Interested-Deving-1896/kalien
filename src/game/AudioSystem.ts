@@ -1,27 +1,30 @@
 const MUSIC_URL = "https://api.smol.xyz/song/a956a62b-6862-4276-816d-45d7cbda35f8.mp3";
-const MUSIC_VOLUME = 0.15;
+const MUSIC_VOLUME = 0.2;
+const DEFAULT_SFX_VOLUME = 0.5;
 
 export class AudioSystem {
   private ctx: AudioContext | null = null;
   private enabled = true;
-  private volume = 0.4;
+  private volume = DEFAULT_SFX_VOLUME;
 
   private musicEl: HTMLAudioElement | null = null;
   private muted = false;
+  private musicRequested = false;
+  private musicRestartRequested = false;
+  private musicPrimed = false;
+  private musicPrimePromise: Promise<void> | null = null;
 
   enable(): void {
-    if (typeof window === "undefined") {
+    const ctx = this.ensureContext();
+    if (!ctx) {
       return;
     }
-    if (!this.ctx) {
-      this.ctx = new (
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      )();
-    }
+
     if (this.ctx?.state === "suspended") {
-      this.ctx.resume();
+      void this.ctx.resume().catch(() => {});
     }
+
+    void this.primeMusic();
   }
 
   setEnabled(enabled: boolean): void {
@@ -124,37 +127,27 @@ export class AudioSystem {
 
   /** Start (or restart) the background music track. */
   playMusic(): void {
-    if (typeof Audio === "undefined") {
-      return;
-    }
-    if (!this.musicEl) {
-      this.musicEl = new Audio(MUSIC_URL);
-      this.musicEl.loop = true;
-      this.musicEl.volume = MUSIC_VOLUME;
-    }
-    this.musicEl.currentTime = 0;
-    this.musicEl.muted = this.muted;
-    this.musicEl.play().catch(() => {});
+    this.musicRequested = true;
+    this.musicRestartRequested = true;
+    this.syncMusicPlayback();
   }
 
   /** Resume background music from current position. */
   resumeMusic(): void {
-    if (typeof Audio === "undefined") {
-      return;
-    }
-    if (this.musicEl) {
-      this.musicEl.muted = this.muted;
-      this.musicEl.play().catch(() => {});
-    }
+    this.musicRequested = true;
+    this.syncMusicPlayback();
   }
 
   /** Pause background music (keeps position). */
   pauseMusic(): void {
+    this.musicRequested = false;
     this.musicEl?.pause();
   }
 
   /** Stop music and reset to beginning. */
   stopMusic(): void {
+    this.musicRequested = false;
+    this.musicRestartRequested = false;
     if (this.musicEl) {
       this.musicEl.pause();
       this.musicEl.currentTime = 0;
@@ -168,11 +161,115 @@ export class AudioSystem {
     if (this.musicEl) {
       this.musicEl.muted = this.muted;
     }
+    if (!this.muted && this.musicRequested) {
+      this.syncMusicPlayback();
+    }
     return this.muted;
   }
 
   isMuted(): boolean {
     return this.muted;
+  }
+
+  private ensureContext(): AudioContext | null {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    if (!this.ctx) {
+      this.ctx = new (
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      )();
+    }
+
+    return this.ctx;
+  }
+
+  private ensureMusicElement(): HTMLAudioElement | null {
+    if (typeof Audio === "undefined") {
+      return null;
+    }
+
+    if (!this.musicEl) {
+      this.musicEl = new Audio(MUSIC_URL);
+      this.musicEl.loop = true;
+      this.musicEl.preload = "auto";
+      this.musicEl.volume = MUSIC_VOLUME;
+    }
+
+    return this.musicEl;
+  }
+
+  private syncMusicPlayback(): void {
+    const musicEl = this.ensureMusicElement();
+    if (!musicEl) {
+      return;
+    }
+
+    musicEl.volume = MUSIC_VOLUME;
+    musicEl.muted = this.muted;
+
+    if (this.musicRestartRequested) {
+      musicEl.currentTime = 0;
+      this.musicRestartRequested = false;
+    }
+
+    if (!this.musicRequested) {
+      musicEl.pause();
+      return;
+    }
+
+    void musicEl.play().catch(() => {});
+  }
+
+  private async primeMusic(): Promise<void> {
+    const musicEl = this.ensureMusicElement();
+    if (!musicEl || this.musicPrimed) {
+      return;
+    }
+    if (this.musicPrimePromise) {
+      await this.musicPrimePromise;
+      return;
+    }
+
+    const wasRequested = this.musicRequested;
+    const previousTime = musicEl.currentTime;
+    musicEl.volume = MUSIC_VOLUME;
+    musicEl.muted = true;
+
+    this.musicPrimePromise = musicEl
+      .play()
+      .then(() => {
+        this.musicPrimed = true;
+        return undefined;
+      })
+      .catch(() => {
+        // Retry on the next trusted user interaction if autoplay is still blocked.
+        return undefined;
+      })
+      .finally(() => {
+        if (!this.musicRequested) {
+          musicEl.pause();
+          if (!wasRequested) {
+            musicEl.currentTime = previousTime;
+          }
+        } else if (this.musicRestartRequested) {
+          musicEl.currentTime = 0;
+          this.musicRestartRequested = false;
+        }
+
+        musicEl.muted = this.muted;
+        musicEl.volume = MUSIC_VOLUME;
+
+        if (this.musicRequested) {
+          void musicEl.play().catch(() => {});
+        }
+
+        this.musicPrimePromise = null;
+      });
+
+    await this.musicPrimePromise;
   }
 
   private createNoiseBuffer(duration: number): AudioBuffer {

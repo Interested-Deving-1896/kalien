@@ -16,7 +16,7 @@ export interface UseGameFlowReturn {
   hasPositiveScore: boolean;
   handleGameOver: (run: CompletedGameRun) => void;
   dismissOverlay: () => void;
-  submitForProof: () => Promise<void>;
+  submitForProof: () => Promise<boolean>;
   loadTapeFile: () => void;
   claimStatus: "idle" | "submitting" | "succeeded" | "failed";
   claimTxHash: string | null;
@@ -92,9 +92,9 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
 
   const submitForProof = useCallback(async () => {
     if (!latestRun) {
-      return;
+      return false;
     }
-    await submitRun(latestRun, wallet.address);
+    return submitRun(latestRun, wallet.address);
   }, [latestRun, submitRun, wallet.address]);
 
   const canSubmitForProof =

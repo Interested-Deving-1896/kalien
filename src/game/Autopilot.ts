@@ -145,10 +145,10 @@ export class Autopilot {
   /** Enable or disable the autopilot */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    if (!enabled) {
-      this.debugTarget = null;
-      this.debugThreats = [];
-    }
+    this.lastShotTime = 0;
+    this.debugTarget = null;
+    this.debugThreats = [];
+    this.lurkPressure = false;
   }
 
   isEnabled(): boolean {
