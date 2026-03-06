@@ -123,25 +123,43 @@ body {
 /* Table mobile scroll-hint gradient */
 .table-scroll-hint {
   position: relative;
+  --table-scroll-hint-width: 14px;
+  --table-scroll-hint-color: rgba(6, 14, 24, 0.34);
 }
 
+.table-scroll-hint::before,
 .table-scroll-hint::after {
   content: "";
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 40px;
+  top: 1px;
+  bottom: 1px;
+  width: var(--table-scroll-hint-width);
   pointer-events: none;
-  background: linear-gradient(90deg, transparent, rgba(6, 14, 24, 0.85));
-  border-radius: 0 10px 10px 0;
   opacity: 0;
   transition: opacity 200ms ease;
 }
 
+.table-scroll-hint::before {
+  left: 1px;
+  background: linear-gradient(90deg, var(--table-scroll-hint-color), transparent);
+  border-radius: 10px 0 0 10px;
+}
+
+.table-scroll-hint::after {
+  right: 1px;
+  background: linear-gradient(90deg, transparent, var(--table-scroll-hint-color));
+  border-radius: 0 10px 10px 0;
+}
+
 @media (max-width: 760px) {
-  .table-scroll-hint::after {
+  .table-scroll-hint[data-scrollable="true"][data-scroll-left="true"]::before,
+  .table-scroll-hint[data-scrollable="true"][data-scroll-right="true"]::after {
     opacity: 1;
+  }
+
+  .table-scroll-hint[data-scrolling="true"][data-scroll-left="true"]::before,
+  .table-scroll-hint[data-scrolling="true"][data-scroll-right="true"]::after {
+    opacity: 0.16;
   }
 }
 
