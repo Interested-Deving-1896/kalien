@@ -290,6 +290,12 @@ impl PredatorBot {
     }
 }
 
+impl Default for PredatorBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutopilotBot for PredatorBot {
     fn id(&self) -> &'static str {
         "claude-predator"

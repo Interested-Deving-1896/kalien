@@ -207,6 +207,12 @@ impl TortoiseBot {
     }
 }
 
+impl Default for TortoiseBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutopilotBot for TortoiseBot {
     fn id(&self) -> &'static str {
         "claude-tortoise"

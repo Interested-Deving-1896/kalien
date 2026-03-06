@@ -264,6 +264,12 @@ impl ChimeraBot {
     }
 }
 
+impl Default for ChimeraBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutopilotBot for ChimeraBot {
     fn id(&self) -> &'static str {
         "claude-chimera"

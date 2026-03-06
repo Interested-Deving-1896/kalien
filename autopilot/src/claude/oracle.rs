@@ -251,6 +251,12 @@ impl OracleBot {
     }
 }
 
+impl Default for OracleBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutopilotBot for OracleBot {
     fn id(&self) -> &'static str {
         "claude-oracle"
