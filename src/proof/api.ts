@@ -366,8 +366,7 @@ function extractFilename(contentDisposition: string | null, fallback: string): s
 function isTapeContentType(contentType: string | null): boolean {
   const normalized = contentType?.toLowerCase() ?? "";
   return (
-    normalized.includes("application/octet-stream") ||
-    normalized.includes("application/x-binary")
+    normalized.includes("application/octet-stream") || normalized.includes("application/x-binary")
   );
 }
 
