@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import type { CompletedGameRun } from "../game/types";
 import { deserializeTape } from "../game/tape";
 import type { UseWalletReturn } from "./useWallet";
@@ -37,16 +37,17 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
   const proof = useProofJob({
     onClaimSucceeded: balance.refresh,
   });
+  const { clear, clearError, setError, submitRun } = proof;
 
   const hasPositiveScore = (latestRun?.record.finalScore ?? 0) > 0;
 
   const handleGameOver = useCallback(
     (run: CompletedGameRun) => {
       setLatestRun(run);
-      proof.clearError();
-      proof.clear();
+      clearError();
+      clear();
     },
-    [proof],
+    [clear, clearError],
   );
 
   const dismissOverlay = useCallback(() => {
@@ -78,23 +79,23 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
             frameCount: tape.header.frameCount,
             endedAtMs: Date.now(),
           });
-          proof.clearError();
-          proof.clear();
+          clearError();
+          clear();
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          proof.setError(`failed to load tape file: ${detail}`);
+          setError(`failed to load tape file: ${detail}`);
         }
       })();
     });
     input.click();
-  }, [proof]);
+  }, [clear, clearError, setError]);
 
   const submitForProof = useCallback(async () => {
     if (!latestRun) {
       return;
     }
-    await proof.submitRun(latestRun, wallet.address);
-  }, [latestRun, proof, wallet.address]);
+    await submitRun(latestRun, wallet.address);
+  }, [latestRun, submitRun, wallet.address]);
 
   const canSubmitForProof =
     Boolean(latestRun) &&
@@ -104,39 +105,32 @@ export function useGameFlow(deps: UseGameFlowDeps): UseGameFlowReturn {
     wallet.isConnected &&
     !wallet.isBusy;
 
-  const claimStatus = useMemo<"idle" | "submitting" | "succeeded" | "failed">(() => {
-    const proofStatus = proof.job?.status;
-    const status = proof.job?.claim.status;
-    if (proofStatus !== "succeeded" || !status) {
-      return "idle";
+  const proofStatus = proof.job?.status;
+  const jobClaimStatus = proof.job?.claim.status;
+  let claimStatus: "idle" | "submitting" | "succeeded" | "failed" = "idle";
+  if (proofStatus === "succeeded" && jobClaimStatus) {
+    if (jobClaimStatus === "succeeded") {
+      claimStatus = "succeeded";
+    } else if (jobClaimStatus === "failed") {
+      claimStatus = "failed";
+    } else {
+      // queued | submitting | retrying all map to "submitting" in this UI.
+      claimStatus = "submitting";
     }
-    if (status === "succeeded") {
-      return "succeeded";
-    }
-    if (status === "failed") {
-      return "failed";
-    }
-    // queued | submitting | retrying all map to "submitting" in this UI.
-    return "submitting";
-  }, [proof.job?.status, proof.job?.claim.status]);
+  }
   const claimTxHash = proof.job?.claim.txHash ?? null;
   const claimError = claimStatus === "failed" ? (proof.job?.claim.lastError ?? null) : null;
 
-  const currentStep = useMemo<GameFlowStep>(() => {
-    if (proof.job?.status === "succeeded") {
-      return "earn";
-    }
-    if (proof.isBusy) {
-      return "prove";
-    }
-    if (latestRun && !wallet.isConnected) {
-      return "wallet";
-    }
-    if (latestRun) {
-      return "score";
-    }
-    return "play";
-  }, [latestRun, wallet.isConnected, proof.isBusy, proof.job?.status]);
+  let currentStep: GameFlowStep = "play";
+  if (proof.job?.status === "succeeded") {
+    currentStep = "earn";
+  } else if (proof.isBusy) {
+    currentStep = "prove";
+  } else if (latestRun && !wallet.isConnected) {
+    currentStep = "wallet";
+  } else if (latestRun) {
+    currentStep = "score";
+  }
 
   return {
     currentStep,

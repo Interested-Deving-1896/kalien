@@ -1,4 +1,5 @@
-import { Loader2, Shield } from "lucide-react";
+import Loader2 from "lucide-react/dist/esm/icons/loader-2";
+import Shield from "lucide-react/dist/esm/icons/shield";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 

@@ -1,27 +1,33 @@
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useContext } from "react";
 import { useWallet, type UseWalletReturn } from "@/hooks/useWallet";
 import { useTokenBalance, type UseTokenBalanceReturn } from "@/hooks/useTokenBalance";
 
-interface WalletContextValue {
-  wallet: UseWalletReturn;
-  balance: UseTokenBalanceReturn;
-}
-
-const WalletContext = createContext<WalletContextValue | null>(null);
+const WalletStateContext = createContext<UseWalletReturn | null>(null);
+const TokenBalanceContext = createContext<UseTokenBalanceReturn | null>(null);
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const wallet = useWallet();
   const balance = useTokenBalance(wallet.address);
 
-  const value = useMemo(() => ({ wallet, balance }), [wallet, balance]);
-
-  return <WalletContext value={value}>{children}</WalletContext>;
+  return (
+    <WalletStateContext value={wallet}>
+      <TokenBalanceContext value={balance}>{children}</TokenBalanceContext>
+    </WalletStateContext>
+  );
 }
 
-export function useWalletContext(): WalletContextValue {
-  const ctx = useContext(WalletContext);
-  if (!ctx) {
-    throw new Error("useWalletContext must be used inside <WalletProvider>");
+export function useWalletState(): UseWalletReturn {
+  const wallet = useContext(WalletStateContext);
+  if (!wallet) {
+    throw new Error("useWalletState must be used inside <WalletProvider>");
   }
-  return ctx;
+  return wallet;
+}
+
+export function useBalanceState(): UseTokenBalanceReturn {
+  const balance = useContext(TokenBalanceContext);
+  if (!balance) {
+    throw new Error("useBalanceState must be used inside <WalletProvider>");
+  }
+  return balance;
 }

@@ -54,6 +54,12 @@ function App() {
             <LazyPublicProofsPage />
           </Suspense>
         </ErrorBoundary>
+      ) : pathname.startsWith("/replay/") ? (
+        <ErrorBoundary key={pathname}>
+          <Suspense fallback={<SuspenseFallback />}>
+            <LazyGamePage />
+          </Suspense>
+        </ErrorBoundary>
       ) : (
         <ErrorBoundary key={pathname}>
           <Suspense fallback={<SuspenseFallback />}>

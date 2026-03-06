@@ -1,14 +1,22 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Coins, ChevronDown, LogOut, Loader2, User, Copy, Check, UserPlus } from "lucide-react";
+import Check from "lucide-react/dist/esm/icons/check";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
+import Coins from "lucide-react/dist/esm/icons/coins";
+import Copy from "lucide-react/dist/esm/icons/copy";
+import Loader2 from "lucide-react/dist/esm/icons/loader-2";
+import LogOut from "lucide-react/dist/esm/icons/log-out";
+import User from "lucide-react/dist/esm/icons/user";
+import UserPlus from "lucide-react/dist/esm/icons/user-plus";
 import { cn } from "@/lib/utils";
-import { useWalletContext } from "@/contexts/WalletContext";
+import { useBalanceState, useWalletState } from "@/contexts/WalletContext";
 import { abbreviateAddress } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
 
 export function HeaderWallet() {
-  const { wallet, balance } = useWalletContext();
+  const wallet = useWalletState();
+  const balance = useBalanceState();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -25,16 +33,16 @@ export function HeaderWallet() {
     });
   }, [wallet.address]);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside interaction
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
   }, [open]);
 
   // Close dropdown on Escape key
@@ -62,7 +70,7 @@ export function HeaderWallet() {
         <button
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            "flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-2.5 py-1.5 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
+            "flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-3 py-2 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
             open && "border-primary/40",
           )}
           aria-expanded={open}
@@ -80,7 +88,7 @@ export function HeaderWallet() {
         </button>
 
         {open && (
-          <div className="absolute right-1/2 top-full z-50 mt-1.5 w-[min(92vw,320px)] translate-x-1/2 overflow-hidden rounded-lg border border-border/50 bg-[rgba(8,16,29,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.5)]">
+          <div className="absolute left-0 top-full z-50 mt-1.5 w-[min(92vw,20rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/50 bg-[rgba(8,16,29,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.5)] sm:left-1/2 sm:max-w-none sm:-translate-x-1/2">
             <div className="grid max-h-[min(75vh,30rem)] gap-3 overflow-y-auto p-3">
               <Input
                 type="text"
@@ -138,7 +146,7 @@ export function HeaderWallet() {
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-2.5 py-1.5 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
+          "flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-border/40 bg-surface-dim px-3 py-2 text-left transition-colors hover:border-border/60 hover:bg-[rgba(8,16,29,0.8)]",
           open && "border-primary/40",
         )}
         aria-expanded={open}
@@ -171,7 +179,7 @@ export function HeaderWallet() {
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1.5 w-[240px] overflow-hidden rounded-lg border border-border/50 bg-[rgba(8,16,29,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.5)]">
+        <div className="absolute left-0 top-full z-50 mt-1.5 w-[min(92vw,18rem)] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/50 bg-[rgba(8,16,29,0.95)] shadow-[0_12px_40px_rgba(0,0,0,0.5)] sm:left-auto sm:right-0 sm:max-w-none">
           {/* Account info with copy */}
           <div className="border-b border-border/30 px-3 py-2.5">
             <p className="m-0 font-display text-[0.65rem] uppercase tracking-[0.06em] text-muted-foreground">

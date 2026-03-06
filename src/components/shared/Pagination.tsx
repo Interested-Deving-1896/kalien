@@ -1,4 +1,5 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import ChevronLeft from "lucide-react/dist/esm/icons/chevron-left";
+import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
 import { Button } from "@/components/ui/button";
 
 interface PaginationProps {
@@ -24,14 +25,15 @@ export function Pagination({
   const hasNext = nextOffset !== null;
 
   return (
-    <div className="flex items-center justify-between border-t border-border/40 px-4 py-3 text-xs text-muted-foreground">
-      <span>
+    <div className="flex flex-col gap-3 border-t border-border/40 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-center sm:text-left">
         {start}&ndash;{end} of {total.toLocaleString()}
       </span>
-      <div className="flex gap-1">
+      <div className="grid grid-cols-2 gap-2 sm:flex">
         <Button
           variant="ghost"
           size="sm"
+          className="w-full justify-center sm:w-auto"
           disabled={!hasPrev || disabled}
           onClick={() => onOffsetChange(Math.max(0, offset - limit))}
           aria-label="Previous page"
@@ -42,6 +44,7 @@ export function Pagination({
         <Button
           variant="ghost"
           size="sm"
+          className="w-full justify-center sm:w-auto"
           disabled={!hasNext || disabled}
           onClick={() => hasNext && onOffsetChange(nextOffset)}
           aria-label="Next page"

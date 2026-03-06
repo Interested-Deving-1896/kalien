@@ -1,7 +1,8 @@
-import { Play } from "lucide-react";
+import Play from "lucide-react/dist/esm/icons/play";
 import type { LeaderboardPlayerResponse } from "@/leaderboard/api";
 import { formatHex32, formatMetric } from "@/lib/format";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Table,
@@ -34,6 +35,26 @@ export function RecentRunsTable({
   isLoading,
   limit,
 }: RecentRunsTableProps) {
+  const renderReplayButton = (proofJobId: string | null) => {
+    if (!proofJobId) {
+      return null;
+    }
+
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="justify-center px-3 text-primary hover:bg-primary/10 hover:text-primary"
+        onClick={() => navigate(`/replay/${proofJobId}`)}
+        title="Replay this run"
+      >
+        <Play className="size-3.5" />
+        Replay
+      </Button>
+    );
+  };
+
   return (
     <Card>
       <h3 className="m-0 font-display tracking-[0.055em] uppercase">Recent Runs</h3>
@@ -44,29 +65,54 @@ export function RecentRunsTable({
         <p className="m-0 text-text-soft">No proved runs yet.</p>
       ) : (
         <>
-          <Table aria-label="Recent proved runs">
-            <TableHeader>
-              <TableRow>
-                <TableHead scope="col" className="text-right">
-                  Score
-                </TableHead>
-                <TableHead scope="col" className="text-right">
-                  Frames
-                </TableHead>
-                <TableHead scope="col" className="text-right">
-                  KALIEN Earned
-                </TableHead>
-                <TableHead scope="col">Seed</TableHead>
-                <TableHead scope="col">Completed</TableHead>
-                <TableHead scope="col">Claim</TableHead>
-                <TableHead scope="col" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
+          {isLoading ? (
+            <Table aria-label="Recent proved runs">
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col" className="text-right">
+                    Score
+                  </TableHead>
+                  <TableHead scope="col" className="text-right">
+                    Frames
+                  </TableHead>
+                  <TableHead scope="col" className="text-right">
+                    KALIEN Earned
+                  </TableHead>
+                  <TableHead scope="col">Seed</TableHead>
+                  <TableHead scope="col">Completed</TableHead>
+                  <TableHead scope="col">Claim</TableHead>
+                  <TableHead scope="col">
+                    <span className="sr-only">Replay</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 <SkeletonRows count={3} cols={7} />
-              ) : (
-                runs.map((run) => (
+              </TableBody>
+            </Table>
+          ) : (
+            <Table aria-label="Recent proved runs">
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col" className="text-right">
+                    Score
+                  </TableHead>
+                  <TableHead scope="col" className="text-right">
+                    Frames
+                  </TableHead>
+                  <TableHead scope="col" className="text-right">
+                    KALIEN Earned
+                  </TableHead>
+                  <TableHead scope="col">Seed</TableHead>
+                  <TableHead scope="col">Completed</TableHead>
+                  <TableHead scope="col">Claim</TableHead>
+                  <TableHead scope="col">
+                    <span className="sr-only">Replay</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.map((run) => (
                   <TableRow key={run.jobId}>
                     <TableCell className="text-right tabular-nums">
                       {run.score.toLocaleString()}
@@ -88,23 +134,12 @@ export function RecentRunsTable({
                         {run.claimStatus}
                       </StatusBadge>
                     </TableCell>
-                    <TableCell>
-                      {run.proofJobId && (
-                        <button
-                          onClick={() => navigate(`/?replay=${run.proofJobId}`)}
-                          className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/10"
-                          title="Replay this run"
-                        >
-                          <Play className="size-3" />
-                          <span className="hidden sm:inline">Replay</span>
-                        </button>
-                      )}
-                    </TableCell>
+                    <TableCell>{renderReplayButton(run.proofJobId)}</TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ))}
+              </TableBody>
+            </Table>
+          )}
           <Pagination
             offset={offset}
             limit={limit}

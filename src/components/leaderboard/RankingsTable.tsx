@@ -1,9 +1,12 @@
-import { Medal, Play, Trophy } from "lucide-react";
+import Medal from "lucide-react/dist/esm/icons/medal";
+import Play from "lucide-react/dist/esm/icons/play";
+import Trophy from "lucide-react/dist/esm/icons/trophy";
 import type { LeaderboardEntry } from "@/leaderboard/api";
 import { abbreviateAddress, formatHex32, formatMetric } from "@/lib/format";
 import { isSafeUrl } from "@/lib/validation";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableHeader,
@@ -53,6 +56,35 @@ function RankBadge({ rank }: { rank: number }) {
   return <span className="font-display tracking-wider">#{rank}</span>;
 }
 
+function ReplayRunButton({
+  proofJobId,
+  className,
+}: {
+  proofJobId: string | null;
+  className?: string;
+}) {
+  if (!proofJobId) {
+    return null;
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={cn(
+        "justify-center px-3 text-primary hover:bg-primary/10 hover:text-primary",
+        className,
+      )}
+      onClick={() => navigate(`/replay/${proofJobId}`)}
+      title="Replay this run"
+    >
+      <Play className="size-3.5" />
+      Replay
+    </Button>
+  );
+}
+
 export function RankingsTable({ entries, highlightAddress, isLoading }: RankingsTableProps) {
   if (isLoading) {
     return (
@@ -73,7 +105,9 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
             <TableHead scope="col">Seed</TableHead>
             <TableHead scope="col">Completed</TableHead>
             <TableHead scope="col">Claim</TableHead>
-            <TableHead scope="col" />
+            <TableHead scope="col">
+              <span className="sr-only">Replay</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -101,7 +135,9 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
           <TableHead scope="col">Seed</TableHead>
           <TableHead scope="col">Completed</TableHead>
           <TableHead scope="col">Claim</TableHead>
-          <TableHead scope="col" />
+          <TableHead scope="col">
+            <span className="sr-only">Replay</span>
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -157,16 +193,7 @@ export function RankingsTable({ entries, highlightAddress, isLoading }: Rankings
               </StatusBadge>
             </TableCell>
             <TableCell>
-              {entry.proofJobId && (
-                <button
-                  onClick={() => navigate(`/?replay=${entry.proofJobId}`)}
-                  className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/10"
-                  title="Replay this run"
-                >
-                  <Play className="size-3" />
-                  <span className="hidden sm:inline">Replay</span>
-                </button>
-              )}
+              <ReplayRunButton proofJobId={entry.proofJobId} className="px-2" />
             </TableCell>
           </TableRow>
         ))}

@@ -13,7 +13,7 @@ export function PageShell({
   return (
     <main
       className={cn(
-        "mx-auto grid min-h-screen max-w-[1240px] gap-4 p-[clamp(1rem,3vw,2rem)]",
+        "mx-auto grid w-full min-w-0 min-h-screen max-w-[1240px] gap-4 p-[clamp(1rem,3vw,2rem)]",
         glow && "leaderboard-glow",
         className,
       )}

@@ -36,5 +36,8 @@ batch-results/
 # Generated tapes
 generated-tapes/
 
+# Local audit artifacts
+/.artifacts/
+
 # Autopilot artifacts
 *-autopilot/

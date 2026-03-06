@@ -1,4 +1,4 @@
-import { Edit3 } from "lucide-react";
+import Edit3 from "lucide-react/dist/esm/icons/edit-3";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

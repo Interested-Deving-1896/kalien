@@ -1,4 +1,6 @@
-import { Link, Trophy, User } from "lucide-react";
+import Link from "lucide-react/dist/esm/icons/link";
+import Trophy from "lucide-react/dist/esm/icons/trophy";
+import User from "lucide-react/dist/esm/icons/user";
 import type { LeaderboardPlayerResponse } from "@/leaderboard/api";
 import { abbreviateAddress, formatMetric } from "@/lib/format";
 import { isSafeUrl } from "@/lib/validation";
@@ -42,7 +44,12 @@ export function PlayerCard({ player }: PlayerCardProps) {
         {player.profile?.linkUrl && isSafeUrl(player.profile.linkUrl) ? (
           <p className="m-0 flex items-center gap-1.5">
             <Link className="size-3.5 text-text-dim" />
-            <a href={player.profile.linkUrl} target="_blank" rel="noreferrer">
+            <a
+              href={player.profile.linkUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-link"
+            >
               {player.profile.linkUrl}
             </a>
           </p>

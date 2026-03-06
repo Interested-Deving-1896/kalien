@@ -1,4 +1,6 @@
-import { CheckCircle2, LogOut, Loader2 } from "lucide-react";
+import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2";
+import Loader2 from "lucide-react/dist/esm/icons/loader-2";
+import LogOut from "lucide-react/dist/esm/icons/log-out";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

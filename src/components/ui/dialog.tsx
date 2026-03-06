@@ -1,5 +1,5 @@
-import { Dialog as DialogPrimitive } from "radix-ui";
-import { X } from "lucide-react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import X from "lucide-react/dist/esm/icons/x";
 import { cn } from "@/lib/utils";
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -21,7 +21,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border/40 bg-[hsl(220,50%,7%)] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.5)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+          "fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[90vw] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border/40 bg-[hsl(220,50%,7%)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.5)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:p-6",
           className,
         )}
         {...props}

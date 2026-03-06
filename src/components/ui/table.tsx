@@ -39,7 +39,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "sticky top-0 z-[1] border-b border-[rgba(104,161,237,0.2)] bg-[rgba(6,14,24,0.94)] px-2 py-2.5 text-left align-top whitespace-nowrap",
+        "sticky top-0 z-[1] border-b border-[rgba(104,161,237,0.2)] bg-[rgba(6,14,24,0.94)] px-2 py-2 text-left align-top whitespace-normal break-words sm:py-2.5 sm:whitespace-nowrap",
         "font-display text-xs tracking-wider uppercase text-[rgba(161,201,255,0.95)]",
         className,
       )}
@@ -62,7 +62,10 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
       data-slot="table-cell"
-      className={cn("px-2 py-2.5 text-left align-top whitespace-nowrap", className)}
+      className={cn(
+        "px-2 py-2 text-left align-top whitespace-normal break-words sm:py-2.5 sm:whitespace-nowrap",
+        className,
+      )}
       {...props}
     />
   );

@@ -1,8 +1,23 @@
 import { useSyncExternalStore } from "react";
 
+const listeners = new Set<() => void>();
+
+function notifyLocationChange() {
+  listeners.forEach((listener) => listener());
+}
+
 function subscribe(cb: () => void) {
-  window.addEventListener("popstate", cb);
-  return () => window.removeEventListener("popstate", cb);
+  listeners.add(cb);
+  if (listeners.size === 1) {
+    window.addEventListener("popstate", notifyLocationChange);
+  }
+
+  return () => {
+    listeners.delete(cb);
+    if (listeners.size === 0) {
+      window.removeEventListener("popstate", notifyLocationChange);
+    }
+  };
 }
 
 function getSnapshot() {
