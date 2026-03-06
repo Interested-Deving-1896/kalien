@@ -3,4 +3,5 @@ pub mod bots;
 pub mod claude;
 pub mod codex_lab;
 pub mod runner;
+pub mod tape_telemetry;
 pub mod util;

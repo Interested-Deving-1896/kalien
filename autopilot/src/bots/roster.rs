@@ -388,9 +388,22 @@ fn offline_bot_configs() -> &'static [OfflineConfig] {
 }
 
 pub(super) fn record_locked_bot_configs() -> &'static [ReplayConfig] {
-    // Intentionally empty after AST4 reset. Add record-lock bots only when
-    // a current-rules canonical tape is explicitly promoted.
-    &[]
+    &[
+        ReplayConfig {
+            id: "record-mainnet-911140",
+            description: "Public 911140 mainnet leaderboard tape on seed 0x5f41772e.",
+            expected_seed: 0x5f41_772e,
+            tape_rel_path: "fixtures/public/kalien-911140-seed1598125870.tape",
+            max_frames_hint: 36_000,
+        },
+        ReplayConfig {
+            id: "record-mainnet-911260-single-mutation",
+            description: "Verified 911260 improvement over the public 911140 tape on seed 0x5f41772e.",
+            expected_seed: 0x5f41_772e,
+            tape_rel_path: "fixtures/public/kalien-911260-seed1598125870-single-mutation.tape",
+            max_frames_hint: 36_000,
+        },
+    ]
 }
 
 pub fn bot_ids() -> Vec<&'static str> {

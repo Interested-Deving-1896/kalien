@@ -7,6 +7,7 @@ use rust_autopilot::bots::{bot_ids, bot_manifest_entries, create_bot, describe_b
 use rust_autopilot::claude::lab::{run_multi_generation, EvolvedConfig};
 use rust_autopilot::codex_lab::{collect_run_intel, default_codex_output_dir, run_learning_cycle};
 use rust_autopilot::runner::{run_bot, write_tape};
+use rust_autopilot::tape_telemetry::analyze_tape_inputs;
 use rust_autopilot::util::{parse_seed, parse_seed_csv, parse_seed_file, seed_to_hex};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,6 +49,17 @@ enum Commands {
         input: PathBuf,
         #[arg(long, default_value_t = 108_000)]
         max_frames: u32,
+    },
+    /// Replay an arbitrary tape and emit frame/wave telemetry for analysis
+    TapeTelemetry {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, default_value_t = 108_000)]
+        max_frames: u32,
+        #[arg(long, default_value_t = 1)]
+        sample_every: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// Run multi-seed benchmark across one or more bots
     Benchmark {
@@ -195,6 +207,60 @@ fn main() -> Result<()> {
             println!("seed={}", seed_to_hex(tape.header.seed));
             println!("frame_count={}", tape.header.frame_count);
             println!("final_score={}", tape.footer.final_score);
+        }
+        Commands::TapeTelemetry {
+            input,
+            max_frames,
+            sample_every,
+            output,
+        } => {
+            let bytes = fs::read(&input)?;
+            let tape = parse_tape(&bytes, max_frames)?;
+            verify_tape(&bytes, max_frames)?;
+            let report =
+                analyze_tape_inputs(tape.header.seed, max_frames, &tape.inputs, sample_every)?;
+            let encoded = serde_json::to_vec_pretty(&report)?;
+
+            if let Some(path) = output {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&path, encoded)?;
+                println!("input={}", input.display());
+                println!("seed={}", seed_to_hex(report.seed));
+                println!("frames={}", report.frame_count);
+                println!("score={}", report.final_score);
+                println!("wave={}", report.final_wave);
+                println!(
+                    "wave7_enter={} score_at_wave7={}",
+                    report
+                        .wave7_enter_frame
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    report
+                        .wave7_enter_score
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                println!(
+                    "first_wave_gt7={} score_at_leave={}",
+                    report
+                        .first_wave_gt7_frame
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    report
+                        .first_wave_gt7_score
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                );
+                println!(
+                    "estimated_small_saucer_kills={}",
+                    report.estimated_small_saucer_kills
+                );
+                println!("output={}", path.display());
+            } else {
+                println!("{}", String::from_utf8_lossy(&encoded));
+            }
         }
         Commands::Benchmark {
             bots,
