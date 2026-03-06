@@ -105,7 +105,11 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
       data-scrolling={scrollState.isScrolling}
       className="table-scroll-hint relative w-full rounded-lg border border-border-subtle"
     >
-      <div ref={containerRef} data-slot="table-scroll" className="overflow-x-auto rounded-[inherit]">
+      <div
+        ref={containerRef}
+        data-slot="table-scroll"
+        className="overflow-x-auto rounded-[inherit]"
+      >
         <table
           data-slot="table"
           className={cn("w-full border-collapse text-sm", className)}
