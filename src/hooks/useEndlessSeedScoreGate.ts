@@ -60,7 +60,7 @@ function writeStoredSeedScore(storageKey: string | null, seedId: number, score: 
   const normalizedSeedId = seedId >>> 0;
   const normalizedScore = score >>> 0;
   const next = readStoredSeedScores(storageKey);
-  next[String(normalizedSeedId)] = Math.max(next[String(normalizedSeedId)] ?? 0, normalizedScore);
+  next[String(normalizedSeedId)] = normalizedScore;
 
   try {
     window.sessionStorage.setItem(storageKey, JSON.stringify(next));
@@ -123,11 +123,13 @@ export function useEndlessSeedScoreGate({
   const cacheRef = useRef(new Map<number, number>());
   const readySeedIdsRef = useRef(new Set<number>());
   const inFlightRef = useRef(new Map<number, Promise<number | null>>());
+  const contextVersionRef = useRef(0);
   const [currentSeedScoreToBeat, setCurrentSeedScoreToBeat] = useState(0);
   const [isCurrentSeedScoreLoading, setIsCurrentSeedScoreLoading] = useState(false);
   const [isCurrentSeedScoreReady, setIsCurrentSeedScoreReady] = useState(false);
 
   useEffect(() => {
+    contextVersionRef.current += 1;
     cacheRef.current.clear();
     readySeedIdsRef.current.clear();
     inFlightRef.current.clear();
@@ -189,11 +191,13 @@ export function useEndlessSeedScoreGate({
         }
       }
 
+      const requestVersion = contextVersionRef.current;
       const request = (async () => {
-        let bestScore = cachedBest;
+        let bestScore = 0;
         let onChainBest: number | null = null;
         const scoreContractId = getScoreContractIdFromEnv();
         const rpcUrl = getRpcUrlFromEnv();
+        const isStale = () => contextVersionRef.current !== requestVersion;
 
         if (scoreContractId && rpcUrl) {
           onChainBest = await fetchBestScoreForSeed(
@@ -202,6 +206,9 @@ export function useEndlessSeedScoreGate({
             walletAddress,
             normalizedSeedId,
           );
+          if (isStale()) {
+            return null;
+          }
           if (typeof onChainBest === "number") {
             bestScore = Math.max(bestScore, onChainBest >>> 0);
           }
@@ -212,12 +219,18 @@ export function useEndlessSeedScoreGate({
             limit: PROOF_JOBS_LIMIT,
             offset: 0,
           });
+          if (isStale()) {
+            return null;
+          }
           bestScore = Math.max(
             bestScore,
             getBestKnownProofJobScore(response.jobs, normalizedSeedId),
           );
         } catch {
           // Ignore proof-list fetch errors; on-chain state remains the canonical floor.
+        }
+        if (isStale()) {
+          return null;
         }
 
         cacheRef.current.set(normalizedSeedId, bestScore);

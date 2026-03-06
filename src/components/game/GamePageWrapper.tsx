@@ -332,7 +332,6 @@ export function GamePageWrapper() {
     currentSeedScoreToBeat,
     isCurrentSeedScoreLoading,
     isCurrentSeedScoreReady,
-    getKnownSeedScoreToBeat,
     refreshSeedScoreToBeat,
     noteSubmittedScore,
   } = useEndlessSeedScoreGate({
@@ -524,6 +523,14 @@ export function GamePageWrapper() {
     waitingForAutoRestartRef.current = true;
     dismissOverlay();
 
+    let cancelled = false;
+    const clearPendingScore = () => {
+      const pendingScore = pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
+      if (pendingScore <= completedRunScore) {
+        pendingEndlessSubmissionScoresRef.current.delete(completedRunSeedId);
+      }
+    };
+
     void (async () => {
       if (!flow.wallet.isConnected || completedRunScore <= 0) {
         return;
@@ -531,18 +538,27 @@ export function GamePageWrapper() {
 
       const pendingSeedBest =
         pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
-      const knownSeedBest = Math.max(getKnownSeedScoreToBeat(completedRunSeedId), pendingSeedBest);
-      if (completedRunScore <= knownSeedBest) {
+      if (completedRunScore <= pendingSeedBest) {
         return;
       }
 
-      const refreshedSeedBest = await refreshSeedScoreToBeat(completedRunSeedId, { force: true });
-      if (!isMountedRef.current || typeof refreshedSeedBest !== "number") {
+      let refreshedSeedBest: number | null = null;
+      try {
+        refreshedSeedBest = await refreshSeedScoreToBeat(completedRunSeedId, { force: true });
+      } catch {
+        refreshedSeedBest = null;
+      }
+
+      if (cancelled || !isMountedRef.current) {
         return;
       }
+
       const latestPendingSeedBest =
         pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
-      if (completedRunScore <= Math.max(refreshedSeedBest, latestPendingSeedBest)) {
+      if (
+        typeof refreshedSeedBest === "number" &&
+        completedRunScore <= Math.max(refreshedSeedBest, latestPendingSeedBest)
+      ) {
         return;
       }
 
@@ -552,12 +568,10 @@ export function GamePageWrapper() {
       );
 
       const submitted = await submitRunForProof(completedRun);
-      const clearPendingScore = () => {
-        const pendingScore = pendingEndlessSubmissionScoresRef.current.get(completedRunSeedId) ?? 0;
-        if (pendingScore <= completedRunScore) {
-          pendingEndlessSubmissionScoresRef.current.delete(completedRunSeedId);
-        }
-      };
+      if (cancelled || !isMountedRef.current) {
+        clearPendingScore();
+        return;
+      }
 
       if (!submitted) {
         clearPendingScore();
@@ -572,12 +586,17 @@ export function GamePageWrapper() {
         recordSubmissionFeedback(latestRunKey);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     dismissOverlay,
     endlessModeEnabled,
     flow.latestRun,
+    flow.wallet.address,
     flow.wallet.isConnected,
-    getKnownSeedScoreToBeat,
+    flow.wallet.networkPassphrase,
     latestRunKey,
     noteSubmittedScore,
     recordSubmissionFeedback,
