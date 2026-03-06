@@ -166,12 +166,16 @@ export function GamePanel({
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
+          game.setReplayPending(false);
           setReplayError(err.message);
           setIsReplayLoading(false);
         }
       });
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      game.setReplayPending(false);
+    };
   }, [replayJobId, gameReady]);
 
   useEffect(() => {
@@ -179,6 +183,7 @@ export function GamePanel({
       return;
     }
 
+    gameRef.current?.setReplayPending(false);
     setReplayError(null);
     setIsReplayLoading(false);
     setReplayState(DEFAULT_REPLAY_STATE);
