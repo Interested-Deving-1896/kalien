@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBestScoreForSeed } from "@/chain/seed";
 import { getScoreContractIdFromEnv } from "@/chain/token";
-import { isTerminalProofStatus, listProofJobs, type ProofJobPublic } from "@/proof/api";
 
 const STORAGE_KEY_PREFIX = "kalien:endless-seed-best:v1";
-const PROOF_JOBS_LIMIT = 100;
 
 function nonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -72,27 +70,6 @@ function writeStoredSeedScore(storageKey: string | null, seedId: number, score: 
 function getStoredSeedScore(storageKey: string | null, seedId: number): number {
   const stored = readStoredSeedScores(storageKey)[String(seedId >>> 0)];
   return typeof stored === "number" && Number.isFinite(stored) ? stored >>> 0 : 0;
-}
-
-function getBestKnownProofJobScore(jobs: ProofJobPublic[], seedId: number): number {
-  const normalizedSeedId = seedId >>> 0;
-  let bestScore = 0;
-
-  for (const job of jobs) {
-    if (job.tape.metadata.seedId >>> 0 !== normalizedSeedId) {
-      continue;
-    }
-
-    const proofStillActive = !isTerminalProofStatus(job.status);
-    const provenAndNotFailedClaim = job.status === "succeeded" && job.claim.status !== "failed";
-    if (!proofStillActive && !provenAndNotFailedClaim) {
-      continue;
-    }
-
-    bestScore = Math.max(bestScore, job.tape.metadata.finalScore >>> 0);
-  }
-
-  return bestScore;
 }
 
 export interface UseEndlessSeedScoreGateOptions {
@@ -214,21 +191,6 @@ export function useEndlessSeedScoreGate({
           }
         }
 
-        try {
-          const response = await listProofJobs(walletAddress, {
-            limit: PROOF_JOBS_LIMIT,
-            offset: 0,
-          });
-          if (isStale()) {
-            return null;
-          }
-          bestScore = Math.max(
-            bestScore,
-            getBestKnownProofJobScore(response.jobs, normalizedSeedId),
-          );
-        } catch {
-          // Ignore proof-list fetch errors; on-chain state remains the canonical floor.
-        }
         if (isStale()) {
           return null;
         }
