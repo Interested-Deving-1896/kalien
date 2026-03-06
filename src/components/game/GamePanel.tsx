@@ -9,7 +9,7 @@ import { AsteroidsCanvas } from "../AsteroidsCanvas";
 import type { AsteroidsGame, ReplaySessionState } from "@/game/AsteroidsGame";
 import type { CompletedGameRun } from "@/game/types";
 import { getSeedSnapshot, subscribeToSeed } from "@/hooks/useSeed";
-import { getTapeDownloadUrl } from "@/proof/api";
+import { fetchProofTape } from "@/proof/api";
 import { navigate } from "@/hooks/useLocation";
 import { ControlsHint } from "./ControlsHint";
 import { MobileAutopilotButton } from "./MobileAutopilotButton";
@@ -154,15 +154,13 @@ export function GamePanel({
     game.setReplayPending(true);
 
     const controller = new AbortController();
-    fetch(getTapeDownloadUrl(replayJobId), { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? "not_found" : `${res.status}`);
-        return res.arrayBuffer();
-      })
-      .then((buf) => {
-        game.loadReplay(new Uint8Array(buf));
+    fetchProofTape(replayJobId)
+      .then(({ bytes }) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        game.loadReplay(bytes);
         setIsReplayLoading(false);
-        return undefined;
       })
       .catch((err) => {
         if (!controller.signal.aborted) {

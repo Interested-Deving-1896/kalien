@@ -334,3 +334,81 @@ export async function retryFailedProof(
 export function getTapeDownloadUrl(jobId: string): string {
   return `/api/proofs/jobs/${jobId}/tape`;
 }
+
+function defaultTapeFilename(jobId: string): string {
+  return `${jobId}.tape`;
+}
+
+function extractFilename(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) return fallback;
+
+  const extendedMatch = contentDisposition.match(/filename\*\s*=\s*([^;]+)/i);
+  if (extendedMatch) {
+    const rawValue = extendedMatch[1]?.trim();
+    if (rawValue) {
+      const unquoted = rawValue.replace(/^"(.*)"$/, "$1");
+      const parts = unquoted.split("''", 2);
+      const encodedName = parts.length === 2 ? parts[1] : unquoted;
+      try {
+        const decoded = decodeURIComponent(encodedName);
+        if (decoded) return decoded;
+      } catch {
+        // Fall back to the simpler filename parser below.
+      }
+    }
+  }
+
+  const basicMatch = contentDisposition.match(/filename\s*=\s*("?)([^";]+)\1/i);
+  const filename = basicMatch?.[2]?.trim();
+  return filename && filename.length > 0 ? filename : fallback;
+}
+
+function isTapeContentType(contentType: string | null): boolean {
+  const normalized = contentType?.toLowerCase() ?? "";
+  return (
+    normalized.includes("application/octet-stream") ||
+    normalized.includes("application/x-binary")
+  );
+}
+
+export async function fetchProofTape(
+  jobId: string,
+): Promise<{ bytes: Uint8Array; filename: string }> {
+  const response = await fetchWithTimeout(
+    getTapeDownloadUrl(jobId),
+    { method: "GET" },
+    API_TIMEOUT_GET_ARTIFACT_MS,
+  );
+
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+
+  const contentType = response.headers.get("content-type");
+  if (!isTapeContentType(contentType)) {
+    const normalized = contentType?.toLowerCase() ?? "";
+    const message = normalized.includes("text/html")
+      ? "expected tape bytes but received HTML"
+      : `expected tape bytes but received ${contentType ?? "an unknown content type"}`;
+    throw new ProofApiError(message, response.status);
+  }
+
+  const filename = extractFilename(
+    response.headers.get("content-disposition"),
+    defaultTapeFilename(jobId),
+  );
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return { bytes, filename };
+}
+
+export async function downloadProofTape(jobId: string): Promise<void> {
+  const { bytes, filename } = await fetchProofTape(jobId);
+  const payload = bytes.slice().buffer as ArrayBuffer;
+  const blob = new Blob([payload], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}

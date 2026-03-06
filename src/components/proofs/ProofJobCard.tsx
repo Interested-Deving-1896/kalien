@@ -10,7 +10,7 @@ import RotateCw from "lucide-react/dist/esm/icons/rotate-cw";
 import Trophy from "lucide-react/dist/esm/icons/trophy";
 import Zap from "lucide-react/dist/esm/icons/zap";
 import type { ClaimAttempt, ProofJobPublic, ProverAttempt } from "@/proof/api";
-import { getTapeDownloadUrl, retryFailedClaim, retryFailedProof, getProofJob } from "@/proof/api";
+import { downloadProofTape, retryFailedClaim, retryFailedProof, getProofJob } from "@/proof/api";
 import { ErrorDetailDialog } from "./ErrorDetailDialog";
 import { boundlessExplorerUrl, getActiveBackend } from "@/proof/helpers";
 import { formatBytes, formatCycles, formatDuration, formatHex32 } from "@/lib/format";
@@ -141,6 +141,8 @@ export function ProofJobCard({
   const [claimRetryError, setClaimRetryError] = useState<string | null>(null);
   const [proofRetrying, setProofRetrying] = useState(false);
   const [proofRetryError, setProofRetryError] = useState<string | null>(null);
+  const [downloadingTape, setDownloadingTape] = useState(false);
+  const [downloadTapeError, setDownloadTapeError] = useState<string | null>(null);
   const [fastPollingMode, setFastPollingMode] = useState<"claim" | "proof" | null>(null);
   const onJobUpdateRef = useRef(onJobUpdate);
   onJobUpdateRef.current = onJobUpdate;
@@ -373,6 +375,18 @@ export function ProofJobCard({
       setProofRetryError(err instanceof Error ? err.message : "retry failed");
     } finally {
       setProofRetrying(false);
+    }
+  }
+
+  async function handleDownloadTape() {
+    setDownloadingTape(true);
+    setDownloadTapeError(null);
+    try {
+      await downloadProofTape(job.jobId);
+    } catch (err) {
+      setDownloadTapeError(err instanceof Error ? err.message : "failed to download tape");
+    } finally {
+      setDownloadingTape(false);
     }
   }
 
@@ -677,14 +691,18 @@ export function ProofJobCard({
               <Play className="size-3.5" aria-hidden="true" />
               Play Tape
             </button>
-            <a
-              href={getTapeDownloadUrl(job.jobId)}
-              download
-              className="inline-flex items-center gap-1.5 text-sm text-primary no-underline hover:underline"
+            <button
+              type="button"
+              onClick={handleDownloadTape}
+              disabled={downloadingTape}
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-1.5 bg-transparent text-sm text-primary transition-colors hover:text-primary/80",
+                downloadingTape && "cursor-not-allowed opacity-50",
+              )}
             >
               <Download className="size-3.5" aria-hidden="true" />
-              Download Tape
-            </a>
+              {downloadingTape ? "Downloading…" : "Download Tape"}
+            </button>
             {stellarTxUrl && (
               <a
                 href={stellarTxUrl}
@@ -697,6 +715,9 @@ export function ProofJobCard({
               </a>
             )}
           </div>
+          {downloadTapeError && (
+            <p className="m-0 text-xs text-destructive/80">Download failed: {downloadTapeError}</p>
+          )}
 
           {/* Errors */}
           {job.error && (
