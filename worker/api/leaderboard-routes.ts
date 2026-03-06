@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { WorkerEnv } from "../env";
 import { LEADERBOARD_CACHE_CONTROL, LEADERBOARD_PRIVATE_CACHE_CONTROL } from "../cache-control";
+import { DEFAULT_COMPLETED_JOB_RETENTION_MS } from "../constants";
 import {
   DEFAULT_LEADERBOARD_LIMIT,
   MAX_LEADERBOARD_LIMIT,
@@ -11,6 +12,7 @@ import {
   getLeaderboardPage,
   getLeaderboardPlayer,
   getLeaderboardIngestionState,
+  getProofClaimIndexEntriesByTxHashes,
   upsertLeaderboardProfile,
   createLeaderboardProfileAuthChallenge,
   getLeaderboardProfileAuthChallenge,
@@ -19,6 +21,7 @@ import {
   purgeExpiredLeaderboardProfileAuthChallenges,
   updateLeaderboardProfileCredentialCounter,
   upsertLeaderboardProfileCredential,
+  writeProofTapeMapping,
 } from "../leaderboard-store";
 import {
   assertCredentialBelongsToClaimantContract,
@@ -31,8 +34,16 @@ import {
   verifyAuthenticationResponse,
 } from "@simplewebauthn/server";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
-import { safeErrorMessage } from "../utils";
+import type { ProofJobRecord } from "../types";
+import { parseInteger, safeErrorMessage } from "../utils";
 import { validateClaimantStrKey } from "../../shared/stellar/strkey";
+import { coordinatorStub } from "../durable/coordinator";
+import {
+  findBestMatchingProofJob,
+  findExactMatchingProofJob,
+  normalizeReplayTxHash,
+  proofJobHasReplayTape,
+} from "../replay-recovery";
 
 const MAX_USERNAME_LENGTH = 32;
 const MAX_LINK_URL_LENGTH = 240;
@@ -42,6 +53,8 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const READ_RATE_LIMIT = 60;
 const WRITE_RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 60_000;
+const PLAYER_REPLAY_SELF_HEAL_JOBS_PAGE_SIZE = 200;
+const PLAYER_REPLAY_SELF_HEAL_MAX_JOBS = 1_000;
 
 const rateLimitCounters = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_PRUNE_THRESHOLD = 1_000;
@@ -119,6 +132,291 @@ function safeLinkUrl(url: string | null | undefined): string | null {
     return null;
   }
   return trimmed;
+}
+
+type PlayerRunsResponse = Awaited<ReturnType<typeof getLeaderboardPlayer>>["recentRuns"];
+type ReplayMappingWrite = { txHash: string; proofJobId: string };
+
+function timestampMs(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveReplayLookupRetentionMs(env: WorkerEnv): number {
+  return parseInteger(env.COMPLETED_JOB_RETENTION_MS, DEFAULT_COMPLETED_JOB_RETENTION_MS, 60_000);
+}
+
+function findRecentReplayLookupIndicesFromUnresolved(
+  runs: PlayerRunsResponse,
+  unresolvedIndices: number[],
+  nowMs: number,
+  retentionMs: number,
+): number[] {
+  return unresolvedIndices.filter((index) => {
+    const completedAtMs = timestampMs(runs[index]?.completedAt);
+    return completedAtMs > 0 && nowMs - completedAtMs <= retentionMs;
+  });
+}
+
+async function recoverReplayMappingsFromClaimIndex(
+  env: WorkerEnv,
+  claimantAddress: string,
+  runs: PlayerRunsResponse,
+  unresolvedIndices: number[],
+): Promise<{
+  runs: PlayerRunsResponse;
+  recoveredMappings: ReplayMappingWrite[];
+  unresolvedIndices: number[];
+}> {
+  const repairedRuns = runs.map((run) => ({ ...run }));
+  if (unresolvedIndices.length === 0) {
+    return { runs: repairedRuns, recoveredMappings: [], unresolvedIndices: [] };
+  }
+
+  const txHashes = unresolvedIndices
+    .map((index) => normalizeReplayTxHash(repairedRuns[index]?.claimTxHash))
+    .filter((value): value is string => value !== null);
+  if (txHashes.length === 0) {
+    return { runs: repairedRuns, recoveredMappings: [], unresolvedIndices };
+  }
+
+  const indexedEntries = await getProofClaimIndexEntriesByTxHashes(env, txHashes);
+  if (indexedEntries.length === 0) {
+    return { runs: repairedRuns, recoveredMappings: [], unresolvedIndices };
+  }
+
+  const entriesByTxHash = new Map(
+    indexedEntries.map((entry) => [normalizeReplayTxHash(entry.txHash) ?? entry.txHash, entry]),
+  );
+  const replayTapeByJobId = new Map<string, boolean>();
+  const remaining: number[] = [];
+  const recoveredMappings: ReplayMappingWrite[] = [];
+
+  /* eslint-disable no-await-in-loop */
+  for (const index of unresolvedIndices) {
+    const run = repairedRuns[index];
+    const normalizedTxHash = normalizeReplayTxHash(run.claimTxHash);
+    if (!normalizedTxHash) {
+      remaining.push(index);
+      continue;
+    }
+
+    const entry = entriesByTxHash.get(normalizedTxHash);
+    if (
+      !entry ||
+      entry.claimantAddress !== claimantAddress ||
+      entry.seed !== run.seed >>> 0 ||
+      entry.finalScore !== run.score >>> 0
+    ) {
+      remaining.push(index);
+      continue;
+    }
+
+    let hasReplayTape = replayTapeByJobId.get(entry.proofJobId);
+    if (hasReplayTape == null) {
+      hasReplayTape = await proofJobHasReplayTape(env, { jobId: entry.proofJobId });
+      replayTapeByJobId.set(entry.proofJobId, hasReplayTape);
+    }
+    if (!hasReplayTape) {
+      remaining.push(index);
+      continue;
+    }
+
+    repairedRuns[index] = {
+      ...run,
+      proofJobId: entry.proofJobId,
+    };
+    recoveredMappings.push({
+      txHash: normalizedTxHash,
+      proofJobId: entry.proofJobId,
+    });
+  }
+  /* eslint-enable no-await-in-loop */
+
+  return {
+    runs: repairedRuns,
+    recoveredMappings,
+    unresolvedIndices: remaining,
+  };
+}
+
+async function selfHealRecentRunReplayMappings(
+  env: WorkerEnv,
+  claimantAddress: string,
+  runs: PlayerRunsResponse,
+): Promise<{ runs: PlayerRunsResponse; recoveredMappings: ReplayMappingWrite[] }> {
+  const unresolvedIndices = runs
+    .map((run, index) => (run.proofJobId ? null : index))
+    .filter((index): index is number => index !== null);
+  if (unresolvedIndices.length === 0) {
+    return { runs, recoveredMappings: [] };
+  }
+
+  const nowMs = Date.now();
+  const retentionMs = resolveReplayLookupRetentionMs(env);
+  let exactMatchRecovery: Awaited<ReturnType<typeof recoverReplayMappingsFromClaimIndex>>;
+  try {
+    exactMatchRecovery = await recoverReplayMappingsFromClaimIndex(
+      env,
+      claimantAddress,
+      runs,
+      unresolvedIndices,
+    );
+  } catch (error) {
+    console.warn(
+      `[leaderboard] replay self-heal failed loading proof claim index for ${claimantAddress}: ${safeErrorMessage(error)}`,
+    );
+    exactMatchRecovery = {
+      runs: runs.map((run) => ({ ...run })),
+      recoveredMappings: [],
+      unresolvedIndices,
+    };
+  }
+  const repairedRuns = exactMatchRecovery.runs;
+  const pendingWrites = new Map<string, string>(
+    exactMatchRecovery.recoveredMappings.map(({ txHash, proofJobId }) => [txHash, proofJobId]),
+  );
+  const missingIndices = findRecentReplayLookupIndicesFromUnresolved(
+    repairedRuns,
+    exactMatchRecovery.unresolvedIndices,
+    nowMs,
+    retentionMs,
+  );
+  if (missingIndices.length === 0) {
+    return {
+      runs: repairedRuns,
+      recoveredMappings: Array.from(pendingWrites, ([txHash, proofJobId]) => ({
+        txHash,
+        proofJobId,
+      })),
+    };
+  }
+
+  const pending = new Set(missingIndices);
+  const coordinator = coordinatorStub(env);
+  const replayTapeByJobId = new Map<string, boolean>();
+  let fullyScannedClaimantJobs = false;
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+  const jobs: ProofJobRecord[] = [];
+
+  /* eslint-disable no-await-in-loop */
+  async function applyMatch(index: number, match: ProofJobRecord | null): Promise<void> {
+    if (!match) {
+      return;
+    }
+    let hasReplayTape = replayTapeByJobId.get(match.jobId);
+    if (hasReplayTape == null) {
+      hasReplayTape = await proofJobHasReplayTape(env, match);
+      replayTapeByJobId.set(match.jobId, hasReplayTape);
+    }
+    if (!hasReplayTape) {
+      return;
+    }
+
+    const run = repairedRuns[index];
+    repairedRuns[index] = {
+      ...run,
+      proofJobId: match.jobId,
+    };
+    pending.delete(index);
+
+    const normalizedTxHash = normalizeReplayTxHash(run.claimTxHash);
+    if (normalizedTxHash) {
+      pendingWrites.set(normalizedTxHash, match.jobId);
+    }
+  }
+
+  while (pending.size > 0 && offset < total && jobs.length < PLAYER_REPLAY_SELF_HEAL_MAX_JOBS) {
+    let response: { jobs: ProofJobRecord[]; total: number };
+    try {
+      response = await coordinator.listJobsForClaimant(
+        claimantAddress,
+        PLAYER_REPLAY_SELF_HEAL_JOBS_PAGE_SIZE,
+        offset,
+      );
+    } catch (error) {
+      console.warn(
+        `[leaderboard] replay self-heal failed listing jobs for ${claimantAddress}: ${safeErrorMessage(error)}`,
+      );
+      break;
+    }
+
+    if (response.jobs.length === 0) {
+      fullyScannedClaimantJobs = true;
+      break;
+    }
+
+    jobs.push(...response.jobs);
+    total = response.total;
+    offset += response.jobs.length;
+
+    for (const index of Array.from(pending)) {
+      const run = repairedRuns[index];
+      await applyMatch(
+        index,
+        findExactMatchingProofJob(jobs, {
+          claimTxHash: run.claimTxHash,
+          seed: run.seed,
+          finalScore: run.score,
+        }),
+      );
+    }
+
+    if (offset >= total || response.jobs.length < PLAYER_REPLAY_SELF_HEAL_JOBS_PAGE_SIZE) {
+      fullyScannedClaimantJobs = true;
+    }
+  }
+
+  if (pending.size > 0 && fullyScannedClaimantJobs && jobs.length > 0) {
+    for (const index of Array.from(pending)) {
+      const run = repairedRuns[index];
+      await applyMatch(
+        index,
+        findBestMatchingProofJob(jobs, {
+          claimTxHash: run.claimTxHash,
+          seed: run.seed,
+          finalScore: run.score,
+        }),
+      );
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+
+  return {
+    runs: repairedRuns,
+    recoveredMappings: Array.from(pendingWrites, ([txHash, proofJobId]) => ({
+      txHash,
+      proofJobId,
+    })),
+  };
+}
+
+async function persistRecoveredReplayMappings(
+  env: WorkerEnv,
+  claimantAddress: string,
+  mappings: ReplayMappingWrite[],
+): Promise<void> {
+  /* eslint-disable no-await-in-loop */
+  for (const { txHash, proofJobId } of mappings) {
+    try {
+      await writeProofTapeMapping(env, txHash, proofJobId);
+    } catch (error) {
+      console.warn(
+        `[leaderboard] replay self-heal failed persisting mapping ${txHash} -> ${proofJobId}: ${safeErrorMessage(error)}`,
+      );
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+
+  if (mappings.length > 0) {
+    console.log(
+      `[leaderboard] replay self-heal restored ${mappings.length} replay mapping(s) for ${claimantAddress}`,
+    );
+  }
 }
 
 export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
@@ -252,6 +550,16 @@ export function createLeaderboardPublicRouter(): Hono<{ Bindings: WorkerEnv }> {
         limit: runsLimit,
         offset: runsOffset,
       });
+      const repaired = await selfHealRecentRunReplayMappings(c.env, address, player.recentRuns);
+      player = {
+        ...player,
+        recentRuns: repaired.runs,
+      };
+      if (repaired.recoveredMappings.length > 0) {
+        c.executionCtx.waitUntil(
+          persistRecoveredReplayMappings(c.env, address, repaired.recoveredMappings),
+        );
+      }
 
       c.header("Cache-Control", LEADERBOARD_PRIVATE_CACHE_CONTROL);
       return c.json({

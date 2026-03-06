@@ -9,7 +9,7 @@ import { resolveBoundlessConfig } from "../boundless/config";
 import { BoundlessClient } from "../boundless/sdk/client";
 import { coordinatorStub } from "../durable/coordinator";
 import type { WorkerEnv } from "../env";
-import { writeProofTapeMapping } from "../leaderboard-store";
+import { writeProofClaimIndexEntry, writeProofTapeMapping } from "../leaderboard-store";
 import { hexToBytes, parseProofArtifactV4, sha256Hex } from "../proof-artifact";
 import { submitToProver } from "../prover/client";
 import type {
@@ -21,6 +21,8 @@ import type {
 } from "../types";
 import { isTerminalProofStatus, parseInteger, retryDelaySeconds, safeErrorMessage } from "../utils";
 import { packJournalRaw } from "../../shared/stellar/journal";
+
+const CHAIN_TX_HASH_RE = /^[0-9a-f]{64}$/i;
 
 /**
  * Returns true when a fatal claim error actually indicates the score was
@@ -71,6 +73,30 @@ function readSupersedeInputs(job: ProofJobRecord): {
     seedId: seedId >>> 0,
     score: score >>> 0,
   };
+}
+
+async function persistClaimReplayIndexes(
+  env: WorkerEnv,
+  job: Pick<
+    ProofJobRecord,
+    "jobId" | "tape" | "claim" | "result" | "completedAt" | "updatedAt" | "createdAt"
+  >,
+  txHash: string,
+): Promise<void> {
+  if (!CHAIN_TX_HASH_RE.test(txHash)) {
+    return;
+  }
+
+  const claimantAddress = job.result?.summary?.journal.claimant ?? job.claim.claimantAddress;
+  await writeProofClaimIndexEntry(env, {
+    proofJobId: job.jobId,
+    claimantAddress,
+    txHash,
+    seed: job.tape.metadata.seed,
+    finalScore: job.tape.metadata.finalScore,
+    completedAt: job.completedAt ?? job.updatedAt ?? job.createdAt,
+  });
+  await writeProofTapeMapping(env, txHash, job.jobId);
 }
 
 async function findSupersedingClaimedJob(
@@ -550,6 +576,18 @@ async function processClaimQueueMessage(
   }
 
   if (job.claim.status === "succeeded") {
+    if (CHAIN_TX_HASH_RE.test(job.claim.txHash ?? "")) {
+      try {
+        await persistClaimReplayIndexes(env, job, job.claim.txHash as string);
+      } catch (error) {
+        console.error("[claim-queue] failed healing replay indexes for succeeded claim", error);
+        if (message.attempts < MAX_QUEUE_RETRIES) {
+          const delaySeconds = retryDelaySeconds(message.attempts);
+          message.retry({ delaySeconds });
+          return;
+        }
+      }
+    }
     message.ack();
     return;
   }
@@ -675,13 +713,30 @@ async function processClaimQueueMessage(
       txHash: relayResult.txHash,
     });
     await coordinator.markClaimSucceeded(payload.jobId, relayResult.txHash);
-    // Only write the tape mapping for real on-chain tx hashes — synthetic
-    // values like "prior-attempt" and "superseded-by-higher-score" have no tx.
-    if (/^[0-9a-f]{64}$/i.test(relayResult.txHash)) {
+    if (CHAIN_TX_HASH_RE.test(relayResult.txHash)) {
       try {
-        await writeProofTapeMapping(env, relayResult.txHash, payload.jobId);
-      } catch (err) {
-        console.error("[claim-queue] failed to write tape mapping", err);
+        await persistClaimReplayIndexes(
+          env,
+          {
+            ...job,
+            claim: {
+              ...job.claim,
+              claimantAddress: canonicalClaimant,
+              txHash: relayResult.txHash,
+            },
+          },
+          relayResult.txHash,
+        );
+      } catch (error) {
+        console.error(
+          "[claim-queue] failed persisting replay indexes after successful claim",
+          error,
+        );
+        if (message.attempts < MAX_QUEUE_RETRIES) {
+          const delaySeconds = retryDelaySeconds(message.attempts);
+          message.retry({ delaySeconds });
+          return;
+        }
       }
     }
     message.ack();
