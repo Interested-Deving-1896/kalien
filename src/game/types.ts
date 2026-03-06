@@ -4,6 +4,7 @@ export interface CompletedGameRun {
   record: GameRunRecord;
   frameCount: number;
   endedAtMs: number;
+  isReplay?: boolean;
 }
 
 export type GameMode = "menu" | "playing" | "paused" | "game-over" | "replay";

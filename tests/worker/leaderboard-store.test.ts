@@ -54,6 +54,9 @@ describe("leaderboard store schema migration", () => {
 
     await expect(countProofTapeMappings(makeEnv(legacyDb.db))).resolves.toBe(0);
 
+    const createClaimIndexIndex = legacyDb.executedStatements.findIndex((statement) =>
+      statement.includes("CREATE TABLE IF NOT EXISTS proof_claim_index"),
+    );
     const alterIndex = legacyDb.executedStatements.findIndex((statement) =>
       statement.includes("ALTER TABLE proof_tape_index ADD COLUMN mapped_at"),
     );
@@ -61,6 +64,7 @@ describe("leaderboard store schema migration", () => {
       statement.includes("CREATE INDEX IF NOT EXISTS idx_proof_tape_index_mapped_at"),
     );
 
+    expect(createClaimIndexIndex).toBeGreaterThanOrEqual(0);
     expect(alterIndex).toBeGreaterThanOrEqual(0);
     expect(createIndexIndex).toBeGreaterThan(alterIndex);
   });

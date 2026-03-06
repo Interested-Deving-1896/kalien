@@ -1,4 +1,6 @@
-import { Search, X, User } from "lucide-react";
+import Search from "lucide-react/dist/esm/icons/search";
+import User from "lucide-react/dist/esm/icons/user";
+import X from "lucide-react/dist/esm/icons/x";
 import type { LeaderboardWindow } from "@/leaderboard/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,12 +58,23 @@ export function RankingsSearch({
 }: RankingsSearchProps) {
   return (
     <form
-      className="flex items-center gap-1.5"
+      className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:justify-end"
       onSubmit={(event) => {
         event.preventDefault();
         onFind();
       }}
     >
+      <div className="relative min-w-0 basis-full sm:basis-auto sm:flex-1">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground sm:left-2.5 sm:size-3.5" />
+        <Input
+          type="text"
+          value={searchInput}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Search by address…"
+          aria-label="Search for a player address"
+          className="h-10 pl-9 text-sm sm:h-8 sm:pl-8 sm:text-xs"
+        />
+      </div>
       {onFindMe && !findActive && (
         <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={onFindMe}>
           <User className="size-3.5" />
@@ -74,17 +87,6 @@ export function RankingsSearch({
           Clear
         </Button>
       )}
-      <div className="relative min-w-0 flex-1">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="text"
-          value={searchInput}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search by address..."
-          aria-label="Search for a player address"
-          className="h-8 pl-8 text-xs"
-        />
-      </div>
       <Button type="submit" size="sm" className="shrink-0">
         <Search className="size-3.5" />
         Find

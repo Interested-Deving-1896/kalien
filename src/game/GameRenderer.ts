@@ -74,6 +74,7 @@ export interface GameRenderState {
   thrustActive: boolean;
   autopilotEnabled: boolean;
   replayInfo: ReplayInfo | null;
+  isReplaySession: boolean;
 }
 
 export interface ReplayInfo {
@@ -1042,22 +1043,35 @@ export class GameRenderer {
     }
 
     if (state.mode === "game-over") {
-      ctx.shadowColor = "#ef4444";
-      ctx.fillStyle = "#ff6b6b";
-      ctx.fillText("GAME OVER", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.42);
-      ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillStyle = "#d6fff0";
-      ctx.fillText(
-        `Final Score: ${state.score.toString().padStart(5, "0")}`,
-        WORLD_WIDTH * 0.5,
-        WORLD_HEIGHT * 0.56,
-      );
-      ctx.fillText("Press Enter, R, or Tap to Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
+      if (state.isReplaySession) {
+        ctx.shadowColor = "#a855f7";
+        ctx.fillStyle = "#a855f7";
+        ctx.fillText("REPLAY COMPLETE", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.42);
+        ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillStyle = "#d6fff0";
+        ctx.fillText(
+          `Final Score: ${state.score.toString().padStart(5, "0")}`,
+          WORLD_WIDTH * 0.5,
+          WORLD_HEIGHT * 0.56,
+        );
+      } else {
+        ctx.shadowColor = "#ef4444";
+        ctx.fillStyle = "#ff6b6b";
+        ctx.fillText("GAME OVER", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.42);
+        ctx.font = "600 28px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillStyle = "#d6fff0";
+        ctx.fillText(
+          `Final Score: ${state.score.toString().padStart(5, "0")}`,
+          WORLD_WIDTH * 0.5,
+          WORLD_HEIGHT * 0.56,
+        );
+        ctx.fillText("Press Enter, R, or Tap to Restart", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.64);
 
-      ctx.shadowColor = "#a855f7";
-      ctx.fillStyle = "#a855f7";
-      ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
-      ctx.fillText("D: Save Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.72);
+        ctx.shadowColor = "#a855f7";
+        ctx.fillStyle = "#a855f7";
+        ctx.font = "600 24px 'Monaspace Krypton', 'SFMono-Regular', monospace";
+        ctx.fillText("D: Save Replay Tape", WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.72);
+      }
     }
 
     ctx.restore();
@@ -1155,7 +1169,7 @@ export class GameRenderer {
     ctx.font = "500 12px 'Monaspace Krypton', monospace";
     ctx.fillStyle = "#6b7280";
     ctx.textAlign = "center";
-    ctx.fillText("1/2/4: Speed    Space: Pause    Esc: Exit", WORLD_WIDTH / 2, WORLD_HEIGHT - 20);
+    ctx.fillText("1/2/4: Speed    P: Pause    Esc: Exit", WORLD_WIDTH / 2, WORLD_HEIGHT - 20);
 
     ctx.restore();
   }

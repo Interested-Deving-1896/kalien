@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Slot } from "radix-ui";
+import * as Slot from "@radix-ui/react-slot";
 
 import { cn } from "@/lib/utils";
 
@@ -23,11 +23,11 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        xs: "h-6 gap-1 px-2 text-xs",
-        sm: "h-8 gap-1.5 px-3 text-xs",
-        lg: "h-10 px-6",
-        icon: "size-9",
+        default: "h-10 px-4 py-2 sm:h-9",
+        xs: "h-9 gap-1.5 px-2.5 text-[0.72rem] sm:h-6 sm:gap-1 sm:px-2 sm:text-xs",
+        sm: "h-10 gap-1.5 px-4 text-xs sm:h-8 sm:px-3",
+        lg: "h-11 px-6 sm:h-10",
+        icon: "size-10 sm:size-9",
       },
     },
     defaultVariants: {

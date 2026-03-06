@@ -249,3 +249,11 @@ function getSnapshot(): SeedState {
 export function useSeed(): SeedState {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
+
+export function getSeedSnapshot(): SeedState {
+  return getSnapshot();
+}
+
+export function subscribeToSeed(cb: () => void): () => void {
+  return subscribe(cb);
+}

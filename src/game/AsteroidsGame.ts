@@ -179,6 +179,12 @@ export interface GameRunRecord {
   finalScore: number;
 }
 
+export interface ReplaySessionState {
+  active: boolean;
+  paused: boolean;
+  speed: 1 | 2 | 4;
+}
+
 export class AsteroidsGame {
   private readonly canvas: HTMLCanvasElement | null;
 
@@ -260,6 +266,10 @@ export class AsteroidsGame {
   private replayPaused = false;
   private replayTapeSource: TapeInputSource | null = null;
   private replayTape: Tape | null = null;
+  private replayPending = false;
+
+  // Notifies UI when entering or exiting a replay session
+  onReplayStateChange: ((state: ReplaySessionState) => void) | null = null;
 
   // Current frame input (read at start of updateSimulation, used by updateShip)
   private currentFrameInput: {
@@ -299,7 +309,7 @@ export class AsteroidsGame {
   };
 
   private readonly pointerDownHandler = (): void => {
-    if (this.mode === "menu" || this.mode === "game-over") {
+    if ((this.mode === "menu" || this.mode === "game-over") && this.canStartLiveRun()) {
       this.audio.enable();
       this.startNewGame();
     } else if (this.mode === "paused" && !this.pauseFromHidden) {
@@ -480,7 +490,7 @@ export class AsteroidsGame {
 
   private handleGlobalInput(): void {
     if (this.input.consumePress("Enter")) {
-      if (this.mode === "menu" || this.mode === "game-over") {
+      if ((this.mode === "menu" || this.mode === "game-over") && this.canStartLiveRun()) {
         this.audio.enable();
         this.startNewGame();
       } else if (this.mode === "paused") {
@@ -494,18 +504,16 @@ export class AsteroidsGame {
       this.audio.toggleMute();
     }
 
-    if (this.input.consumePress("KeyP")) {
-      if (this.mode === "playing") {
-        this.mode = "paused";
-        this.pauseFromHidden = false;
-        this.audio.pauseMusic();
-      } else if (this.mode === "paused" && !this.pauseFromHidden) {
-        this.mode = "playing";
-        this.audio.resumeMusic();
-      }
+    if (this.mode === "playing" && this.input.consumePress("KeyP")) {
+      this.mode = "paused";
+      this.pauseFromHidden = false;
+      this.audio.pauseMusic();
+    } else if (this.mode === "paused" && !this.pauseFromHidden && this.input.consumePress("KeyP")) {
+      this.mode = "playing";
+      this.audio.resumeMusic();
     }
 
-    if (this.input.consumePress("KeyR") && this.mode !== "menu") {
+    if (this.input.consumePress("KeyR") && this.mode !== "menu" && this.canStartLiveRun()) {
       this.startNewGame();
     }
 
@@ -527,40 +535,22 @@ export class AsteroidsGame {
     // Replay speed controls
     if (this.mode === "replay") {
       if (this.input.consumePress("Digit1")) {
-        this.replaySpeed = 1;
-        this.accumulator = 0;
+        this.setReplaySpeed(1);
       }
       if (this.input.consumePress("Digit2")) {
-        this.replaySpeed = 2;
-        this.accumulator = 0;
+        this.setReplaySpeed(2);
       }
       if (this.input.consumePress("Digit4")) {
-        this.replaySpeed = 4;
-        this.accumulator = 0;
+        this.setReplaySpeed(4);
       }
-      if (this.input.consumePress("Space")) {
-        this.replayPaused = !this.replayPaused;
-        // Reset timing to avoid accumulator jump after unpause
-        this.lastTimeMs = 0;
-        this.accumulator = 0;
+      if (this.input.consumePress("KeyP")) {
+        this.toggleReplayPause();
       }
     }
 
-    // Return to menu with Escape
+    // Return to menu with Escape (or exit replay session)
     if (this.input.consumePress("Escape") && this.mode !== "menu") {
-      this.mode = "menu";
-      this.audio.stopMusic();
-      this.waitingForSeed = false;
-      this.asteroids = [];
-      this.bullets = [];
-      this.saucers = [];
-      this.saucerBullets = [];
-      this.ship = this.createShip();
-      this.shipFireLatch = false;
-      this.renderer?.reset();
-      this.autopilot.setEnabled(false);
-      this.replayTapeSource = null;
-      this.inputSource = null;
+      this.resetToMenu();
     }
   }
 
@@ -627,7 +617,9 @@ export class AsteroidsGame {
     }
 
     // Reset replay state
+    this.replayPending = false;
     this.replayTapeSource = null;
+    this.replayTape = null;
     this.replaySpeed = 1;
     this.replayPaused = false;
 
@@ -1557,6 +1549,7 @@ export class AsteroidsGame {
             paused: this.replayPaused,
           }
         : null,
+      isReplaySession: this.replayTape !== null,
     };
   }
 
@@ -1607,6 +1600,43 @@ export class AsteroidsGame {
   isAutopilotEnabled(): boolean {
     return this.autopilot.isEnabled();
   }
+  setReplayPending(pending: boolean): void {
+    this.replayPending = pending;
+    if (pending) {
+      this.autopilot.setEnabled(false);
+    }
+  }
+  getReplaySessionState(): ReplaySessionState {
+    return {
+      active: this.replayTape !== null,
+      paused: this.replayPaused,
+      speed: this.normalizeReplaySpeed(this.replaySpeed),
+    };
+  }
+  setReplaySpeed(speed: 1 | 2 | 4): void {
+    if (this.mode !== "replay") {
+      return;
+    }
+    this.replaySpeed = speed;
+    this.accumulator = 0;
+    this.emitReplayStateChange();
+  }
+  toggleReplayPause(): void {
+    if (this.mode !== "replay") {
+      return;
+    }
+    this.replayPaused = !this.replayPaused;
+    // Reset timing to avoid accumulator jump after unpause
+    this.lastTimeMs = 0;
+    this.accumulator = 0;
+    this.emitReplayStateChange();
+  }
+  exitReplay(): void {
+    if (this.replayTape === null && !this.replayPending) {
+      return;
+    }
+    this.resetToMenu();
+  }
   getGameSeed(): number {
     return this.gameSeed;
   }
@@ -1647,7 +1677,17 @@ export class AsteroidsGame {
 
   /** Load a tape and enter visual replay mode. */
   loadReplay(tapeData: Uint8Array): void {
-    const tape = deserializeTape(tapeData);
+    this.startReplayFromTape(deserializeTape(tapeData));
+  }
+
+  /** Restart the current replay from the beginning (tape must still be in memory). */
+  restartReplay(): boolean {
+    if (!this.replayTape) return false;
+    this.startReplayFromTape(this.replayTape);
+    return true;
+  }
+
+  private startReplayFromTape(tape: Tape): void {
     this.audio.enable();
     // Tape v4 does not encode seed_id; replays are visual-only and never claimed.
     this.startNewGame(tape.header.seed, 0);
@@ -1662,6 +1702,43 @@ export class AsteroidsGame {
     this.inputSource = tapeSource;
     // Stop recording during replay
     this.recorder = null;
+    this.emitReplayStateChange();
+  }
+
+  private canStartLiveRun(): boolean {
+    return !this.replayPending && this.replayTape === null;
+  }
+
+  private normalizeReplaySpeed(speed: number): 1 | 2 | 4 {
+    return speed === 2 || speed === 4 ? speed : 1;
+  }
+
+  private emitReplayStateChange(): void {
+    this.onReplayStateChange?.(this.getReplaySessionState());
+  }
+
+  private resetToMenu(): void {
+    const wasReplay = this.replayTape !== null;
+    this.mode = "menu";
+    this.audio.stopMusic();
+    this.waitingForSeed = false;
+    this.asteroids = [];
+    this.bullets = [];
+    this.saucers = [];
+    this.saucerBullets = [];
+    this.ship = this.createShip();
+    this.shipFireLatch = false;
+    this.renderer?.reset();
+    this.autopilot.setEnabled(false);
+    this.replayPending = false;
+    this.replayTapeSource = null;
+    this.replayTape = null;
+    this.replaySpeed = 1;
+    this.replayPaused = false;
+    this.inputSource = null;
+    if (wasReplay) {
+      this.emitReplayStateChange();
+    }
   }
 
   private downloadTape(): void {

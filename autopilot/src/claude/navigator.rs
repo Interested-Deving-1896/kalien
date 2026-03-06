@@ -151,6 +151,12 @@ impl NavigatorBot {
     }
 }
 
+impl Default for NavigatorBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn fire_alignment_score(pred: PredictedShip, aim_angle: i32) -> f64 {
     let angle_error = signed_angle_delta(pred.angle, aim_angle).abs() as f64;
     (1.0 - (angle_error / 8.0)).clamp(0.0, 1.0)

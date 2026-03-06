@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import ChevronLeft from "lucide-react/dist/esm/icons/chevron-left";
 import { abbreviateAddress } from "@/lib/format";
 import { toNullableTrimmed } from "@/lib/validation";
 import {
@@ -18,7 +18,7 @@ import { EditProfile } from "./EditProfile";
 import { RecentRunsTable } from "./RecentRunsTable";
 import { PageHero } from "@/components/shared/PageHero";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
-import { useWalletContext } from "@/contexts/WalletContext";
+import { useWalletState } from "@/contexts/WalletContext";
 import { resolveSmartWalletSessionForClaimant } from "@/wallet/smartAccount";
 
 export interface LeaderboardPlayerViewProps {
@@ -34,7 +34,7 @@ export function LeaderboardPlayerView({ playerAddress }: LeaderboardPlayerViewPr
     description: `View player profile, ranking history, and recent proved runs for ${abbreviateAddress(playerAddress)} on Kalien.`,
     path: `/leaderboard/${playerAddress}`,
   });
-  const { wallet } = useWalletContext();
+  const wallet = useWalletState();
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [playerData, setPlayerData] = useState<LeaderboardPlayerResponse | null>(null);

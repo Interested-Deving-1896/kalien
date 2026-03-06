@@ -1,7 +1,19 @@
-import { Keyboard } from "lucide-react";
+import Keyboard from "lucide-react/dist/esm/icons/keyboard";
 import { cn } from "@/lib/utils";
 
-export function ControlsHint({ className }: { className?: string }) {
+type ControlsHintMode = "play" | "replay" | "replay-loading" | "replay-error";
+
+export function ControlsHint({
+  className,
+  mode = "play",
+}: {
+  className?: string;
+  mode?: ControlsHintMode;
+}) {
+  const isReplay = mode === "replay";
+  const isReplayLoading = mode === "replay-loading";
+  const isReplayError = mode === "replay-error";
+
   return (
     <div
       data-slot="controls-hint"
@@ -14,24 +26,48 @@ export function ControlsHint({ className }: { className?: string }) {
 
       {/* Desktop: full key listing */}
       <p className="m-0 hidden text-xs tracking-wide text-muted-foreground sm:block">
-        <Kbd>Arrows</Kbd> move
-        <Sep />
-        <Kbd>Space</Kbd> fire
-        <Sep />
-        <Kbd>P</Kbd> pause
-        <Sep />
-        <Kbd>R</Kbd> restart
-        <Sep />
-        <Kbd>M</Kbd> mute
-        <Sep />
-        <Kbd>D</Kbd> save tape
-        <Sep />
-        <Kbd>Esc</Kbd> menu
+        {isReplayError ? (
+          <>Replay unavailable. Return home to play live.</>
+        ) : isReplayLoading ? (
+          <>Loading replay tape. Live controls stay locked until playback is ready.</>
+        ) : isReplay ? (
+          <>
+            <Kbd>1</Kbd> <Kbd>2</Kbd> <Kbd>4</Kbd> speed
+            <Sep />
+            <Kbd>P</Kbd> pause
+            <Sep />
+            <Kbd>M</Kbd> mute
+            <Sep />
+            <Kbd>Esc</Kbd> exit
+          </>
+        ) : (
+          <>
+            <Kbd>Arrows</Kbd> move
+            <Sep />
+            <Kbd>Space</Kbd> fire
+            <Sep />
+            <Kbd>P</Kbd> pause
+            <Sep />
+            <Kbd>R</Kbd> restart
+            <Sep />
+            <Kbd>M</Kbd> mute
+            <Sep />
+            <Kbd>D</Kbd> save tape
+            <Sep />
+            <Kbd>Esc</Kbd> menu
+          </>
+        )}
       </p>
 
       {/* Mobile: simplified hint */}
       <p className="m-0 text-xs tracking-wide text-muted-foreground sm:hidden">
-        Tap to start. Use the Autopilot button to play.
+        {isReplayError
+          ? "Replay unavailable. Return home to play live."
+          : isReplayLoading
+            ? "Loading replay. Live gameplay is locked."
+            : isReplay
+              ? "Use the replay controls below to pause, change speed, or exit."
+              : "Tap to start. Use the Autopilot button to play."}
       </p>
     </div>
   );

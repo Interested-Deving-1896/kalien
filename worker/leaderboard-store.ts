@@ -264,6 +264,15 @@ async function ensureSchema(env: WorkerEnv): Promise<void> {
           proof_job_id TEXT NOT NULL,
           mapped_at TEXT NOT NULL
         )`,
+        `CREATE TABLE IF NOT EXISTS proof_claim_index (
+          proof_job_id TEXT PRIMARY KEY,
+          claimant_address TEXT NOT NULL,
+          tx_hash TEXT NOT NULL UNIQUE,
+          seed INTEGER NOT NULL,
+          final_score INTEGER NOT NULL,
+          completed_at TEXT NOT NULL,
+          recorded_at TEXT NOT NULL
+        )`,
         `CREATE TABLE IF NOT EXISTS leaderboard_profile_credentials (
           credential_id TEXT PRIMARY KEY,
           claimant_address TEXT NOT NULL,
@@ -950,6 +959,237 @@ export async function countProofTapeMappings(env: WorkerEnv): Promise<number> {
 export interface MappedProofTapeMapping {
   txHash: string;
   proofJobId: string;
+}
+
+export interface ProofClaimIndexEntry {
+  proofJobId: string;
+  claimantAddress: string;
+  txHash: string;
+  seed: number;
+  finalScore: number;
+  completedAt: string;
+  recordedAt: string;
+}
+
+function normalizeProofClaimIndexEntryRow(
+  row: Record<string, unknown>,
+): ProofClaimIndexEntry | null {
+  const proofJobId = toNullableString(row.proof_job_id);
+  const claimantAddress = toNullableString(row.claimant_address);
+  const txHash = toNullableString(row.tx_hash);
+  const completedAt = toNullableString(row.completed_at);
+  const recordedAt = toNullableString(row.recorded_at);
+  const seed = toNullableU32(row.seed);
+  const finalScore = toNullableU32(row.final_score);
+  if (
+    !proofJobId ||
+    !claimantAddress ||
+    !txHash ||
+    !completedAt ||
+    !recordedAt ||
+    seed == null ||
+    finalScore == null
+  ) {
+    return null;
+  }
+  return {
+    proofJobId,
+    claimantAddress,
+    txHash,
+    seed,
+    finalScore,
+    completedAt,
+    recordedAt,
+  };
+}
+
+export async function writeProofClaimIndexEntry(
+  env: WorkerEnv,
+  entry: {
+    proofJobId: string;
+    claimantAddress: string;
+    txHash: string;
+    seed: number;
+    finalScore: number;
+    completedAt: string;
+  },
+): Promise<void> {
+  const proofJobId = entry.proofJobId.trim();
+  if (proofJobId.length === 0) {
+    throw new Error("proof job id is required for proof claim index");
+  }
+  const claimantAddress = entry.claimantAddress.trim();
+  if (claimantAddress.length === 0) {
+    throw new Error("claimant address is required for proof claim index");
+  }
+  const normalizedTxHash = normalizeTxHash(entry.txHash);
+  if (!normalizedTxHash) {
+    throw new Error("tx hash is required for proof claim index");
+  }
+
+  await ensureSchema(env);
+  const db = getDb(env);
+  const recordedAt = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT INTO proof_claim_index (
+         proof_job_id,
+         claimant_address,
+         tx_hash,
+         seed,
+         final_score,
+         completed_at,
+         recorded_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(proof_job_id) DO UPDATE SET
+         claimant_address = excluded.claimant_address,
+         tx_hash = excluded.tx_hash,
+         seed = excluded.seed,
+         final_score = excluded.final_score,
+         completed_at = excluded.completed_at,
+         recorded_at = excluded.recorded_at`,
+    )
+    .bind(
+      proofJobId,
+      claimantAddress,
+      normalizedTxHash,
+      entry.seed >>> 0,
+      entry.finalScore >>> 0,
+      entry.completedAt,
+      recordedAt,
+    )
+    .run();
+}
+
+export async function getProofClaimIndexEntriesByTxHashes(
+  env: WorkerEnv,
+  txHashes: Array<string | null | undefined>,
+): Promise<ProofClaimIndexEntry[]> {
+  const normalizedHashes = Array.from(
+    new Set(
+      txHashes
+        .map((value) => normalizeTxHash(value))
+        .filter((value): value is string => value !== null),
+    ),
+  );
+  if (normalizedHashes.length === 0) {
+    return [];
+  }
+
+  await ensureSchema(env);
+  const db = getDb(env);
+  const entries: ProofClaimIndexEntry[] = [];
+  const chunkSize = 200;
+
+  /* eslint-disable no-await-in-loop */
+  for (let offset = 0; offset < normalizedHashes.length; offset += chunkSize) {
+    const chunk = normalizedHashes.slice(offset, offset + chunkSize);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = await db
+      .prepare(
+        `SELECT
+           proof_job_id,
+           claimant_address,
+           tx_hash,
+           seed,
+           final_score,
+           completed_at,
+           recorded_at
+         FROM proof_claim_index
+         WHERE tx_hash IN (${placeholders})`,
+      )
+      .bind(...chunk)
+      .all<Record<string, unknown>>();
+
+    for (const row of rows.results ?? []) {
+      const entryRow = normalizeProofClaimIndexEntryRow(row);
+      if (entryRow) {
+        entries.push(entryRow);
+      }
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+
+  return entries;
+}
+
+export interface GetProofClaimIndexEntriesOptions {
+  limit?: number;
+  offset?: number;
+  oldestFirst?: boolean;
+}
+
+export async function getProofClaimIndexEntries(
+  env: WorkerEnv,
+  options: GetProofClaimIndexEntriesOptions = {},
+): Promise<ProofClaimIndexEntry[]> {
+  await ensureSchema(env);
+  const db = getDb(env);
+  const limit = Math.min(Math.max(Math.trunc(options.limit ?? 100), 1), 2_000);
+  const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+  const oldestFirst = options.oldestFirst === true;
+  const orderDirection = oldestFirst ? "ASC" : "DESC";
+
+  const rows = await db
+    .prepare(
+      `SELECT
+         proof_job_id,
+         claimant_address,
+         tx_hash,
+         seed,
+         final_score,
+         completed_at,
+         recorded_at
+       FROM proof_claim_index
+       ORDER BY recorded_at ${orderDirection}, tx_hash ${orderDirection}
+       LIMIT ?
+       OFFSET ?`,
+    )
+    .bind(limit, offset)
+    .all<Record<string, unknown>>();
+
+  const entries: ProofClaimIndexEntry[] = [];
+  for (const row of rows.results ?? []) {
+    const entry = normalizeProofClaimIndexEntryRow(row);
+    if (entry) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+export async function deleteProofClaimIndexEntry(
+  env: WorkerEnv,
+  proofJobId: string,
+  txHash?: string | null,
+): Promise<boolean> {
+  const normalizedProofJobId = proofJobId.trim();
+  const normalizedTxHash = normalizeTxHash(txHash);
+  if (normalizedProofJobId.length === 0 && !normalizedTxHash) {
+    return false;
+  }
+
+  await ensureSchema(env);
+  const db = getDb(env);
+  let result;
+  if (normalizedProofJobId.length > 0 && normalizedTxHash) {
+    result = await db
+      .prepare(`DELETE FROM proof_claim_index WHERE proof_job_id = ? OR tx_hash = ?`)
+      .bind(normalizedProofJobId, normalizedTxHash)
+      .run();
+  } else if (normalizedProofJobId.length > 0) {
+    result = await db
+      .prepare(`DELETE FROM proof_claim_index WHERE proof_job_id = ?`)
+      .bind(normalizedProofJobId)
+      .run();
+  } else {
+    result = await db
+      .prepare(`DELETE FROM proof_claim_index WHERE tx_hash = ?`)
+      .bind(normalizedTxHash)
+      .run();
+  }
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 export interface GetMappedProofTapeMappingsOptions {

@@ -5,22 +5,35 @@ import {
 } from "./leaderboard-ingestion";
 import {
   countLeaderboardEvents,
+  deleteProofClaimIndexEntry,
   countProofTapeMappings,
   countUnmappedLeaderboardTxHashes,
   deleteProofTapeMapping,
   getLeaderboardIngestionState,
   getMappedProofTapeMappings,
+  getProofClaimIndexEntries,
+  getProofClaimIndexEntriesByTxHashes,
   getUnmappedLeaderboardTxHashes,
   purgeExpiredLeaderboardProfileAuthChallenges,
   setLeaderboardIngestionState,
   upsertLeaderboardEvents,
   writeProofTapeMapping,
 } from "./leaderboard-store";
-import type { MappedProofTapeMapping, UnmappedLeaderboardEvent } from "./leaderboard-store";
+import type {
+  MappedProofTapeMapping,
+  ProofClaimIndexEntry,
+  UnmappedLeaderboardEvent,
+} from "./leaderboard-store";
 import type { LeaderboardEventRecord, LeaderboardIngestionState, ProofJobRecord } from "./types";
 import { parseInteger, safeErrorMessage } from "./utils";
 import type { LeaderboardResolvedSourceMode } from "./leaderboard-ingestion";
 import { tapeKey } from "./keys";
+import {
+  findBestMatchingProofJob,
+  findExactMatchingProofJob,
+  normalizeReplayTxHash,
+  proofJobHasReplayTape,
+} from "./replay-recovery";
 import {
   DEFAULT_LEADERBOARD_FORWARD_REPLAY_WINDOW_LEDGERS,
   DEFAULT_LEADERBOARD_SYNC_MAX_PAGES,
@@ -650,7 +663,9 @@ export interface PruneStaleProofTapeMappingsOptions {
 
 interface PruneStaleProofTapeMappingsDeps {
   getMappedProofTapeMappings: typeof getMappedProofTapeMappings;
+  getProofClaimIndexEntries: typeof getProofClaimIndexEntries;
   deleteProofTapeMapping: typeof deleteProofTapeMapping;
+  deleteProofClaimIndexEntry: typeof deleteProofClaimIndexEntry;
   countProofTapeMappings: typeof countProofTapeMappings;
 }
 
@@ -658,9 +673,16 @@ const PRUNE_MAPPED_BATCH_SIZE = 100;
 const PRUNE_MAX_MAPPED_BATCHES = 20;
 const DEFAULT_PRUNE_DEPS: PruneStaleProofTapeMappingsDeps = {
   getMappedProofTapeMappings,
+  getProofClaimIndexEntries,
   deleteProofTapeMapping,
+  deleteProofClaimIndexEntry,
   countProofTapeMappings,
 };
+
+interface StaleReplayCandidate {
+  proofJobId: string;
+  txHash: string;
+}
 
 export async function pruneStaleProofTapeMappings(
   env: WorkerEnv,
@@ -685,7 +707,7 @@ export async function pruneStaleProofTapeMappings(
   );
   const oldestFirst = options.oldestFirst !== false;
 
-  const candidates: MappedProofTapeMapping[] = [];
+  const tapeCandidates: MappedProofTapeMapping[] = [];
   /* eslint-disable no-await-in-loop */
   for (let batch = 0; batch < maxMappedBatches; batch += 1) {
     const offset = batch * mappedBatchSize;
@@ -697,14 +719,30 @@ export async function pruneStaleProofTapeMappings(
     if (page.length === 0) {
       break;
     }
-    candidates.push(...page);
+    tapeCandidates.push(...page);
+    if (page.length < mappedBatchSize) {
+      break;
+    }
+  }
+  const claimIndexCandidates: ProofClaimIndexEntry[] = [];
+  for (let batch = 0; batch < maxMappedBatches; batch += 1) {
+    const offset = batch * mappedBatchSize;
+    const page = await deps.getProofClaimIndexEntries(env, {
+      limit: mappedBatchSize,
+      offset,
+      oldestFirst,
+    });
+    if (page.length === 0) {
+      break;
+    }
+    claimIndexCandidates.push(...page);
     if (page.length < mappedBatchSize) {
       break;
     }
   }
   /* eslint-enable no-await-in-loop */
 
-  if (candidates.length === 0) {
+  if (tapeCandidates.length === 0 && claimIndexCandidates.length === 0) {
     try {
       result.remainingMappings = await deps.countProofTapeMappings(env);
     } catch {
@@ -713,17 +751,24 @@ export async function pruneStaleProofTapeMappings(
     return result;
   }
 
-  const uniqueByTx = new Map<string, MappedProofTapeMapping>();
-  for (const row of candidates) {
-    if (!uniqueByTx.has(row.txHash)) {
-      uniqueByTx.set(row.txHash, row);
+  const uniqueCandidates = new Map<string, StaleReplayCandidate>();
+  for (const row of tapeCandidates) {
+    const key = `${row.proofJobId}:${row.txHash}`;
+    if (!uniqueCandidates.has(key)) {
+      uniqueCandidates.set(key, { proofJobId: row.proofJobId, txHash: row.txHash });
     }
   }
-  const uniqueCandidates = Array.from(uniqueByTx.values());
-  result.scanned = uniqueCandidates.length;
+  for (const row of claimIndexCandidates) {
+    const key = `${row.proofJobId}:${row.txHash}`;
+    if (!uniqueCandidates.has(key)) {
+      uniqueCandidates.set(key, { proofJobId: row.proofJobId, txHash: row.txHash });
+    }
+  }
+  const candidates = Array.from(uniqueCandidates.values());
+  result.scanned = candidates.length;
 
   const staleChecks = await Promise.all(
-    uniqueCandidates.map(async (mapping) => {
+    candidates.map(async (mapping) => {
       try {
         const tapeExists = Boolean(await env.PROOF_ARTIFACTS.head(tapeKey(mapping.proofJobId)));
         return tapeExists ? null : mapping;
@@ -734,20 +779,25 @@ export async function pruneStaleProofTapeMappings(
   );
 
   const staleMappings = staleChecks.filter(
-    (mapping): mapping is MappedProofTapeMapping => mapping !== null,
+    (mapping): mapping is StaleReplayCandidate => mapping !== null,
   );
   result.stale = staleMappings.length;
 
   /* eslint-disable no-await-in-loop */
   for (const mapping of staleMappings) {
     try {
-      const deleted = await deps.deleteProofTapeMapping(env, mapping.txHash);
-      if (deleted) {
+      const deletedTapeMapping = await deps.deleteProofTapeMapping(env, mapping.txHash);
+      const deletedClaimIndex = await deps.deleteProofClaimIndexEntry(
+        env,
+        mapping.proofJobId,
+        mapping.txHash,
+      );
+      if (deletedTapeMapping || deletedClaimIndex) {
         result.deleted += 1;
       }
     } catch (error) {
       console.warn(
-        `[leaderboard-sync] stale-prune: failed deleting mapping for tx ${mapping.txHash}: ${safeErrorMessage(error)}`,
+        `[leaderboard-sync] stale-prune: failed deleting stale replay state for tx ${mapping.txHash}: ${safeErrorMessage(error)}`,
       );
       result.errors += 1;
     }
@@ -762,7 +812,7 @@ export async function pruneStaleProofTapeMappings(
 
   if (result.deleted > 0) {
     console.log(
-      `[leaderboard-sync] stale-prune: deleted ${result.deleted} stale tape mappings (scanned=${result.scanned}, stale=${result.stale}, errors=${result.errors})`,
+      `[leaderboard-sync] stale-prune: deleted ${result.deleted} stale replay mappings (scanned=${result.scanned}, stale=${result.stale}, errors=${result.errors})`,
     );
   }
 
@@ -800,8 +850,6 @@ const BACKFILL_UNMAPPED_BATCH_SIZE = 50;
 const BACKFILL_UNMAPPED_MAX_BATCHES = 3;
 const BACKFILL_JOBS_PAGE_SIZE = 200;
 const BACKFILL_MAX_JOBS_PER_CLAIMANT = 1_000;
-const HEX_TX_HASH_RE = /^[0-9a-f]{64}$/i;
-
 const DEFAULT_BACKFILL_DEPS: BackfillProofTapeMappingsDeps = {
   getUnmappedLeaderboardTxHashes,
   writeProofTapeMapping,
@@ -811,72 +859,69 @@ const DEFAULT_BACKFILL_DEPS: BackfillProofTapeMappingsDeps = {
   },
 };
 
-function normalizeTxHash(txHash: string | null | undefined): string | null {
-  if (typeof txHash !== "string") {
-    return null;
-  }
-  const normalized = txHash.trim().toLowerCase();
-  return HEX_TX_HASH_RE.test(normalized) ? normalized : null;
-}
-
-function asFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim().length > 0) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function compareJobsByFreshness(a: ProofJobRecord, b: ProofJobRecord): number {
-  const aTime = a.claim.submittedAt ?? a.createdAt;
-  const bTime = b.claim.submittedAt ?? b.createdAt;
-  return bTime.localeCompare(aTime);
-}
-
-function findBestMatchingJob(
+type BackfillProofJobMatcher = (
   jobs: ProofJobRecord[],
   event: UnmappedLeaderboardEvent,
-  allowNonSucceeded = false,
-): ProofJobRecord | null {
-  const normalizedEventTxHash = normalizeTxHash(event.txHash);
-  const candidates = jobs.filter((job) => {
-    const jobSeed = asFiniteNumber(job.tape?.metadata?.seed);
-    const jobFinalScore = asFiniteNumber(job.tape?.metadata?.finalScore);
-    return jobSeed === event.seed && jobFinalScore === event.finalScore;
-  });
+) => ProofJobRecord | null;
 
-  if (candidates.length === 0) {
-    return null;
+async function applyBackfillClaimIndexMatches(
+  env: WorkerEnv,
+  deps: BackfillProofTapeMappingsDeps,
+  events: UnmappedLeaderboardEvent[],
+  result: BackfillTapeMappingsResult,
+): Promise<UnmappedLeaderboardEvent[]> {
+  const indexedEntries = await getProofClaimIndexEntriesByTxHashes(
+    env,
+    events.map((event) => event.txHash),
+  );
+  if (indexedEntries.length === 0) {
+    return events;
   }
 
-  if (normalizedEventTxHash) {
-    const exactTxMatches = candidates.filter(
-      (job) => normalizeTxHash(job.claim.txHash) === normalizedEventTxHash,
-    );
-    if (exactTxMatches.length > 0) {
-      exactTxMatches.sort(compareJobsByFreshness);
-      return exactTxMatches[0];
+  const entriesByTxHash = new Map(
+    indexedEntries.map((entry) => [normalizeReplayTxHash(entry.txHash) ?? entry.txHash, entry]),
+  );
+  const replayTapeByJobId = new Map<string, boolean>();
+  const unresolved: UnmappedLeaderboardEvent[] = [];
+
+  /* eslint-disable no-await-in-loop */
+  for (const event of events) {
+    const normalizedTxHash = normalizeReplayTxHash(event.txHash);
+    const entry = normalizedTxHash ? entriesByTxHash.get(normalizedTxHash) : null;
+    if (
+      !entry ||
+      entry.claimantAddress !== event.claimantAddress ||
+      entry.seed !== event.seed >>> 0 ||
+      entry.finalScore !== event.finalScore >>> 0
+    ) {
+      unresolved.push(event);
+      continue;
+    }
+
+    let hasReplayTape = replayTapeByJobId.get(entry.proofJobId);
+    if (hasReplayTape == null) {
+      hasReplayTape = await proofJobHasReplayTape(env, { jobId: entry.proofJobId });
+      replayTapeByJobId.set(entry.proofJobId, hasReplayTape);
+    }
+    if (!hasReplayTape) {
+      unresolved.push(event);
+      continue;
+    }
+
+    result.matched += 1;
+    try {
+      await deps.writeProofTapeMapping(env, event.txHash, entry.proofJobId);
+      result.written += 1;
+    } catch (error) {
+      console.warn(
+        `[leaderboard-sync] backfill: failed writing claim-index match for tx ${event.txHash}: ${safeErrorMessage(error)}`,
+      );
+      result.errors += 1;
     }
   }
+  /* eslint-enable no-await-in-loop */
 
-  const succeededMatches = candidates.filter((job) => job.claim.status === "succeeded");
-  if (succeededMatches.length > 0) {
-    succeededMatches.sort(compareJobsByFreshness);
-    return succeededMatches[0];
-  }
-
-  if (!allowNonSucceeded) {
-    return null;
-  }
-
-  if (candidates.length === 1) {
-    return candidates[0];
-  }
-
-  return null;
+  return unresolved;
 }
 
 async function applyBackfillMatches(
@@ -885,13 +930,23 @@ async function applyBackfillMatches(
   jobs: ProofJobRecord[],
   events: UnmappedLeaderboardEvent[],
   result: BackfillTapeMappingsResult,
-  allowNonSucceeded: boolean,
+  matchJob: BackfillProofJobMatcher,
 ): Promise<UnmappedLeaderboardEvent[]> {
   const unresolved: UnmappedLeaderboardEvent[] = [];
+  const replayTapeByJobId = new Map<string, boolean>();
   /* eslint-disable no-await-in-loop */
   for (const event of events) {
-    const match = findBestMatchingJob(jobs, event, allowNonSucceeded);
+    const match = matchJob(jobs, event);
     if (!match) {
+      unresolved.push(event);
+      continue;
+    }
+    let hasReplayTape = replayTapeByJobId.get(match.jobId);
+    if (hasReplayTape == null) {
+      hasReplayTape = await proofJobHasReplayTape(env, match);
+      replayTapeByJobId.set(match.jobId, hasReplayTape);
+    }
+    if (!hasReplayTape) {
       unresolved.push(event);
       continue;
     }
@@ -963,9 +1018,21 @@ export async function backfillProofTapeMappings(
     return result;
   }
 
+  let pendingUnmapped = unmapped;
+  try {
+    pendingUnmapped = await applyBackfillClaimIndexMatches(env, deps, unmapped, result);
+  } catch (error) {
+    console.warn(
+      `[leaderboard-sync] backfill: failed loading proof claim index: ${safeErrorMessage(error)}`,
+    );
+  }
+  if (pendingUnmapped.length === 0) {
+    return result;
+  }
+
   // Group by claimant to minimise DO calls
   const byClaimant = new Map<string, UnmappedLeaderboardEvent[]>();
-  for (const event of unmapped) {
+  for (const event of pendingUnmapped) {
     const group = byClaimant.get(event.claimantAddress);
     if (group) {
       group.push(event);
@@ -1003,7 +1070,19 @@ export async function backfillProofTapeMappings(
       total = response.total;
       offset += response.jobs.length;
 
-      pending = await applyBackfillMatches(env, deps, jobs, pending, result, false);
+      pending = await applyBackfillMatches(
+        env,
+        deps,
+        jobs,
+        pending,
+        result,
+        (candidateJobs, event) =>
+          findExactMatchingProofJob(candidateJobs, {
+            claimTxHash: event.txHash,
+            seed: event.seed,
+            finalScore: event.finalScore,
+          }),
+      );
 
       if (offset >= total || response.jobs.length < jobsPageSize) {
         fullyScannedClaimantJobs = true;
@@ -1011,7 +1090,23 @@ export async function backfillProofTapeMappings(
     }
 
     if (pending.length > 0 && fullyScannedClaimantJobs && jobs.length > 0) {
-      pending = await applyBackfillMatches(env, deps, jobs, pending, result, true);
+      pending = await applyBackfillMatches(
+        env,
+        deps,
+        jobs,
+        pending,
+        result,
+        (candidateJobs, event) =>
+          findBestMatchingProofJob(
+            candidateJobs,
+            {
+              claimTxHash: event.txHash,
+              seed: event.seed,
+              finalScore: event.finalScore,
+            },
+            true,
+          ),
+      );
     }
 
     if (pending.length > 0 && jobs.length >= maxJobsPerClaimant) {

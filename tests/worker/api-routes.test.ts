@@ -1,8 +1,7 @@
-import { afterAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { WorkerEnv } from "../../worker/env";
 
-const VALID_CLAIMANT_CONTRACT =
-  "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
+const VALID_CLAIMANT_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
 const EXAMPLE_GENERATED_AT = "2026-02-14T00:00:00.000Z";
 const EXAMPLE_INGESTION_STATE = {
   provider: "rpc" as const,
@@ -33,24 +32,8 @@ const EXAMPLE_ENTRY = {
   },
 };
 
-mock.module("../../worker/leaderboard-store", () => ({
-  createLeaderboardProfileAuthChallenge: async () => undefined,
-  getLeaderboardIngestionState: async () => EXAMPLE_INGESTION_STATE,
-  getLeaderboardPage: async () => ({
-    window: "all",
-    generatedAt: EXAMPLE_GENERATED_AT,
-    windowRange: {
-      startAt: null,
-      endAt: EXAMPLE_GENERATED_AT,
-    },
-    totalPlayers: 1,
-    limit: 25,
-    offset: 0,
-    nextOffset: null,
-    entries: [EXAMPLE_ENTRY],
-    me: EXAMPLE_ENTRY,
-  }),
-  getLeaderboardPlayer: async () => ({
+function makeMockLeaderboardPlayer() {
+  return {
     profile: EXAMPLE_ENTRY.profile,
     stats: {
       totalRuns: 1,
@@ -74,6 +57,7 @@ mock.module("../../worker/leaderboard-store", () => ({
         completedAt: EXAMPLE_ENTRY.completedAt,
         claimStatus: "succeeded" as const,
         claimTxHash: EXAMPLE_ENTRY.claimTxHash,
+        proofJobId: null,
       },
     ],
     runsPagination: {
@@ -82,9 +66,63 @@ mock.module("../../worker/leaderboard-store", () => ({
       total: 1,
       nextOffset: null,
     },
+  };
+}
+
+let mockLeaderboardPlayer = makeMockLeaderboardPlayer();
+const proofClaimIndexEntries: Array<{
+  proofJobId: string;
+  claimantAddress: string;
+  txHash: string;
+  seed: number;
+  finalScore: number;
+  completedAt: string;
+  recordedAt: string;
+}> = [];
+let proofClaimIndexLookupCalls = 0;
+let proofArtifactsHeadCalls = 0;
+const proofTapeMappingWrites: Array<{ txHash: string; proofJobId: string }> = [];
+
+mock.module("../../worker/leaderboard-store", () => ({
+  createLeaderboardProfileAuthChallenge: async () => undefined,
+  getLeaderboardIngestionState: async () => EXAMPLE_INGESTION_STATE,
+  getLeaderboardPage: async () => ({
+    window: "all",
+    generatedAt: EXAMPLE_GENERATED_AT,
+    windowRange: {
+      startAt: null,
+      endAt: EXAMPLE_GENERATED_AT,
+    },
+    totalPlayers: 1,
+    limit: 25,
+    offset: 0,
+    nextOffset: null,
+    entries: [EXAMPLE_ENTRY],
+    me: EXAMPLE_ENTRY,
+  }),
+  getLeaderboardPlayer: async () => ({
+    profile: mockLeaderboardPlayer.profile,
+    stats: { ...mockLeaderboardPlayer.stats },
+    ranks: { ...mockLeaderboardPlayer.ranks },
+    recentRuns: mockLeaderboardPlayer.recentRuns.map((run) => ({ ...run })),
+    runsPagination: { ...mockLeaderboardPlayer.runsPagination },
   }),
   getLeaderboardProfileAuthChallenge: async () => null,
   getLeaderboardProfileCredential: async () => null,
+  getProofClaimIndexEntriesByTxHashes: async (
+    _env: WorkerEnv,
+    txHashes: Array<string | null | undefined>,
+  ) => {
+    proofClaimIndexLookupCalls += 1;
+    const normalized = new Set(
+      txHashes
+        .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : null))
+        .filter((value): value is string => Boolean(value)),
+    );
+    return proofClaimIndexEntries
+      .filter((entry) => normalized.has(entry.txHash))
+      .map((entry) => ({ ...entry }));
+  },
   markLeaderboardProfileAuthChallengeUsed: async () => false,
   purgeExpiredLeaderboardProfileAuthChallenges: async () => undefined,
   updateLeaderboardProfileCredentialCounter: async () => undefined,
@@ -98,12 +136,14 @@ mock.module("../../worker/leaderboard-store", () => ({
     createdAt: EXAMPLE_GENERATED_AT,
     updatedAt: EXAMPLE_GENERATED_AT,
   }),
+  writeProofTapeMapping: async (_env: WorkerEnv, txHash: string, proofJobId: string) => {
+    proofTapeMappingWrites.push({ txHash, proofJobId });
+  },
 }));
 
 mock.module("../../worker/durable/coordinator", () => ({
   coordinatorStub: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __coordinator: Record<string, unknown> })
-      .__coordinator,
+    (env as WorkerEnv & { __coordinator: Record<string, unknown> }).__coordinator,
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
@@ -114,22 +154,9 @@ afterAll(() => {
 
 const { Hono } = await import("hono");
 const { createApiRouter } = await import("../../worker/api/routes");
-const { createLeaderboardPublicRouter } = await import(
-  "../../worker/api/leaderboard-routes"
-);
+const { createLeaderboardPublicRouter } = await import("../../worker/api/leaderboard-routes");
 
-const noopExecutionContext = {
-  waitUntil() {
-    // no-op in tests
-  },
-  passThroughOnException() {
-    // no-op in tests
-  },
-} as unknown as ExecutionContext;
-
-function makeCoordinatorStub(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function makeCoordinatorStub(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     getActiveJobsSummary: async () => ({
       total: 0,
@@ -176,9 +203,7 @@ function makeMockD1Database(): D1Database {
 }
 
 function makeEnv(
-  overrides:
-    | (Partial<WorkerEnv> & { __coordinator?: Record<string, unknown> })
-    | undefined = {},
+  overrides: (Partial<WorkerEnv> & { __coordinator?: Record<string, unknown> }) | undefined = {},
 ): WorkerEnv {
   const coordinator = overrides.__coordinator ?? makeCoordinatorStub();
 
@@ -200,6 +225,10 @@ function makeEnv(
       get: () => coordinator,
     } as unknown as DurableObjectNamespace,
     PROOF_ARTIFACTS: {
+      head: async () => {
+        proofArtifactsHeadCalls += 1;
+        return { key: "proof" } as unknown as R2Object;
+      },
       get: async () => null,
       put: async () => undefined,
       delete: async () => undefined,
@@ -220,16 +249,31 @@ async function requestApi(
   app.route("/", createApiRouter());
   app.route("/leaderboard", createLeaderboardPublicRouter());
   const request = new Request(`https://worker.test${path}`, init);
-  return app.fetch(request, env, noopExecutionContext);
+  const waitUntilPromises: Promise<unknown>[] = [];
+  const executionContext = {
+    waitUntil(promise: Promise<unknown>) {
+      waitUntilPromises.push(promise);
+    },
+    passThroughOnException() {
+      // no-op in tests
+    },
+  } as unknown as ExecutionContext;
+  const response = await app.fetch(request, env, executionContext);
+  await Promise.allSettled(waitUntilPromises);
+  return response;
 }
 
 describe("API routes", () => {
+  beforeEach(() => {
+    mockLeaderboardPlayer = makeMockLeaderboardPlayer();
+    proofClaimIndexEntries.length = 0;
+    proofClaimIndexLookupCalls = 0;
+    proofArtifactsHeadCalls = 0;
+    proofTapeMappingWrites.length = 0;
+  });
+
   it("GET /health returns degraded prover status when health validation fails", async () => {
-    const response = await requestApi(
-      "/health",
-      undefined,
-      makeEnv({ PROVER_BASE_URL: "" }),
-    );
+    const response = await requestApi("/health", undefined, makeEnv({ PROVER_BASE_URL: "" }));
     expect(response.status).toBe(200);
 
     const payload = (await response.json()) as {
@@ -354,11 +398,7 @@ describe("API routes", () => {
   });
 
   it("GET /leaderboard validates window query", async () => {
-    const response = await requestApi(
-      "/leaderboard?window=bad-window",
-      undefined,
-      makeEnv(),
-    );
+    const response = await requestApi("/leaderboard?window=bad-window", undefined, makeEnv());
     expect(response.status).toBe(400);
   });
 
@@ -403,6 +443,616 @@ describe("API routes", () => {
     };
     expect(payload.success).toBe(true);
     expect(payload.player.claimant_address).toBe(VALID_CLAIMANT_CONTRACT);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress self-heals missing replay mappings from coordinator jobs", async () => {
+    const repairedTxHash = "a".repeat(64);
+    const recentIso = new Date().toISOString();
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-self-heal",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 9_041,
+          mintedDelta: 9_041,
+          seed: 777,
+          frameCount: 36000,
+          completedAt: recentIso,
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => ({
+            jobs: [
+              {
+                jobId: "job-prior-attempt",
+                status: "succeeded",
+                createdAt: EXAMPLE_GENERATED_AT,
+                updatedAt: EXAMPLE_GENERATED_AT,
+                completedAt: EXAMPLE_GENERATED_AT,
+                tape: {
+                  sizeBytes: 512,
+                  key: "proof-jobs/job-prior-attempt/input.tape",
+                  metadata: {
+                    seed: 777,
+                    seedId: 1,
+                    frameCount: 36000,
+                    finalScore: 9_041,
+                    checksum: 0,
+                  },
+                },
+                queue: {
+                  attempts: 1,
+                  lastAttemptAt: null,
+                  lastError: null,
+                  nextRetryAt: null,
+                },
+                prover: {
+                  jobId: null,
+                  status: null,
+                  statusUrl: null,
+                  segmentLimitPo2: null,
+                  lastPolledAt: null,
+                  pollingErrors: 0,
+                },
+                proverAttempts: [],
+                claimAttempts: [],
+                result: null,
+                claim: {
+                  claimantAddress: VALID_CLAIMANT_CONTRACT,
+                  status: "succeeded",
+                  attempts: 1,
+                  lastAttemptAt: null,
+                  lastError: null,
+                  nextRetryAt: null,
+                  submittedAt: EXAMPLE_GENERATED_AT,
+                  txHash: "prior-attempt",
+                },
+                error: null,
+              },
+            ],
+            total: 1,
+          }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBe("job-prior-attempt");
+    expect(proofTapeMappingWrites).toEqual([
+      { txHash: repairedTxHash, proofJobId: "job-prior-attempt" },
+    ]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress repairs exact replay mappings from proof claim index before DO lookup", async () => {
+    const repairedTxHash = "9".repeat(64);
+    const recentIso = new Date().toISOString();
+    let listCalls = 0;
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-claim-index",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 4_242,
+          mintedDelta: 4_242,
+          seed: 222,
+          frameCount: 36000,
+          completedAt: recentIso,
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+    proofClaimIndexEntries.push({
+      proofJobId: "job-from-claim-index",
+      claimantAddress: VALID_CLAIMANT_CONTRACT,
+      txHash: repairedTxHash,
+      seed: 222,
+      finalScore: 4_242,
+      completedAt: recentIso,
+      recordedAt: recentIso,
+    });
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => {
+            listCalls += 1;
+            return { jobs: [], total: 0 };
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBe("job-from-claim-index");
+    expect(listCalls).toBe(0);
+    expect(proofTapeMappingWrites).toEqual([
+      { txHash: repairedTxHash, proofJobId: "job-from-claim-index" },
+    ]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress does not infer a replay for ambiguous succeeded matches", async () => {
+    const repairedTxHash = "c".repeat(64);
+    const recentIso = new Date().toISOString();
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-ambiguous",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 8_888,
+          mintedDelta: 8_888,
+          seed: 333,
+          frameCount: 36000,
+          completedAt: recentIso,
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+
+    const makeSucceededJob = (jobId: string, txHash: string) => ({
+      jobId,
+      status: "succeeded",
+      createdAt: recentIso,
+      updatedAt: recentIso,
+      completedAt: recentIso,
+      tape: {
+        sizeBytes: 512,
+        key: `proof-jobs/${jobId}/input.tape`,
+        metadata: {
+          seed: 333,
+          seedId: 1,
+          frameCount: 36000,
+          finalScore: 8_888,
+          checksum: 0,
+        },
+      },
+      queue: {
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+      },
+      prover: {
+        jobId: null,
+        status: null,
+        statusUrl: null,
+        segmentLimitPo2: null,
+        lastPolledAt: null,
+        pollingErrors: 0,
+      },
+      proverAttempts: [],
+      claimAttempts: [],
+      result: null,
+      claim: {
+        claimantAddress: VALID_CLAIMANT_CONTRACT,
+        status: "succeeded" as const,
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+        submittedAt: recentIso,
+        txHash,
+      },
+      error: null,
+    });
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => ({
+            jobs: [
+              makeSucceededJob("job-a", "prior-attempt"),
+              makeSucceededJob("job-b", "superseded-by-higher-score"),
+            ],
+            total: 2,
+          }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBeNull();
+    expect(proofTapeMappingWrites).toEqual([]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress does not infer a replay before a paginated claimant scan is complete", async () => {
+    const repairedTxHash = "e".repeat(64);
+    const recentIso = new Date().toISOString();
+    const listOffsets: number[] = [];
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-paginated-ambiguous",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 6_666,
+          mintedDelta: 6_666,
+          seed: 555,
+          frameCount: 36000,
+          completedAt: recentIso,
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+
+    const makeSucceededJob = (jobId: string, txHash: string, seed: number, finalScore: number) => ({
+      jobId,
+      status: "succeeded",
+      createdAt: recentIso,
+      updatedAt: recentIso,
+      completedAt: recentIso,
+      tape: {
+        sizeBytes: 512,
+        key: `proof-jobs/${jobId}/input.tape`,
+        metadata: {
+          seed,
+          seedId: 1,
+          frameCount: 36000,
+          finalScore,
+          checksum: 0,
+        },
+      },
+      queue: {
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+      },
+      prover: {
+        jobId: null,
+        status: null,
+        statusUrl: null,
+        segmentLimitPo2: null,
+        lastPolledAt: null,
+        pollingErrors: 0,
+      },
+      proverAttempts: [],
+      claimAttempts: [],
+      result: null,
+      claim: {
+        claimantAddress: VALID_CLAIMANT_CONTRACT,
+        status: "succeeded" as const,
+        attempts: 1,
+        lastAttemptAt: null,
+        lastError: null,
+        nextRetryAt: null,
+        submittedAt: recentIso,
+        txHash,
+      },
+      error: null,
+    });
+
+    const firstPage = [
+      makeSucceededJob("job-page-1", "prior-attempt", 555, 6_666),
+      ...Array.from({ length: 199 }, (_, index) =>
+        makeSucceededJob(`job-filler-${index}`, `filler-${index}`, 1_000 + index, 2_000 + index),
+      ),
+    ];
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async (_claimantAddress: string, _limit: number, offset: number) => {
+            listOffsets.push(offset);
+            if (offset === 0) {
+              return { jobs: firstPage, total: 201 };
+            }
+            if (offset === 200) {
+              return {
+                jobs: [makeSucceededJob("job-page-2", "superseded-by-higher-score", 555, 6_666)],
+                total: 201,
+              };
+            }
+            return { jobs: [], total: 201 };
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(listOffsets).toEqual([0, 200]);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBeNull();
+    expect(proofTapeMappingWrites).toEqual([]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress does not return repaired replay when the tape artifact is missing", async () => {
+    const repairedTxHash = "d".repeat(64);
+    const recentIso = new Date().toISOString();
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-missing-tape",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 7_777,
+          mintedDelta: 7_777,
+          seed: 444,
+          frameCount: 36000,
+          completedAt: recentIso,
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        PROOF_ARTIFACTS: {
+          head: async () => null,
+          get: async () => null,
+          put: async () => undefined,
+          delete: async () => undefined,
+        } as unknown as R2Bucket,
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => ({
+            jobs: [
+              {
+                jobId: "job-no-tape",
+                status: "succeeded",
+                createdAt: recentIso,
+                updatedAt: recentIso,
+                completedAt: recentIso,
+                tape: {
+                  sizeBytes: 512,
+                  key: "proof-jobs/job-no-tape/input.tape",
+                  metadata: {
+                    seed: 444,
+                    seedId: 1,
+                    frameCount: 36000,
+                    finalScore: 7_777,
+                    checksum: 0,
+                  },
+                },
+                queue: {
+                  attempts: 1,
+                  lastAttemptAt: null,
+                  lastError: null,
+                  nextRetryAt: null,
+                },
+                prover: {
+                  jobId: null,
+                  status: null,
+                  statusUrl: null,
+                  segmentLimitPo2: null,
+                  lastPolledAt: null,
+                  pollingErrors: 0,
+                },
+                proverAttempts: [],
+                claimAttempts: [],
+                result: null,
+                claim: {
+                  claimantAddress: VALID_CLAIMANT_CONTRACT,
+                  status: "succeeded",
+                  attempts: 1,
+                  lastAttemptAt: null,
+                  lastError: null,
+                  nextRetryAt: null,
+                  submittedAt: recentIso,
+                  txHash: "prior-attempt",
+                },
+                error: null,
+              },
+            ],
+            total: 1,
+          }),
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBeNull();
+    expect(proofTapeMappingWrites).toEqual([]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress repairs old runs from proof claim index without DO lookup", async () => {
+    const repairedTxHash = "8".repeat(64);
+    let listCalls = 0;
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-old-claim-index",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 2_468,
+          mintedDelta: 2_468,
+          seed: 909,
+          frameCount: 1200,
+          completedAt: "2026-01-01T00:00:00.000Z",
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+    proofClaimIndexEntries.push({
+      proofJobId: "job-old-claim-index",
+      claimantAddress: VALID_CLAIMANT_CONTRACT,
+      txHash: repairedTxHash,
+      seed: 909,
+      finalScore: 2_468,
+      completedAt: "2026-01-01T00:00:00.000Z",
+      recordedAt: EXAMPLE_GENERATED_AT,
+    });
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => {
+            listCalls += 1;
+            return { jobs: [], total: 0 };
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBe("job-old-claim-index");
+    expect(listCalls).toBe(0);
+    expect(proofClaimIndexLookupCalls).toBe(1);
+    expect(proofArtifactsHeadCalls).toBe(1);
+    expect(proofTapeMappingWrites).toEqual([
+      { txHash: repairedTxHash, proofJobId: "job-old-claim-index" },
+    ]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress skips replay self-heal for runs older than retention", async () => {
+    let listCalls = 0;
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-old-run",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 1_337,
+          mintedDelta: 1_337,
+          seed: 42,
+          frameCount: 1200,
+          completedAt: "2026-01-01T00:00:00.000Z",
+          claimStatus: "succeeded" as const,
+          claimTxHash: "b".repeat(64),
+          proofJobId: null,
+        },
+      ],
+    };
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => {
+            listCalls += 1;
+            return { jobs: [], total: 0 };
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBeNull();
+    expect(listCalls).toBe(0);
+    expect(proofClaimIndexLookupCalls).toBe(1);
+    expect(proofArtifactsHeadCalls).toBe(0);
+    expect(proofTapeMappingWrites).toEqual([]);
+  });
+
+  it("GET /leaderboard/player/:claimantAddress rejects mismatched proof claim index rows", async () => {
+    const repairedTxHash = "7".repeat(64);
+    const recentIso = new Date().toISOString();
+    let listCalls = 0;
+    mockLeaderboardPlayer = {
+      ...makeMockLeaderboardPlayer(),
+      recentRuns: [
+        {
+          jobId: "evt-claim-index-mismatch",
+          claimantAddress: VALID_CLAIMANT_CONTRACT,
+          score: 5_555,
+          mintedDelta: 5_555,
+          seed: 111,
+          frameCount: 36000,
+          completedAt: recentIso,
+          claimStatus: "succeeded" as const,
+          claimTxHash: repairedTxHash,
+          proofJobId: null,
+        },
+      ],
+    };
+    proofClaimIndexEntries.push({
+      proofJobId: "job-mismatch",
+      claimantAddress: VALID_CLAIMANT_CONTRACT,
+      txHash: repairedTxHash,
+      seed: 999,
+      finalScore: 5_555,
+      completedAt: recentIso,
+      recordedAt: recentIso,
+    });
+
+    const response = await requestApi(
+      `/leaderboard/player/${VALID_CLAIMANT_CONTRACT}`,
+      undefined,
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          listJobsForClaimant: async () => {
+            listCalls += 1;
+            return { jobs: [], total: 0 };
+          },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      success: boolean;
+      player: { recent_runs: Array<{ proofJobId: string | null }> };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.player.recent_runs[0]?.proofJobId).toBeNull();
+    expect(proofClaimIndexLookupCalls).toBe(1);
+    expect(listCalls).toBeGreaterThanOrEqual(1);
+    expect(proofTapeMappingWrites).toEqual([]);
   });
 
   it("POST /leaderboard/player/:claimantAddress/profile/auth/options validates payload", async () => {
@@ -451,11 +1101,7 @@ describe("API routes", () => {
   });
 
   it("GET /proofs/jobs/:jobId returns 404 when job does not exist", async () => {
-    const response = await requestApi(
-      "/proofs/jobs/job-missing",
-      undefined,
-      makeEnv(),
-    );
+    const response = await requestApi("/proofs/jobs/job-missing", undefined, makeEnv());
     expect(response.status).toBe(404);
   });
 
@@ -476,11 +1122,7 @@ describe("API routes", () => {
   });
 
   it("GET /proofs/jobs/:jobId/result returns 404 when result artifact is not found", async () => {
-    const response = await requestApi(
-      "/proofs/jobs/job-missing/result",
-      undefined,
-      makeEnv(),
-    );
+    const response = await requestApi("/proofs/jobs/job-missing/result", undefined, makeEnv());
     expect(response.status).toBe(404);
   });
 
@@ -602,11 +1244,7 @@ describe("API routes", () => {
   });
 
   it("GET /proofs/jobs returns 400 for an invalid address", async () => {
-    const response = await requestApi(
-      "/proofs/jobs?address=not-valid",
-      undefined,
-      makeEnv(),
-    );
+    const response = await requestApi("/proofs/jobs?address=not-valid", undefined, makeEnv());
     expect(response.status).toBe(400);
     const payload = (await response.json()) as {
       success: boolean;
@@ -887,11 +1525,7 @@ describe("API routes", () => {
   // ── GET /proofs/jobs/:jobId/tape ──────────────────────────────────────────
 
   it("GET /proofs/jobs/:jobId/tape returns 404 when job does not exist", async () => {
-    const response = await requestApi(
-      "/proofs/jobs/no-such-job/tape",
-      undefined,
-      makeEnv(),
-    );
+    const response = await requestApi("/proofs/jobs/no-such-job/tape", undefined, makeEnv());
     expect(response.status).toBe(404);
   });
 
@@ -952,12 +1586,8 @@ describe("API routes", () => {
       }),
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe(
-      "application/octet-stream",
-    );
-    expect(response.headers.get("content-disposition")).toContain(
-      "job-with-tape.tape",
-    );
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("content-disposition")).toContain("job-with-tape.tape");
     const buf = await response.arrayBuffer();
     expect(new Uint8Array(buf)).toEqual(tapeBody);
   });

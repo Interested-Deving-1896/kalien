@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import { listProofJobs, type ProofJobPublic } from "@/proof/api";
-import { timeAgo } from "@/lib/time";
 import { PageShell } from "@/components/shared/PageShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,10 +10,23 @@ import { ProofJobCard } from "./ProofJobCard";
 import { PageHero } from "@/components/shared/PageHero";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useLocation } from "@/hooks/useLocation";
+import { RelativeTime } from "@/components/leaderboard/RelativeTime";
 
 function truncateAddress(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 6)}…${address.slice(-6)}`;
+}
+
+function LastUpdatedLabel({ value }: { value: string | null }) {
+  if (!value) {
+    return null;
+  }
+
+  return (
+    <span className="text-xs text-muted-foreground">
+      Updated <RelativeTime value={value} />
+    </span>
+  );
 }
 
 export function PublicProofsPage() {
@@ -34,10 +46,12 @@ export function PublicProofsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const fetchJobs = useCallback(
     (silent: boolean) => {
       if (!address) return;
+      const requestId = ++requestIdRef.current;
 
       if (!silent) {
         setLoading(true);
@@ -47,6 +61,9 @@ export function PublicProofsPage() {
       void (async () => {
         try {
           const response = await listProofJobs(address, { limit, offset });
+          if (requestId !== requestIdRef.current) {
+            return;
+          }
           setJobs(response.jobs);
           setTotal(response.total);
           setNextOffset(response.next_offset);
@@ -55,12 +72,15 @@ export function PublicProofsPage() {
             setError(null);
           }
         } catch (reason) {
+          if (requestId !== requestIdRef.current) {
+            return;
+          }
           if (!silent) {
             const detail = reason instanceof Error ? reason.message : "failed to load proof jobs";
             setError(detail);
           }
         } finally {
-          if (!silent) {
+          if (!silent && requestId === requestIdRef.current) {
             setLoading(false);
           }
         }
@@ -73,17 +93,12 @@ export function PublicProofsPage() {
   fetchJobsRef.current = fetchJobs;
 
   useEffect(() => {
-    if (!address) return;
+    if (!address) {
+      requestIdRef.current += 1;
+      return;
+    }
     fetchJobsRef.current(false);
   }, [address, limit, offset]);
-
-  // Tick every 5s so the "Updated Xs ago" label stays current
-  const [, tick] = useState(0);
-  useEffect(() => {
-    if (!lastRefreshAt) return;
-    const id = setInterval(() => tick((n) => n + 1), 5_000);
-    return () => clearInterval(id);
-  }, [lastRefreshAt]);
 
   return (
     <PageShell glow className="content-start">
@@ -91,10 +106,8 @@ export function PublicProofsPage() {
         title="Player Proofs"
         subtitle={`Viewing proof jobs for ${truncateAddress(address)}`}
       >
-        <div className="flex items-center gap-2">
-          {lastRefreshAt && (
-            <span className="text-xs text-muted-foreground">Updated {timeAgo(lastRefreshAt)}</span>
-          )}
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          <LastUpdatedLabel value={lastRefreshAt} />
           <Button size="sm" onClick={() => fetchJobs(false)} disabled={loading} title="Refresh">
             <RefreshCw className="size-3.5" />
             Refresh

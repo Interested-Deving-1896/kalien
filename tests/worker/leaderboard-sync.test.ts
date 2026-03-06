@@ -3,6 +3,7 @@ import type { WorkerEnv } from "../../worker/env";
 import type { GalexieFetchResult } from "../../worker/leaderboard-ingestion";
 import {
   backfillProofTapeMappings,
+  pruneStaleProofTapeMappings,
   recordLeaderboardSyncFailure,
   runLeaderboardSync,
   runScheduledLeaderboardSync,
@@ -25,9 +26,7 @@ let backfillCalls = 0;
 let pruneCalls = 0;
 let deps: LeaderboardSyncDeps;
 
-function makeState(
-  overrides: Partial<LeaderboardIngestionState> = {},
-): LeaderboardIngestionState {
+function makeState(overrides: Partial<LeaderboardIngestionState> = {}): LeaderboardIngestionState {
   return {
     provider: "rpc",
     sourceMode: "rpc",
@@ -41,9 +40,7 @@ function makeState(
   };
 }
 
-function makeFetchResult(
-  overrides: Partial<GalexieFetchResult> = {},
-): GalexieFetchResult {
+function makeFetchResult(overrides: Partial<GalexieFetchResult> = {}): GalexieFetchResult {
   return {
     events: [],
     nextCursor: null,
@@ -75,15 +72,66 @@ function makeEvent(index: number): LeaderboardEventRecord {
   };
 }
 
-function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
+function makeEnv(
+  overrides:
+    | (Partial<WorkerEnv> & {
+        __proofClaimIndexEntries?: Array<{
+          proofJobId: string;
+          claimantAddress: string;
+          txHash: string;
+          seed: number;
+          finalScore: number;
+          completedAt: string;
+          recordedAt: string;
+        }>;
+      })
+    | undefined = {},
+): WorkerEnv {
+  const proofClaimIndexEntries = overrides.__proofClaimIndexEntries ?? [];
+
   return {
     ASSETS: {} as Fetcher,
     PROOF_QUEUE: {} as Queue<unknown>,
     VAST_QUEUE: {} as Queue<unknown>,
     CLAIM_QUEUE: {} as Queue<unknown>,
     PROOF_COORDINATOR: {} as DurableObjectNamespace<never>,
-    PROOF_ARTIFACTS: {} as R2Bucket,
-    LEADERBOARD_DB: {} as D1Database,
+    PROOF_ARTIFACTS: {
+      head: async () => ({ key: "proof" }) as unknown as R2Object,
+    } as unknown as R2Bucket,
+    LEADERBOARD_DB: {
+      prepare: (statement: string) => ({
+        bind: (...args: unknown[]) => ({
+          run: async () => ({ success: true }),
+          all: async () => {
+            if (statement.includes("FROM proof_claim_index")) {
+              const normalized = new Set(
+                args
+                  .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : null))
+                  .filter((value): value is string => Boolean(value)),
+              );
+              return {
+                results: proofClaimIndexEntries
+                  .filter((entry) => normalized.has(entry.txHash))
+                  .map((entry) => ({
+                    proof_job_id: entry.proofJobId,
+                    claimant_address: entry.claimantAddress,
+                    tx_hash: entry.txHash,
+                    seed: entry.seed,
+                    final_score: entry.finalScore,
+                    completed_at: entry.completedAt,
+                    recorded_at: entry.recordedAt,
+                  })),
+              };
+            }
+            return { results: [] };
+          },
+          first: async () => null,
+        }),
+        run: async () => ({ success: true }),
+        all: async () => ({ results: [] }),
+        first: async () => null,
+      }),
+    } as unknown as D1Database,
     PROVER_BASE_URL: "http://127.0.0.1:8088",
     ...overrides,
   } as WorkerEnv;
@@ -186,17 +234,11 @@ describe("leaderboard sync behavior", () => {
       purgeExpiredLeaderboardProfileAuthChallenges: async () => {
         purgeCalls += 1;
       },
-      setLeaderboardIngestionState: async (
-        _env: WorkerEnv,
-        next: LeaderboardIngestionState,
-      ) => {
+      setLeaderboardIngestionState: async (_env: WorkerEnv, next: LeaderboardIngestionState) => {
         ingestionState = { ...next };
         setStateCalls.push({ ...next });
       },
-      upsertLeaderboardEvents: async (
-        _env: WorkerEnv,
-        events: LeaderboardEventRecord[],
-      ) => {
+      upsertLeaderboardEvents: async (_env: WorkerEnv, events: LeaderboardEventRecord[]) => {
         upsertCalls.push(events);
         return { inserted: events.length, updated: 0 };
       },
@@ -283,11 +325,7 @@ describe("leaderboard sync behavior", () => {
       new Error("rpc getEvents failed across candidates"),
     );
 
-    const result = await runLeaderboardSync(
-      makeEnv(),
-      { mode: "forward", limit: 2 },
-      deps,
-    );
+    const result = await runLeaderboardSync(makeEnv(), { mode: "forward", limit: 2 }, deps);
 
     expect(fetchCalls).toHaveLength(2);
     expect(upsertCalls).toHaveLength(1);
@@ -325,11 +363,7 @@ describe("leaderboard sync behavior", () => {
       lastError: null,
     });
 
-    await recordLeaderboardSyncFailure(
-      makeEnv(),
-      new Error("forced failure"),
-      deps,
-    );
+    await recordLeaderboardSyncFailure(makeEnv(), new Error("forced failure"), deps);
 
     const saved = setStateCalls.at(-1);
     expect(saved).toBeTruthy();
@@ -393,9 +427,7 @@ describe("leaderboard sync behavior", () => {
     );
 
     expect(result.catchup).toBeNull();
-    expect(result.warning).toBe(
-      "skipped catchup backfill because highest ledger is unknown",
-    );
+    expect(result.warning).toBe("skipped catchup backfill because highest ledger is unknown");
     expect(fetchCalls).toHaveLength(1);
     expect(backfillCalls).toBe(1);
     expect(pruneCalls).toBe(1);
@@ -430,16 +462,13 @@ describe("leaderboard sync behavior", () => {
 
 describe("proof tape backfill behavior", () => {
   it("prefers exact tx hash matches over non-exact candidates", async () => {
-    const claimantAddress =
-      "CCZV7OHNSIMTVJH2HSD62XENQJAUBNOLPO5ZMQE7MJ3TQP4XUYOKVUA3";
+    const claimantAddress = "CCZV7OHNSIMTVJH2HSD62XENQJAUBNOLPO5ZMQE7MJ3TQP4XUYOKVUA3";
     const txHash = "A".repeat(64);
     const writes: Array<{ txHash: string; proofJobId: string }> = [];
 
     const result = await backfillProofTapeMappings(makeEnv(), {
       getUnmappedLeaderboardTxHashes: async (_env, options) =>
-        options?.offset === 0
-          ? [{ txHash, claimantAddress, seed: 42, finalScore: 12_345 }]
-          : [],
+        options?.offset === 0 ? [{ txHash, claimantAddress, seed: 42, finalScore: 12_345 }] : [],
       writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
         writes.push({ txHash: mappedTxHash, proofJobId });
       },
@@ -471,8 +500,7 @@ describe("proof tape backfill behavior", () => {
   });
 
   it("paginates claimant jobs and can resolve matches beyond the first page", async () => {
-    const claimantAddress =
-      "CCZTYPWXMRFS2BB23L4CT73VZRVGE7S5B474VISMYBUU3K2TLNAN33TU";
+    const claimantAddress = "CCZTYPWXMRFS2BB23L4CT73VZRVGE7S5B474VISMYBUU3K2TLNAN33TU";
     const txHash = "c".repeat(64);
     const writes: Array<{ txHash: string; proofJobId: string }> = [];
     const listOffsets: number[] = [];
@@ -500,9 +528,7 @@ describe("proof tape backfill behavior", () => {
 
     const result = await backfillProofTapeMappings(makeEnv(), {
       getUnmappedLeaderboardTxHashes: async (_env, options) =>
-        options?.offset === 0
-          ? [{ txHash, claimantAddress, seed: 777, finalScore: 55_555 }]
-          : [],
+        options?.offset === 0 ? [{ txHash, claimantAddress, seed: 777, finalScore: 55_555 }] : [],
       writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
         writes.push({ txHash: mappedTxHash, proofJobId });
       },
@@ -524,16 +550,13 @@ describe("proof tape backfill behavior", () => {
   });
 
   it("does not map ambiguous non-succeeded matches", async () => {
-    const claimantAddress =
-      "CCBXQCM5NQ7XFZL6KQ6PFFWE2PTEK4ETIYRB6MUQ4PG6JXMRKXW4YF4O";
+    const claimantAddress = "CCBXQCM5NQ7XFZL6KQ6PFFWE2PTEK4ETIYRB6MUQ4PG6JXMRKXW4YF4O";
     const txHash = "d".repeat(64);
     const writes: Array<{ txHash: string; proofJobId: string }> = [];
 
     const result = await backfillProofTapeMappings(makeEnv(), {
       getUnmappedLeaderboardTxHashes: async (_env, options) =>
-        options?.offset === 0
-          ? [{ txHash, claimantAddress, seed: 99, finalScore: 40_000 }]
-          : [],
+        options?.offset === 0 ? [{ txHash, claimantAddress, seed: 99, finalScore: 40_000 }] : [],
       writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
         writes.push({ txHash: mappedTxHash, proofJobId });
       },
@@ -563,9 +586,253 @@ describe("proof tape backfill behavior", () => {
     expect(writes).toHaveLength(0);
   });
 
+  it("maps synthetic succeeded jobs when seed and final score uniquely match", async () => {
+    const claimantAddress = "CB4QGSFWVREUBIIAYWIBCYB5LZOI4A4L6JHB3MHI7GRX4N3QHAQG5M7M";
+    const txHash = "e".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+
+    const result = await backfillProofTapeMappings(makeEnv(), {
+      getUnmappedLeaderboardTxHashes: async (_env, options) =>
+        options?.offset === 0 ? [{ txHash, claimantAddress, seed: 321, finalScore: 76_543 }] : [],
+      writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+        writes.push({ txHash: mappedTxHash, proofJobId });
+      },
+      listJobsForClaimant: async () => ({
+        jobs: [
+          makeProofJob({
+            jobId: "job-prior-attempt",
+            claimantAddress,
+            seed: 321,
+            finalScore: 76_543,
+            claimStatus: "succeeded",
+            claimTxHash: "prior-attempt",
+          }),
+        ],
+        total: 1,
+      }),
+    });
+
+    expect(result.written).toBe(1);
+    expect(writes).toEqual([{ txHash, proofJobId: "job-prior-attempt" }]);
+  });
+
+  it("uses proof claim index exact tx matches before falling back to coordinator scans", async () => {
+    const claimantAddress = "CA4V2ZC6OQGJYLCN7G4KBK4LQPRMS3YEOZ6EHPBTKIBCXQBA4D6RIT4W";
+    const txHash = "2".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+    let listCalls = 0;
+
+    const result = await backfillProofTapeMappings(
+      makeEnv({
+        __proofClaimIndexEntries: [
+          {
+            proofJobId: "job-from-claim-index",
+            claimantAddress,
+            txHash,
+            seed: 654,
+            finalScore: 12_345,
+            completedAt: "2026-03-02T00:00:00.000Z",
+            recordedAt: "2026-03-02T00:05:00.000Z",
+          },
+        ],
+      }),
+      {
+        getUnmappedLeaderboardTxHashes: async (_env, options) =>
+          options?.offset === 0 ? [{ txHash, claimantAddress, seed: 654, finalScore: 12_345 }] : [],
+        writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+          writes.push({ txHash: mappedTxHash, proofJobId });
+        },
+        listJobsForClaimant: async () => {
+          listCalls += 1;
+          return { jobs: [], total: 0 };
+        },
+      },
+    );
+
+    expect(result.written).toBe(1);
+    expect(result.matched).toBe(1);
+    expect(listCalls).toBe(0);
+    expect(writes).toEqual([{ txHash, proofJobId: "job-from-claim-index" }]);
+  });
+
+  it("rejects mismatched proof claim index rows and falls back to claimant job scans", async () => {
+    const claimantAddress = "CD4QWIFHHN2W4TQBT5Q2GM5S4OXE2LY7I3LJ5PDBM3GSYL6QY3D7R5L3";
+    const txHash = "3".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+    let listCalls = 0;
+
+    const result = await backfillProofTapeMappings(
+      makeEnv({
+        __proofClaimIndexEntries: [
+          {
+            proofJobId: "job-mismatch",
+            claimantAddress,
+            txHash,
+            seed: 999,
+            finalScore: 12_345,
+            completedAt: "2026-03-02T00:00:00.000Z",
+            recordedAt: "2026-03-02T00:05:00.000Z",
+          },
+        ],
+      }),
+      {
+        getUnmappedLeaderboardTxHashes: async (_env, options) =>
+          options?.offset === 0 ? [{ txHash, claimantAddress, seed: 654, finalScore: 12_345 }] : [],
+        writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+          writes.push({ txHash: mappedTxHash, proofJobId });
+        },
+        listJobsForClaimant: async () => {
+          listCalls += 1;
+          return { jobs: [], total: 0 };
+        },
+      },
+    );
+
+    expect(result.written).toBe(0);
+    expect(result.matched).toBe(0);
+    expect(listCalls).toBeGreaterThanOrEqual(1);
+    expect(writes).toEqual([]);
+  });
+
+  it("does not map ambiguous succeeded matches without an exact tx hash", async () => {
+    const claimantAddress = "CB2BWOAFOI5JC3YQR7LA7YBX3UKP6CJD2B4TUEKWP4D6B3XFOVM4T2XM";
+    const txHash = "f".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+
+    const result = await backfillProofTapeMappings(makeEnv(), {
+      getUnmappedLeaderboardTxHashes: async (_env, options) =>
+        options?.offset === 0 ? [{ txHash, claimantAddress, seed: 808, finalScore: 54_321 }] : [],
+      writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+        writes.push({ txHash: mappedTxHash, proofJobId });
+      },
+      listJobsForClaimant: async () => ({
+        jobs: [
+          makeProofJob({
+            jobId: "job-a",
+            claimantAddress,
+            seed: 808,
+            finalScore: 54_321,
+            claimStatus: "succeeded",
+            claimTxHash: "prior-attempt",
+          }),
+          makeProofJob({
+            jobId: "job-b",
+            claimantAddress,
+            seed: 808,
+            finalScore: 54_321,
+            claimStatus: "succeeded",
+            claimTxHash: "superseded-by-higher-score",
+          }),
+        ],
+        total: 2,
+      }),
+    });
+
+    expect(result.written).toBe(0);
+    expect(result.matched).toBe(0);
+    expect(writes).toEqual([]);
+  });
+
+  it("does not infer a fallback match before scanning all claimant job pages", async () => {
+    const claimantAddress = "CCOA2YQJCDWUNQ3NNWRFEHNGWASQY3OR6OXJY2THA3P2AWYVQFURXXS4";
+    const txHash = "9".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+    const listOffsets: number[] = [];
+
+    const result = await backfillProofTapeMappings(
+      makeEnv(),
+      {
+        getUnmappedLeaderboardTxHashes: async (_env, options) =>
+          options?.offset === 0
+            ? [{ txHash, claimantAddress, seed: 5150, finalScore: 88_888 }]
+            : [],
+        writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+          writes.push({ txHash: mappedTxHash, proofJobId });
+        },
+        listJobsForClaimant: async (_env, _claimant, _limit, offset) => {
+          listOffsets.push(offset);
+          if (offset === 0) {
+            return {
+              jobs: [
+                makeProofJob({
+                  jobId: "job-page-1",
+                  claimantAddress,
+                  seed: 5150,
+                  finalScore: 88_888,
+                  claimStatus: "succeeded",
+                  claimTxHash: "prior-attempt",
+                }),
+              ],
+              total: 2,
+            };
+          }
+          if (offset === 1) {
+            return {
+              jobs: [
+                makeProofJob({
+                  jobId: "job-page-2",
+                  claimantAddress,
+                  seed: 5150,
+                  finalScore: 88_888,
+                  claimStatus: "succeeded",
+                  claimTxHash: "superseded-by-higher-score",
+                }),
+              ],
+              total: 2,
+            };
+          }
+          return { jobs: [], total: 2 };
+        },
+      },
+      { jobsPageSize: 1 },
+    );
+
+    expect(listOffsets).toEqual([0, 1]);
+    expect(result.written).toBe(0);
+    expect(result.matched).toBe(0);
+    expect(writes).toEqual([]);
+  });
+
+  it("skips mapping matched jobs whose replay tape no longer exists", async () => {
+    const claimantAddress = "CC7D7ZQWJLYGXUF2R4Q5DOQG2B7JYVHLP7AJGVK6Y2PU7ABDH7ATB2LC";
+    const txHash = "1".repeat(64);
+    const writes: Array<{ txHash: string; proofJobId: string }> = [];
+
+    const result = await backfillProofTapeMappings(
+      makeEnv({
+        PROOF_ARTIFACTS: {
+          head: async () => null,
+        } as unknown as R2Bucket,
+      }),
+      {
+        getUnmappedLeaderboardTxHashes: async (_env, options) =>
+          options?.offset === 0 ? [{ txHash, claimantAddress, seed: 909, finalScore: 65_432 }] : [],
+        writeProofTapeMapping: async (_env, mappedTxHash, proofJobId) => {
+          writes.push({ txHash: mappedTxHash, proofJobId });
+        },
+        listJobsForClaimant: async () => ({
+          jobs: [
+            makeProofJob({
+              jobId: "job-no-tape",
+              claimantAddress,
+              seed: 909,
+              finalScore: 65_432,
+              claimStatus: "succeeded",
+              claimTxHash: txHash,
+            }),
+          ],
+          total: 1,
+        }),
+      },
+    );
+
+    expect(result.written).toBe(0);
+    expect(result.matched).toBe(0);
+    expect(writes).toEqual([]);
+  });
+
   it("passes claimant and paging options into unmapped lookup", async () => {
-    const claimantAddress =
-      "CBXFWZJ34RA2XJ2E5AQM5A6N7BRF7R2GVJGYFS64GR2R4K2PEMYRXXVY";
+    const claimantAddress = "CBXFWZJ34RA2XJ2E5AQM5A6N7BRF7R2GVJGYFS64GR2R4K2PEMYRXXVY";
     const calls: Array<{
       limit?: number;
       offset?: number;
@@ -592,8 +859,66 @@ describe("proof tape backfill behavior", () => {
     );
 
     expect(result.unmapped).toBe(0);
-    expect(calls).toEqual([
-      { limit: 1, offset: 0, claimantAddress, oldestFirst: true },
-    ]);
+    expect(calls).toEqual([{ limit: 1, offset: 0, claimantAddress, oldestFirst: true }]);
+  });
+
+  it("defaults unmapped lookup to newest-first so fresh repairable runs are not starved", async () => {
+    const calls: Array<{
+      limit?: number;
+      offset?: number;
+      claimantAddress?: string | null;
+      oldestFirst?: boolean;
+    }> = [];
+
+    const result = await backfillProofTapeMappings(makeEnv(), {
+      getUnmappedLeaderboardTxHashes: async (_env, options) => {
+        calls.push(options ?? {});
+        return [];
+      },
+      writeProofTapeMapping: async () => undefined,
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    });
+
+    expect(result.unmapped).toBe(0);
+    expect(calls).toEqual([{ limit: 50, offset: 0, claimantAddress: null, oldestFirst: false }]);
+  });
+});
+
+describe("stale replay mapping prune behavior", () => {
+  it("deletes stale proof claim index rows even when no proof_tape_index row exists", async () => {
+    const deleted: Array<{ proofJobId: string; txHash?: string | null }> = [];
+
+    const result = await pruneStaleProofTapeMappings(
+      makeEnv({
+        PROOF_ARTIFACTS: {
+          head: async () => null,
+        } as unknown as R2Bucket,
+      }),
+      {
+        getMappedProofTapeMappings: async () => [],
+        getProofClaimIndexEntries: async () => [
+          {
+            proofJobId: "job-stale-claim-index",
+            claimantAddress: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
+            txHash: "4".repeat(64),
+            seed: 1,
+            finalScore: 100,
+            completedAt: "2026-03-02T00:00:00.000Z",
+            recordedAt: "2026-03-02T00:05:00.000Z",
+          },
+        ],
+        deleteProofTapeMapping: async () => false,
+        deleteProofClaimIndexEntry: async (_env, proofJobId, txHash) => {
+          deleted.push({ proofJobId, txHash });
+          return true;
+        },
+        countProofTapeMappings: async () => 0,
+      },
+    );
+
+    expect(result.scanned).toBe(1);
+    expect(result.stale).toBe(1);
+    expect(result.deleted).toBe(1);
+    expect(deleted).toEqual([{ proofJobId: "job-stale-claim-index", txHash: "4".repeat(64) }]);
   });
 });

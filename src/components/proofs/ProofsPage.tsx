@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Info } from "lucide-react";
+import Info from "lucide-react/dist/esm/icons/info";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import { listProofJobs, isTerminalProofStatus, type ProofJobPublic } from "@/proof/api";
-import { timeAgo } from "@/lib/time";
-import { useWalletContext } from "@/contexts/WalletContext";
+import { useBalanceState, useWalletState } from "@/contexts/WalletContext";
 import { PageShell } from "@/components/shared/PageShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { ProofJobCard } from "./ProofJobCard";
 import { PageHero } from "@/components/shared/PageHero";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { AUTO_REFRESH_PROOFS_MS } from "@/consts";
+import { RelativeTime } from "@/components/leaderboard/RelativeTime";
 
 function hasActiveJobs(jobs: ProofJobPublic[]): boolean {
   return jobs.some(
@@ -24,13 +25,27 @@ function hasActiveJobs(jobs: ProofJobPublic[]): boolean {
   );
 }
 
+function LastUpdatedLabel({ value }: { value: string | null }) {
+  if (!value) {
+    return null;
+  }
+
+  return (
+    <span className="text-xs text-muted-foreground">
+      Updated <RelativeTime value={value} />
+    </span>
+  );
+}
+
 export function ProofsPage() {
   useDocumentTitle("Proofs", {
     description:
       "Track your Kalien proof jobs, verification states, and claim status in one place.",
     path: "/proofs",
   });
-  const { wallet, balance } = useWalletContext();
+  const wallet = useWalletState();
+  const balance = useBalanceState();
+  const refreshBalance = balance.refresh;
 
   const [jobs, setJobs] = useState<ProofJobPublic[]>([]);
   const [total, setTotal] = useState(0);
@@ -40,11 +55,13 @@ export function ProofsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const fetchJobs = useCallback(
     (silent: boolean) => {
       const address = wallet.address;
       if (!address) return;
+      const requestId = ++requestIdRef.current;
 
       if (!silent) {
         setLoading(true);
@@ -54,6 +71,9 @@ export function ProofsPage() {
       void (async () => {
         try {
           const response = await listProofJobs(address, { limit, offset });
+          if (requestId !== requestIdRef.current) {
+            return;
+          }
           setJobs(response.jobs);
           setTotal(response.total);
           setNextOffset(response.next_offset);
@@ -62,12 +82,15 @@ export function ProofsPage() {
             setError(null);
           }
         } catch (reason) {
+          if (requestId !== requestIdRef.current) {
+            return;
+          }
           if (!silent) {
             const detail = reason instanceof Error ? reason.message : "failed to load proof jobs";
             setError(detail);
           }
         } finally {
-          if (!silent) {
+          if (!silent && requestId === requestIdRef.current) {
             setLoading(false);
           }
         }
@@ -78,10 +101,18 @@ export function ProofsPage() {
 
   const fetchJobsRef = useRef(fetchJobs);
   fetchJobsRef.current = fetchJobs;
+  const handleJobUpdate = useCallback((updatedJob: ProofJobPublic) => {
+    setJobs((currentJobs) =>
+      currentJobs.map((job) => (job.jobId === updatedJob.jobId ? updatedJob : job)),
+    );
+  }, []);
 
   // Primary data fetch
   useEffect(() => {
-    if (!wallet.address || wallet.isBusy) return;
+    if (!wallet.address || wallet.isBusy) {
+      requestIdRef.current += 1;
+      return;
+    }
     fetchJobsRef.current(false);
   }, [wallet.address, wallet.isBusy, limit, offset]);
 
@@ -95,10 +126,10 @@ export function ProofsPage() {
   const prevSucceededCount = useRef(succeededCount);
   useEffect(() => {
     if (succeededCount > prevSucceededCount.current) {
-      void balance.refresh();
+      void refreshBalance();
     }
     prevSucceededCount.current = succeededCount;
-  }, [succeededCount, balance]);
+  }, [succeededCount, refreshBalance]);
 
   // Auto-refresh: fast (15s) when jobs are active, slow (60s) when idle.
   // Skip when the tab is hidden to avoid wasted requests.
@@ -117,24 +148,12 @@ export function ProofsPage() {
     return () => clearInterval(interval);
   }, [wallet.address, activeJobs]);
 
-  // Tick every 5s so the "Updated Xs ago" label stays current between fetches
-  const [, tick] = useState(0);
-  useEffect(() => {
-    if (!lastRefreshAt) return;
-    const id = setInterval(() => tick((n) => n + 1), 5_000);
-    return () => clearInterval(id);
-  }, [lastRefreshAt]);
-
   return (
     <PageShell glow className="content-start">
       <PageHero title="My Proofs" subtitle="Track your proof jobs and verification status.">
         {wallet.isConnected && (
-          <div className="flex items-center gap-2">
-            {lastRefreshAt && (
-              <span className="text-xs text-muted-foreground">
-                Updated {timeAgo(lastRefreshAt)}
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <LastUpdatedLabel value={lastRefreshAt} />
             <Button size="sm" onClick={() => fetchJobs(false)} disabled={loading} title="Refresh">
               <RefreshCw className="size-3.5" />
               Refresh
@@ -226,7 +245,7 @@ export function ProofsPage() {
           {jobs.length > 0 && (
             <div className="grid gap-3">
               {jobs.map((job) => (
-                <ProofJobCard key={job.jobId} job={job} onJobUpdate={() => fetchJobs(true)} />
+                <ProofJobCard key={job.jobId} job={job} onJobUpdate={handleJobUpdate} />
               ))}
             </div>
           )}

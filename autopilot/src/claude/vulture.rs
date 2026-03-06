@@ -282,6 +282,12 @@ impl VultureBot {
     }
 }
 
+impl Default for VultureBot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutopilotBot for VultureBot {
     fn id(&self) -> &'static str {
         "claude-vulture"

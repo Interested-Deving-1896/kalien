@@ -21,6 +21,7 @@ export interface WorkerEnv {
   RELAYER_URL?: string;
   RELAYER_API_KEY?: string;
   RELAYER_PLUGIN_ID?: string;
+  DEV_API_KEY?: string;
   SCORE_CONTRACT_ID?: string;
   LEADERBOARD_SYNC_CRON_ENABLED?: string;
   LEADERBOARD_SYNC_CRON_LIMIT?: string;

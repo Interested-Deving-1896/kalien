@@ -11,7 +11,7 @@ export function ErrorMessage({ message, severity = "error", className }: ErrorMe
   return (
     <p
       className={cn(
-        "m-0 text-sm",
+        "m-0 text-sm [overflow-wrap:anywhere]",
         severity === "warning" ? "text-warning" : "text-[#ffabab]",
         className,
       )}

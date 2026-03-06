@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { PageShell } from "@/components/shared/PageShell";
 import { useLocation } from "@/hooks/useLocation";
 import { LeaderboardListView } from "./LeaderboardListView";
@@ -14,7 +13,7 @@ function getPlayerAddressFromPath(pathname: string): string | null {
 
 export function LeaderboardPage() {
   const pathname = useLocation();
-  const playerAddress = useMemo(() => getPlayerAddressFromPath(pathname), [pathname]);
+  const playerAddress = getPlayerAddressFromPath(pathname);
 
   return (
     <PageShell glow className="content-start">

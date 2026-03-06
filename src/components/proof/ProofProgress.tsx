@@ -1,4 +1,9 @@
-import { Shield, Loader2, PartyPopper, XCircle, ExternalLink, Gamepad2 } from "lucide-react";
+import ExternalLink from "lucide-react/dist/esm/icons/external-link";
+import Gamepad2 from "lucide-react/dist/esm/icons/gamepad-2";
+import Loader2 from "lucide-react/dist/esm/icons/loader-2";
+import PartyPopper from "lucide-react/dist/esm/icons/party-popper";
+import Shield from "lucide-react/dist/esm/icons/shield";
+import XCircle from "lucide-react/dist/esm/icons/x-circle";
 import type { ProofJobStatus } from "@/proof/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

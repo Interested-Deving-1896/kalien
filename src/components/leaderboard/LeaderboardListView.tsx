@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import {
   getLeaderboard,
   LeaderboardApiError,
@@ -18,7 +18,7 @@ import { RelativeTime } from "./RelativeTime";
 import { TimeWindowPicker, RankingsSearch } from "./LeaderboardFilters";
 import { RankingsTable } from "./RankingsTable";
 import { PageHero } from "@/components/shared/PageHero";
-import { useWalletContext } from "@/contexts/WalletContext";
+import { useWalletState } from "@/contexts/WalletContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { AUTO_REFRESH_LEADERBOARD_MS } from "@/consts";
 
@@ -28,7 +28,7 @@ export function LeaderboardListView() {
       "Explore rolling and all-time Kalien leaderboard rankings from proved, on-chain verified runs.",
     path: "/leaderboard",
   });
-  const { wallet } = useWalletContext();
+  const wallet = useWalletState();
   const [windowKey, setWindowKey] = useState<LeaderboardWindow>("all");
   const [offset, setOffset] = useState(0);
   const [limit] = useState(25);
@@ -38,9 +38,11 @@ export function LeaderboardListView() {
   const [error, setError] = useState<string | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardPageResponse | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const fetchLeaderboard = useCallback(
     (silent: boolean) => {
+      const requestId = ++requestIdRef.current;
       if (!silent) {
         setLoading(true);
         setError(null);
@@ -54,12 +56,18 @@ export function LeaderboardListView() {
             offset,
             address: findAddress,
           });
+          if (requestId !== requestIdRef.current) {
+            return;
+          }
           setLeaderboard(response);
           setLastRefreshAt(new Date().toISOString());
           if (!silent) {
             setError(null);
           }
         } catch (reason) {
+          if (requestId !== requestIdRef.current) {
+            return;
+          }
           if (!silent) {
             const detail =
               reason instanceof LeaderboardApiError || reason instanceof Error
@@ -68,7 +76,7 @@ export function LeaderboardListView() {
             setError(detail);
           }
         } finally {
-          if (!silent) {
+          if (!silent && requestId === requestIdRef.current) {
             setLoading(false);
           }
         }
@@ -131,7 +139,7 @@ export function LeaderboardListView() {
         title="Leaderboard"
         subtitle="Rolling 10m, 24h, and all-time rankings from proved runs."
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {leaderboard?.ingestion?.last_synced_at ? (
             <StatusBadge
               variant={

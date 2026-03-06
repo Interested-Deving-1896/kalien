@@ -190,7 +190,7 @@ fn main() -> Result<()> {
         Commands::VerifyTape { input, max_frames } => {
             let bytes = fs::read(&input)?;
             let tape = parse_tape(&bytes, max_frames)?;
-            let journal = verify_tape(&bytes, max_frames)?;
+            verify_tape(&bytes, max_frames)?;
             println!("input={}", input.display());
             println!("seed={}", seed_to_hex(tape.header.seed));
             println!("frame_count={}", tape.header.frame_count);
@@ -378,10 +378,11 @@ fn main() -> Result<()> {
                     serde_json::from_slice::<EvolvedConfig>(&data)?
                 } else {
                     // Treat as bot name, create default config from it
-                    let mut cfg = EvolvedConfig::default();
-                    cfg.parent_id = from_str.clone();
-                    cfg.id = from_str;
-                    cfg
+                    EvolvedConfig {
+                        parent_id: from_str.clone(),
+                        id: from_str,
+                        ..EvolvedConfig::default()
+                    }
                 }
             } else {
                 EvolvedConfig::default()

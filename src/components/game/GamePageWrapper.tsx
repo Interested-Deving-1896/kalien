@@ -1,5 +1,11 @@
-import { useMemo, useState } from "react";
-import { CheckCircle2, ExternalLink, Trophy, Clock, X } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
+import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2";
+import Clock from "lucide-react/dist/esm/icons/clock";
+import ExternalLink from "lucide-react/dist/esm/icons/external-link";
+import Play from "lucide-react/dist/esm/icons/play";
+import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw";
+import Trophy from "lucide-react/dist/esm/icons/trophy";
+import X from "lucide-react/dist/esm/icons/x";
 import { useGameFlow, type GameFlowStep } from "@/hooks/useGameFlow";
 import { GamePanel } from "@/components/game/GamePanel";
 import { StepIndicator, type Step } from "@/components/proof/StepIndicator";
@@ -7,13 +13,14 @@ import { WalletConnect } from "@/components/wallet/WalletConnect";
 import { SubmitScore } from "@/components/submit/SubmitScore";
 import { PageShell } from "@/components/shared/PageShell";
 import { Link } from "@/components/shared/Link";
-import { useWalletContext } from "@/contexts/WalletContext";
+import { useBalanceState, useWalletState } from "@/contexts/WalletContext";
 import { ProofProgress } from "@/components/proof/ProofProgress";
 import { Button } from "@/components/ui/button";
 import { formatFramesAsTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { HIGH_SCORE_THRESHOLD } from "@/consts";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { navigate, useLocation } from "@/hooks/useLocation";
 
 const FLOW_STEPS: Step[] = [
   { key: "play", label: "Play" },
@@ -33,14 +40,27 @@ function displayStepKey(step: GameFlowStep): string {
   return step === "wallet" ? "score" : step;
 }
 
-function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
-  const completed = useMemo(() => completedSteps(flow.currentStep), [flow.currentStep]);
+function GameOverOverlay({
+  flow,
+  replayJobId,
+  onRestartReplay,
+  onPlayLive,
+}: {
+  flow: ReturnType<typeof useGameFlow>;
+  replayJobId: string | null;
+  onRestartReplay: () => void;
+  onPlayLive: () => void;
+}) {
+  const isReplay = flow.latestRun?.isReplay ?? false;
+  const completed = completedSteps(flow.currentStep);
   const currentDisplayStep = displayStepKey(flow.currentStep);
-  const showWalletConnect = !flow.wallet.isConnected;
-  const showSubmitButton = flow.currentStep !== "play";
-  const showProofProgress = flow.proof.isBusy || flow.proof.job !== null;
+  const showWalletConnect = !isReplay && !flow.wallet.isConnected;
+  const showSubmitButton = !isReplay && flow.currentStep !== "play";
+  const showProofProgress = !isReplay && (flow.proof.isBusy || flow.proof.job !== null);
   const showSuccessBanner =
-    flow.proof.job?.status === "succeeded" && flow.proof.job?.claim.status === "succeeded";
+    !isReplay &&
+    flow.proof.job?.status === "succeeded" &&
+    flow.proof.job?.claim.status === "succeeded";
 
   const score = flow.latestRun?.record.finalScore ?? 0;
   const isHighScore = score >= HIGH_SCORE_THRESHOLD;
@@ -62,7 +82,7 @@ function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
             </div>
             <div className="min-w-0 flex-1">
               <p className="m-0 font-display text-[0.65rem] uppercase tracking-[0.1em] text-muted-foreground">
-                {isHighScore ? "Amazing Score!" : "Game Over"}
+                {isReplay ? "Replay Complete" : isHighScore ? "Amazing Score!" : "Game Over"}
               </p>
               <p
                 className={cn(
@@ -80,11 +100,13 @@ function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
           </div>
 
           {/* Step Indicator */}
-          <StepIndicator
-            steps={FLOW_STEPS}
-            currentStepKey={currentDisplayStep}
-            completedStepKeys={completed}
-          />
+          {!isReplay && (
+            <StepIndicator
+              steps={FLOW_STEPS}
+              currentStepKey={currentDisplayStep}
+              completedStepKeys={completed}
+            />
+          )}
 
           {/* Wallet Connect (only when not connected) */}
           {showWalletConnect && (
@@ -157,17 +179,39 @@ function GameOverOverlay({ flow }: { flow: ReturnType<typeof useGameFlow> }) {
             </div>
           )}
 
-          {/* Dismiss — restart game */}
-          {!flow.proof.isBusy && !flow.proof.isSubmitting && (
-            <button
-              onClick={flow.dismissOverlay}
-              className="mx-auto flex cursor-pointer items-center gap-1 bg-transparent text-xs text-muted-foreground transition-colors hover:text-card-foreground"
-              aria-label="Dismiss and play again"
-            >
-              <X className="size-3" aria-hidden="true" />
-              Play Again
-            </button>
-          )}
+          {/* Dismiss actions */}
+          {!flow.proof.isBusy &&
+            !flow.proof.isSubmitting &&
+            (isReplay ? (
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={onRestartReplay}
+                  className="flex cursor-pointer items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-xs text-muted-foreground outline-none transition-colors hover:text-card-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:text-card-foreground"
+                >
+                  <RotateCcw className="size-3" aria-hidden="true" />
+                  Replay
+                </button>
+                <button
+                  type="button"
+                  onClick={replayJobId ? () => navigate("/") : onPlayLive}
+                  className="flex cursor-pointer items-center gap-1.5 rounded-md bg-transparent px-2 py-1 text-xs text-muted-foreground outline-none transition-colors hover:text-card-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:text-card-foreground"
+                >
+                  <Play className="size-3" aria-hidden="true" />
+                  Play
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={flow.dismissOverlay}
+                className="mx-auto flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 py-1 text-xs text-muted-foreground outline-none transition-colors hover:text-card-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:text-card-foreground"
+                aria-label="Dismiss and play again"
+              >
+                <X className="size-3" aria-hidden="true" />
+                Play Again
+              </button>
+            ))}
         </div>
       </div>
     </div>
@@ -181,23 +225,59 @@ export function GamePageWrapper() {
     path: "/",
   });
 
-  const { wallet, balance } = useWalletContext();
+  const wallet = useWalletState();
+  const balance = useBalanceState();
   const flow = useGameFlow({ wallet, balance });
+  const { dismissOverlay } = flow;
+  const gameRef = useRef<import("@/game/AsteroidsGame").AsteroidsGame | null>(null);
 
-  const [replayJobId] = useState(() => {
-    const id = new URLSearchParams(window.location.search).get("replay");
-    if (id) {
-      window.history.replaceState(null, "", "/");
+  const handleGameInstance = useCallback((g: import("@/game/AsteroidsGame").AsteroidsGame) => {
+    gameRef.current = g;
+  }, []);
+
+  const pathname = useLocation();
+  const replayJobId = pathname.match(/^\/replay\/(.+)$/)?.[1] ?? null;
+
+  // Redirect legacy ?replay=<id> query param to /replay/<id> route
+  useEffect(() => {
+    if (!replayJobId) {
+      const id = new URLSearchParams(window.location.search).get("replay");
+      if (id) navigate(`/replay/${id}`);
     }
-    return id;
-  });
+  }, [replayJobId]);
 
-  const overlay = flow.latestRun ? <GameOverOverlay flow={flow} /> : null;
+  const handleRestartReplay = useCallback(() => {
+    if (replayJobId) {
+      window.location.reload();
+    } else {
+      gameRef.current?.restartReplay();
+      dismissOverlay();
+    }
+  }, [replayJobId, dismissOverlay]);
+
+  const handlePlayLive = useCallback(() => {
+    gameRef.current?.exitReplay();
+    dismissOverlay();
+  }, [dismissOverlay]);
+
+  const overlay = flow.latestRun ? (
+    <GameOverOverlay
+      flow={flow}
+      replayJobId={replayJobId}
+      onRestartReplay={handleRestartReplay}
+      onPlayLive={handlePlayLive}
+    />
+  ) : null;
 
   return (
     <PageShell className="grid-rows-[auto_1fr] content-start">
       <h1 className="sr-only">Kalien: Play and prove your Asteroids score</h1>
-      <GamePanel onGameOver={flow.handleGameOver} overlay={overlay} replayJobId={replayJobId} />
+      <GamePanel
+        onGameOver={flow.handleGameOver}
+        onGameInstance={handleGameInstance}
+        overlay={overlay}
+        replayJobId={replayJobId}
+      />
     </PageShell>
   );
 }

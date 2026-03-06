@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getScoreContractIdFromEnv,
   getTokenContractIdFromEnv,
@@ -20,15 +20,18 @@ export function useTokenBalance(walletAddress: string): UseTokenBalanceReturn {
   const [tokenContractId, setTokenContractId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshRequestIdRef = useRef(0);
 
   const scoreContractId = getScoreContractIdFromEnv();
   const tokenContractOverride = getTokenContractIdFromEnv();
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current;
     if (walletAddress.trim().length === 0) {
       setBalance(null);
       setTokenContractId(null);
       setError(null);
+      setIsRefreshing(false);
       return;
     }
 
@@ -38,6 +41,7 @@ export function useTokenBalance(walletAddress: string): UseTokenBalanceReturn {
       setError(
         "set VITE_SCORE_CONTRACT_ID (or VITE_TOKEN_CONTRACT_ID) to show on-chain token balance",
       );
+      setIsRefreshing(false);
       return;
     }
 
@@ -48,23 +52,33 @@ export function useTokenBalance(walletAddress: string): UseTokenBalanceReturn {
         scoreContractId,
         tokenContractId: tokenContractOverride,
       });
+      if (requestId !== refreshRequestIdRef.current) {
+        return;
+      }
       setBalance(next.balance);
       setTokenContractId(next.tokenContractId);
       setError(null);
     } catch (err) {
+      if (requestId !== refreshRequestIdRef.current) {
+        return;
+      }
       const detail = err instanceof Error ? err.message : "failed to load token balance";
       setError(detail);
     } finally {
-      setIsRefreshing(false);
+      if (requestId === refreshRequestIdRef.current) {
+        setIsRefreshing(false);
+      }
     }
   }, [walletAddress, scoreContractId, tokenContractOverride]);
 
   // Auto-refresh when wallet address changes
   useEffect(() => {
     if (walletAddress.trim().length === 0) {
+      refreshRequestIdRef.current += 1;
       setBalance(null);
       setTokenContractId(null);
       setError(null);
+      setIsRefreshing(false);
       return;
     }
 

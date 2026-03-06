@@ -94,6 +94,7 @@ pub struct TorusApproach {
     pub dot: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn torus_relative_approach(
     ref_x: i32,
     ref_y: i32,
@@ -153,6 +154,7 @@ pub struct WrapAimSolution {
     pub intercept_frames: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn best_wrapped_aim(
     shooter_x: i32,
     shooter_y: i32,
@@ -245,6 +247,7 @@ pub fn best_wrapped_aim(
     best.map(|(sol, _)| sol)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn projectile_wrap_closest_approach(
     start_x: i32,
     start_y: i32,
@@ -531,7 +534,7 @@ pub fn bullet_tracks_target(
     if !bullet.alive || bullet.life <= 0 {
         return false;
     }
-    let horizon = (bullet.life as f64).min(32.0).max(1.0);
+    let horizon = (bullet.life as f64).clamp(1.0, 32.0);
     let (closest, t) = projectile_wrap_closest_approach(
         bullet.x, bullet.y, bullet.vx, bullet.vy, tx, ty, tvx, tvy, horizon,
     );
@@ -570,6 +573,7 @@ pub fn own_bullet_stats(bullets: &[BulletSnapshot]) -> (usize, i32) {
 // ── Danger field ────────────────────────────────────────────────────
 
 /// Compute danger at a point from all entities.
+#[allow(clippy::too_many_arguments)]
 pub fn danger_at_point(
     world: &WorldSnapshot,
     x: i32,

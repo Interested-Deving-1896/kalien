@@ -1,28 +1,31 @@
-import { afterAll, describe, expect, it, mock } from "bun:test";
-import {
-  packJournalRaw,
-  type JournalFields,
-} from "../../shared/stellar/journal";
-import {
-  bytesToHex,
-  sha256Hex,
-  STELLAR_GROTH16_SEAL_LEN,
-} from "../../worker/proof-artifact";
+import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { packJournalRaw, type JournalFields } from "../../shared/stellar/journal";
+import { bytesToHex, sha256Hex, STELLAR_GROTH16_SEAL_LEN } from "../../worker/proof-artifact";
 import type { WorkerEnv } from "../../worker/env";
+
+const proofClaimIndexWrites: Array<{
+  proofJobId: string;
+  claimantAddress: string;
+  txHash: string;
+  seed: number;
+  finalScore: number;
+  completedAt: string;
+}> = [];
+const proofTapeMappingWrites: Array<{ txHash: string; proofJobId: string }> = [];
+let proofClaimIndexWriteFailuresRemaining = 0;
+let proofTapeMappingWriteFailuresRemaining = 0;
 
 // Mock coordinator and prover before importing the consumer
 mock.module("../../worker/durable/coordinator", () => ({
   coordinatorStub: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __coordinator: Record<string, unknown> })
-      .__coordinator,
+    (env as WorkerEnv & { __coordinator: Record<string, unknown> }).__coordinator,
   asPublicJob: <T>(job: T): T => job,
   ProofCoordinatorDO: class ProofCoordinatorDO {},
 }));
 
 mock.module("../../worker/boundless/config", () => ({
   resolveBoundlessConfig: (env: WorkerEnv) =>
-    (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ??
-    null,
+    (env as WorkerEnv & { __boundlessConfig?: unknown }).__boundlessConfig ?? null,
   IPFS_GATEWAY_PREFIX: "https://gateway.pinata.cloud/ipfs/",
   BOUNDLESS_INDEXER_URLS: {
     "8453": "https://d2mdvlnmyov1e1.cloudfront.net",
@@ -58,8 +61,7 @@ mock.module("../../worker/prover/client", () => ({
 
 mock.module("../../worker/claim/submit", () => ({
   submitClaim: async (env: WorkerEnv, _request: unknown) => {
-    const result = (env as WorkerEnv & { __claimResult: unknown })
-      .__claimResult;
+    const result = (env as WorkerEnv & { __claimResult: unknown }).__claimResult;
     // Fallback for when this mock leaks to other test files
     return (
       result ?? {
@@ -68,6 +70,33 @@ mock.module("../../worker/claim/submit", () => ({
           "claim submission is not configured; set SCORE_CONTRACT_ID, RELAYER_URL, and RELAYER_API_KEY for relayer-only submission",
       }
     );
+  },
+}));
+
+mock.module("../../worker/leaderboard-store", () => ({
+  writeProofClaimIndexEntry: async (
+    _env: WorkerEnv,
+    entry: {
+      proofJobId: string;
+      claimantAddress: string;
+      txHash: string;
+      seed: number;
+      finalScore: number;
+      completedAt: string;
+    },
+  ) => {
+    if (proofClaimIndexWriteFailuresRemaining > 0) {
+      proofClaimIndexWriteFailuresRemaining -= 1;
+      throw new Error("proof claim index write failed");
+    }
+    proofClaimIndexWrites.push(entry);
+  },
+  writeProofTapeMapping: async (_env: WorkerEnv, txHash: string, proofJobId: string) => {
+    if (proofTapeMappingWriteFailuresRemaining > 0) {
+      proofTapeMappingWriteFailuresRemaining -= 1;
+      throw new Error("proof tape mapping write failed");
+    }
+    proofTapeMappingWrites.push({ txHash, proofJobId });
   },
 }));
 
@@ -81,6 +110,13 @@ const {
 
 afterAll(() => {
   mock.restore();
+});
+
+beforeEach(() => {
+  proofClaimIndexWrites.length = 0;
+  proofTapeMappingWrites.length = 0;
+  proofClaimIndexWriteFailuresRemaining = 0;
+  proofTapeMappingWriteFailuresRemaining = 0;
 });
 
 function makeMessage<T>(body: T, attempts = 1): Message<T> {
@@ -115,9 +151,7 @@ function makeBatch<T>(messages: Message<T>[]): MessageBatch<T> {
   } as MessageBatch<T>;
 }
 
-function makeCoordinator(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function makeCoordinator(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const calls: Array<{ method: string; args: unknown[] }> = [];
 
   const defaults: Record<string, (...args: unknown[]) => Promise<unknown>> = {
@@ -177,10 +211,7 @@ function makeEnv(overrides: Record<string, unknown> = {}): WorkerEnv {
 describe("handleQueueBatch (Boundless)", () => {
   it("acks message with invalid payload (missing jobId)", async () => {
     const msg = makeMessage({} as { jobId: string });
-    await handleQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: makeCoordinator() }),
-    );
+    await handleQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -189,10 +220,7 @@ describe("handleQueueBatch (Boundless)", () => {
       beginQueueAttempt: async () => ({ jobId: "job-1", status: "succeeded" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -421,9 +449,7 @@ describe("handleQueueBatch (Boundless)", () => {
     }>;
     const failCall = calls.find((c) => c.method === "markDispatchFailedAndTryNextBackend");
     expect(failCall).toBeDefined();
-    expect(String(failCall!.args[2])).toContain(
-      "boundless backend not configured",
-    );
+    expect(String(failCall!.args[2])).toContain("boundless backend not configured");
   });
 });
 
@@ -434,10 +460,7 @@ describe("handleQueueBatch (Boundless)", () => {
 describe("handleVastQueueBatch (VastAI)", () => {
   it("acks message with invalid payload", async () => {
     const msg = makeMessage({} as { jobId: string });
-    await handleVastQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: makeCoordinator() }),
-    );
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -451,10 +474,7 @@ describe("handleVastQueueBatch (VastAI)", () => {
       }),
     });
     const msg = makeMessage({ jobId: "job-1" }, 1);
-    await handleVastQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
@@ -486,10 +506,7 @@ describe("handleVastQueueBatch (VastAI)", () => {
       markFailed: async () => null,
     });
     const msg = makeMessage({ jobId: "job-1" }, 1);
-    await handleVastQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     expect((msg as unknown as { _retried: boolean })._retried).toBe(false);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
@@ -609,10 +626,7 @@ describe("handleVastQueueBatch (VastAI)", () => {
     });
 
     const msg = makeMessage({ jobId: "job-1" }, 1);
-    await handleVastQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleVastQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
 
     expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
@@ -771,10 +785,7 @@ describe("handleDlqBatch", () => {
       getJob: async () => ({ jobId: "job-1", status: "retrying" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleDlqBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
@@ -787,10 +798,7 @@ describe("handleDlqBatch", () => {
       getJob: async () => ({ jobId: "job-1", status: "succeeded" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleDlqBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;
@@ -800,10 +808,7 @@ describe("handleDlqBatch", () => {
 
   it("acks invalid messages", async () => {
     const msg = makeMessage({} as { jobId: string });
-    await handleDlqBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: makeCoordinator() }),
-    );
+    await handleDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: makeCoordinator() }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 });
@@ -812,8 +817,7 @@ describe("handleDlqBatch", () => {
 // Claim queue
 // ---------------------------------------------------------------------------
 
-const TEST_CLAIMANT =
-  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const TEST_CLAIMANT = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const TEST_JOURNAL: JournalFields = {
   seed_id: 1,
   seed: 1,
@@ -842,10 +846,7 @@ describe("handleClaimQueueBatch", () => {
       beginClaimAttempt: async () => ({ jobId: "job-1", status: "failed" }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleClaimQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleClaimQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
@@ -854,25 +855,34 @@ describe("handleClaimQueueBatch", () => {
       beginClaimAttempt: async () => ({
         jobId: "job-1",
         status: "succeeded",
-        claim: { status: "succeeded" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-01T00:00:00.000Z",
+        tape: { metadata: { seed: 1, finalScore: 100, seedId: 1 } },
+        claim: {
+          status: "succeeded",
+          claimantAddress: TEST_CLAIMANT,
+          txHash: "prior-attempt",
+        },
         result: { summary: {}, artifactKey: "key" },
       }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleClaimQueueBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleClaimQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
   it("marks claim succeeded on successful claim", async () => {
     const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
+    const txHash = "a".repeat(64);
     const coordinator = makeCoordinator({
       beginClaimAttempt: async () => ({
         jobId: "job-1",
         status: "succeeded",
-        tape: { metadata: { finalScore: 100, seedId: 1 } },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-01T00:00:00.000Z",
+        tape: { metadata: { seed: 1, finalScore: 100, seedId: 1 } },
         claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
         result: {
           summary: {
@@ -892,7 +902,7 @@ describe("handleClaimQueueBatch", () => {
     const msg = makeMessage({ jobId: "job-1" });
     const env = makeEnv({
       __coordinator: coordinator,
-      __claimResult: { type: "success", txHash: "tx-123" },
+      __claimResult: { type: "success", txHash },
       PROOF_ARTIFACTS: {
         get: async () => ({
           json: async () => proofArtifact,
@@ -905,6 +915,44 @@ describe("handleClaimQueueBatch", () => {
       method: string;
     }>;
     expect(calls.some((c) => c.method === "markClaimSucceeded")).toBe(true);
+    expect(proofClaimIndexWrites).toEqual([
+      {
+        proofJobId: "job-1",
+        claimantAddress: TEST_CLAIMANT,
+        txHash,
+        seed: 1,
+        finalScore: 100,
+        completedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(proofTapeMappingWrites).toEqual([{ txHash, proofJobId: "job-1" }]);
+  });
+
+  it("retries to heal replay indexes when an already-succeeded claim is missing D1 persistence", async () => {
+    proofClaimIndexWriteFailuresRemaining = 1;
+    const txHash = "b".repeat(64);
+    const coordinator = makeCoordinator({
+      beginClaimAttempt: async () => ({
+        jobId: "job-1",
+        status: "succeeded",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-01T00:00:00.000Z",
+        tape: { metadata: { seed: 7, finalScore: 222, seedId: 1 } },
+        claim: {
+          status: "succeeded",
+          claimantAddress: TEST_CLAIMANT,
+          txHash,
+        },
+        result: { summary: { journal: { claimant: TEST_CLAIMANT } }, artifactKey: "key" },
+      }),
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    await handleClaimQueueBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
+    expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(false);
+    expect(proofClaimIndexWrites).toEqual([]);
+    expect(proofTapeMappingWrites).toEqual([]);
   });
 
   it("retries claim on retry result", async () => {
@@ -1093,10 +1141,7 @@ describe("handleClaimDlqBatch", () => {
       }),
     });
     const msg = makeMessage({ jobId: "job-1" });
-    await handleClaimDlqBatch(
-      makeBatch([msg]),
-      makeEnv({ __coordinator: coordinator }),
-    );
+    await handleClaimDlqBatch(makeBatch([msg]), makeEnv({ __coordinator: coordinator }));
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
     const calls = (coordinator as Record<string, unknown>)._calls as Array<{
       method: string;

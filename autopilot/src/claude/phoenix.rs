@@ -96,6 +96,7 @@ impl PhoenixBot {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn entity_risk(
         &self,
         pred: PredictedShip,
@@ -320,6 +321,12 @@ impl PhoenixBot {
             + center_term
             + edge_term
             + speed_term
+    }
+}
+
+impl Default for PhoenixBot {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -455,6 +455,7 @@ impl EvolvedBot {
         Ok(Self { cfg })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn entity_risk(
         &self,
         pred: PredictedShip,

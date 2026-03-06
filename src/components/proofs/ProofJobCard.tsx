@@ -1,16 +1,14 @@
 import { useState, useEffect, useRef } from "react";
-import {
-  ChevronDown,
-  ExternalLink,
-  Download,
-  Play,
-  Clock,
-  Cpu,
-  Zap,
-  Trophy,
-  DollarSign,
-  RotateCw,
-} from "lucide-react";
+import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
+import Clock from "lucide-react/dist/esm/icons/clock";
+import Cpu from "lucide-react/dist/esm/icons/cpu";
+import DollarSign from "lucide-react/dist/esm/icons/dollar-sign";
+import Download from "lucide-react/dist/esm/icons/download";
+import ExternalLink from "lucide-react/dist/esm/icons/external-link";
+import Play from "lucide-react/dist/esm/icons/play";
+import RotateCw from "lucide-react/dist/esm/icons/rotate-cw";
+import Trophy from "lucide-react/dist/esm/icons/trophy";
+import Zap from "lucide-react/dist/esm/icons/zap";
 import type { ClaimAttempt, ProofJobPublic, ProverAttempt } from "@/proof/api";
 import { getTapeDownloadUrl, retryFailedClaim, retryFailedProof, getProofJob } from "@/proof/api";
 import { ErrorDetailDialog } from "./ErrorDetailDialog";
@@ -443,7 +441,7 @@ export function ProofJobCard({
       {expanded && (
         <div id={detailsId} className="grid gap-4 border-t border-border/20 px-4 py-4">
           {/* Stats grid */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatItem icon={Trophy} label="Score" value={score.toLocaleString()} />
             <StatItem label="Seed" value={formatHex32(job.tape.metadata.seed)} />
             <StatItem
@@ -460,7 +458,7 @@ export function ProofJobCard({
               <h4 className="m-0 mb-2 font-display text-[0.65rem] uppercase tracking-[0.08em] text-muted-foreground">
                 Proof Metrics
               </h4>
-              <div className={cn("grid grid-cols-2 gap-3", metricsColumnsLgClass)}>
+              <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", metricsColumnsLgClass)}>
                 {metricItems.map((metric) => (
                   <StatItem
                     key={metric.key}
@@ -673,7 +671,7 @@ export function ProofJobCard({
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(`/?replay=${job.jobId}`)}
+              onClick={() => navigate(`/replay/${job.jobId}`)}
               className="inline-flex cursor-pointer items-center gap-1.5 bg-transparent text-sm text-primary transition-colors hover:text-primary/80"
             >
               <Play className="size-3.5" aria-hidden="true" />
@@ -724,14 +722,14 @@ function StatItem({
   highlight?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border/15 bg-[rgba(8,16,29,0.3)] px-3 py-2">
+    <div className="min-w-0 rounded-lg border border-border/15 bg-[rgba(8,16,29,0.3)] px-3 py-2">
       <p className="m-0 font-display text-[0.6rem] uppercase tracking-[0.06em] text-muted-foreground">
         {Icon && <Icon className="mr-1 inline size-3" aria-hidden="true" />}
         {label}
       </p>
       <p
         className={cn(
-          "m-0 mt-0.5 text-sm tabular-nums",
+          "m-0 mt-0.5 overflow-hidden text-sm tabular-nums [overflow-wrap:anywhere]",
           highlight ? "font-semibold text-secondary" : "text-card-foreground",
         )}
       >

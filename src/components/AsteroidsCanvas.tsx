@@ -44,7 +44,12 @@ export function AsteroidsCanvas({ onGameOver, onGameReady }: AsteroidsCanvasProp
 
       const modeNow = game.getMode();
       if (modeNow === "game-over" && modeBefore !== "game-over") {
+        if (gameOverDelayTimer !== null) {
+          clearTimeout(gameOverDelayTimer);
+          gameOverDelayTimer = null;
+        }
         const record = game.getRunRecord();
+        const wasReplay = modeBefore === "replay";
         if (record) {
           gameOverDelayTimer = setTimeout(() => {
             if (!disposed) {
@@ -52,10 +57,18 @@ export function AsteroidsCanvas({ onGameOver, onGameReady }: AsteroidsCanvasProp
                 record,
                 frameCount: record.inputs.length,
                 endedAtMs: Date.now(),
+                isReplay: wasReplay,
               });
             }
           }, GAME_OVER_DELAY_MS);
         }
+      } else if (
+        modeBefore === "game-over" &&
+        modeNow !== "game-over" &&
+        gameOverDelayTimer !== null
+      ) {
+        clearTimeout(gameOverDelayTimer);
+        gameOverDelayTimer = null;
       }
 
       modeBefore = modeNow;
