@@ -396,6 +396,7 @@ export function GamePageWrapper() {
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
