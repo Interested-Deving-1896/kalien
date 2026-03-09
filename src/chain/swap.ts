@@ -56,7 +56,8 @@ export function getSwapConfig(
   const isMainnet = networkPassphrase === PUBLIC_NETWORK_PASSPHRASE;
   const base = isMainnet ? MAINNET_CONFIG : TESTNET_CONFIG;
 
-  const kaleSac = getEnvKaleSac() ?? base.kaleSac;
+  // Env override only applies to testnet; mainnet addresses are hardcoded.
+  const kaleSac = isMainnet ? base.kaleSac : (getEnvKaleSac() ?? base.kaleSac);
   if (!base.soroswapRouter || !base.soroswapFactory || !kaleSac) {
     return null;
   }
