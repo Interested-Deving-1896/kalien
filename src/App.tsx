@@ -30,6 +30,12 @@ const LazyGamePage = lazy(() =>
   })),
 );
 
+const LazyWalletPage = lazy(() =>
+  import("./components/wallet/WalletPage").then((m) => ({
+    default: m.WalletPage,
+  })),
+);
+
 function App() {
   const pathname = useLocation();
 
@@ -52,6 +58,12 @@ function App() {
         <ErrorBoundary key={pathname}>
           <Suspense fallback={<SuspenseFallback />}>
             <LazyPublicProofsPage />
+          </Suspense>
+        </ErrorBoundary>
+      ) : pathname === "/wallet" ? (
+        <ErrorBoundary key={pathname}>
+          <Suspense fallback={<SuspenseFallback />}>
+            <LazyWalletPage />
           </Suspense>
         </ErrorBoundary>
       ) : pathname.startsWith("/replay/") ? (

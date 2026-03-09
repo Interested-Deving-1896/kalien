@@ -13,6 +13,7 @@ import { abbreviateAddress } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ErrorMessage } from "@/components/shared/ErrorMessage";
+import { navigate } from "@/hooks/useLocation";
 
 export function HeaderWallet() {
   const wallet = useWalletState();
@@ -202,7 +203,13 @@ export function HeaderWallet() {
           </div>
 
           {/* Balance */}
-          <div className="border-b border-border/30 px-3 py-2.5">
+          <button
+            className="w-full cursor-pointer border-b border-border/30 px-3 py-2.5 bg-transparent text-left transition-colors hover:bg-[rgba(255,255,255,0.04)]"
+            onClick={() => {
+              setOpen(false);
+              navigate("/wallet");
+            }}
+          >
             <p className="m-0 font-display text-[0.65rem] uppercase tracking-[0.06em] text-muted-foreground">
               Balance
             </p>
@@ -210,7 +217,7 @@ export function HeaderWallet() {
               <Coins className="size-3 text-secondary" aria-hidden="true" />
               {balance.formattedBalance}
             </p>
-          </div>
+          </button>
 
           {/* Sign out */}
           <div className="px-2 py-1.5">

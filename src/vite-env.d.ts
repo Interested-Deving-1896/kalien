@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_RP_NAME?: string;
   readonly VITE_SCORE_CONTRACT_ID?: string;
   readonly VITE_TOKEN_CONTRACT_ID?: string;
+  readonly VITE_KALE_SAC?: string;
 }
 
 interface ImportMeta {
