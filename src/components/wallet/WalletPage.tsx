@@ -49,8 +49,8 @@ export function WalletPage() {
 
   // ── Swap config (null when network/token not ready) ──
   const swapCfg = useMemo(
-    () => getSwapConfig(wallet.networkPassphrase, balance.tokenContractId),
-    [wallet.networkPassphrase, balance.tokenContractId],
+    () => getSwapConfig(balance.tokenContractId),
+    [balance.tokenContractId],
   );
 
   // ── KALE balance (only when swap config is available) ──

@@ -2,8 +2,7 @@
 // Calls the router contract directly — no soroswap SDK or API key needed.
 // Auth entries are signed client-side with the smart-account-kit passkey.
 //
-// Network-aware: addresses are resolved from VITE_NETWORK_PASSPHRASE.
-// On testnet the KALE SAC must be set via VITE_KALE_SAC env var.
+// All swap addresses are configured via VITE_ env vars.
 
 import {
   TransactionBuilder,
@@ -15,59 +14,34 @@ import {
   scValToNative,
 } from "@stellar/stellar-sdk";
 import { loadSmartWalletModule } from "../wallet/loader";
-import { PUBLIC_NETWORK_PASSPHRASE } from "../consts";
 
-// ── Per-network addresses ────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────
 
-interface SwapNetworkConfig {
+export interface SwapConfig {
   soroswapRouter: string;
-  soroswapFactory: string;
   kaleSac: string;
+  kalienSac: string;
 }
 
-const MAINNET_CONFIG: SwapNetworkConfig = {
-  soroswapRouter: "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH",
-  soroswapFactory: "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2",
-  kaleSac: "CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV",
-};
-
-const TESTNET_CONFIG: Partial<SwapNetworkConfig> = {
-  soroswapRouter: "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD",
-  soroswapFactory: "CDP3HMUH6SMS3S7NPGNDJLULCOXXEPSHY4JKUKMBNQMATHDHWXRRJTBY",
-  // KALE SAC on testnet must be set via VITE_KALE_SAC — no universal default.
-  kaleSac: undefined,
-};
-
-function getEnvKaleSac(): string | undefined {
-  const value = import.meta.env.VITE_KALE_SAC;
+function getEnv(key: string): string | undefined {
+  const value = (import.meta.env as Record<string, string | undefined>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 /**
- * Resolve swap addresses for the active network.
- * Returns `null` when the configuration is incomplete (e.g. testnet without VITE_KALE_SAC).
+ * Resolve swap config from env vars.
+ * Returns `null` when required vars are missing (swap UI hidden).
  */
 export function getSwapConfig(
-  networkPassphrase: string,
   kalienSac: string | null,
-): SwapNetworkConfig & { kalienSac: string } | null {
+): SwapConfig | null {
   if (!kalienSac) return null;
 
-  const isMainnet = networkPassphrase === PUBLIC_NETWORK_PASSPHRASE;
-  const base = isMainnet ? MAINNET_CONFIG : TESTNET_CONFIG;
+  const soroswapRouter = getEnv("VITE_SOROSWAP_ROUTER");
+  const kaleSac = getEnv("VITE_KALE_SAC");
+  if (!soroswapRouter || !kaleSac) return null;
 
-  // Env override only applies to testnet; mainnet addresses are hardcoded.
-  const kaleSac = isMainnet ? base.kaleSac : (getEnvKaleSac() ?? base.kaleSac);
-  if (!base.soroswapRouter || !base.soroswapFactory || !kaleSac) {
-    return null;
-  }
-
-  return {
-    soroswapRouter: base.soroswapRouter,
-    soroswapFactory: base.soroswapFactory,
-    kaleSac,
-    kalienSac,
-  };
+  return { soroswapRouter, kaleSac, kalienSac };
 }
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -85,7 +59,7 @@ export interface SwapQuote {
  * Uses the router's `router_get_amounts_out` view function — no auth or balance needed.
  */
 export async function getSwapQuote(
-  swapCfg: SwapNetworkConfig & { kalienSac: string },
+  swapCfg: SwapConfig,
   amountIn: bigint,
   slippageBps = 300,
 ): Promise<SwapQuote> {
@@ -140,7 +114,7 @@ export async function getSwapQuote(
  * Flow: build tx → simulate → sign auth entries (passkey) → rebuild XDR → submit via relay.
  */
 export async function executeSwap(
-  swapCfg: SwapNetworkConfig & { kalienSac: string },
+  swapCfg: SwapConfig,
   amountIn: bigint,
   minAmountOut: bigint,
   toAddress: string,
