@@ -116,6 +116,9 @@ export interface QueueTracking {
   nextRetryAt: string | null;
   waitStartedAt?: string | null;
   waitElapsedMs?: number | null;
+  activeDeliveryId?: string | null;
+  activeBackend?: ProverBackend | null;
+  activeDeliveryStartedAt?: string | null;
 }
 
 export interface ProverTracking {
@@ -128,6 +131,7 @@ export interface ProverTracking {
   ipfsCid?: string | null;
   runStartedAt?: string | null;
   runElapsedMs?: number | null;
+  activeAttemptIndex?: number | null;
 }
 
 export type ClaimStatus = "queued" | "submitting" | "retrying" | "succeeded" | "failed";
@@ -141,6 +145,7 @@ export interface ClaimTracking {
   nextRetryAt: string | null;
   submittedAt: string | null;
   txHash: string | null;
+  activeAttemptIndex?: number | null;
 }
 
 export interface ProofJobRecord {

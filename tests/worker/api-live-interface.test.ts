@@ -161,6 +161,34 @@ const handler = workerModule.default;
 
 function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   const assetsCalls: string[] = [];
+  const defaultCoordinator = {
+    getActiveJobsSummary: async () => ({
+      total: 0,
+      boundless: 0,
+      vast: 0,
+      waitingDispatch: 0,
+      oldestActiveAgeSec: null,
+      oldestWaitingDispatchAgeSec: null,
+      statusCounts: {
+        queued: 0,
+        dispatching: 0,
+        proverRunning: 0,
+        retrying: 0,
+      },
+      firstJobId: null,
+    }),
+    getJob: async () => null,
+    markFailed: async () => null,
+    createJob: async () => ({ accepted: false, activeJob: null }),
+    kickAlarm: async () => undefined,
+    runMaintenance: async () => ({
+      alarmsRescheduled: 0,
+      claimsRequeued: 0,
+      staleQueuedClaimsRequeued: 0,
+      staleRetryingClaimsRequeued: 0,
+      staleSubmittingClaimsRecovered: 0,
+    }),
+  };
   const env = {
     ASSETS: {
       fetch: async (request: Request) => {
@@ -184,28 +212,7 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
     } as Queue<unknown>,
     PROOF_COORDINATOR: {
       idFromName: () => "coordinator-id" as unknown as DurableObjectId,
-      get: () =>
-        ({
-          getActiveJobsSummary: async () => ({
-            total: 0,
-            boundless: 0,
-            vast: 0,
-            waitingDispatch: 0,
-            oldestActiveAgeSec: null,
-            oldestWaitingDispatchAgeSec: null,
-            statusCounts: {
-              queued: 0,
-              dispatching: 0,
-              proverRunning: 0,
-              retrying: 0,
-            },
-            firstJobId: null,
-          }),
-          getJob: async () => null,
-          markFailed: async () => null,
-          createJob: async () => ({ accepted: false, activeJob: null }),
-          kickAlarm: async () => undefined,
-        }) as DurableObjectStub,
+      get: () => defaultCoordinator as unknown as DurableObjectStub,
     } as unknown as DurableObjectNamespace,
     PROOF_ARTIFACTS: {
       get: async () => null,
@@ -213,27 +220,7 @@ function makeEnv(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
       delete: async () => undefined,
     } as unknown as R2Bucket,
     PROVER_BASE_URL: "",
-    __coordinator: {
-      getActiveJobsSummary: async () => ({
-        total: 0,
-        boundless: 0,
-        vast: 0,
-        waitingDispatch: 0,
-        oldestActiveAgeSec: null,
-        oldestWaitingDispatchAgeSec: null,
-        statusCounts: {
-          queued: 0,
-          dispatching: 0,
-          proverRunning: 0,
-          retrying: 0,
-        },
-        firstJobId: null,
-      }),
-      getJob: async () => null,
-      markFailed: async () => null,
-      createJob: async () => ({ accepted: false, activeJob: null }),
-      kickAlarm: async () => undefined,
-    },
+    __coordinator: defaultCoordinator,
     __assetsCalls: assetsCalls,
     ...overrides,
   } as WorkerEnv & {
@@ -332,6 +319,79 @@ describe("Worker live interface", () => {
     };
     expect(payload.success).toBe(false);
     expect(payload.error).toContain("unknown api route");
+  });
+
+  it("runs proof maintenance from the dev endpoint when authorized", async () => {
+    const env = makeEnv({
+      DEV_API_KEY: "dev-secret",
+      __coordinator: {
+        getActiveJobsSummary: async () => ({
+          total: 0,
+          boundless: 0,
+          vast: 0,
+          waitingDispatch: 0,
+          oldestActiveAgeSec: null,
+          oldestWaitingDispatchAgeSec: null,
+          statusCounts: {
+            queued: 0,
+            dispatching: 0,
+            proverRunning: 0,
+            retrying: 0,
+          },
+          firstJobId: null,
+        }),
+        getJob: async () => null,
+        markFailed: async () => null,
+        createJob: async () => ({ accepted: false, activeJob: null }),
+        kickAlarm: async () => undefined,
+        runMaintenance: async () => ({
+          alarmsRescheduled: 1,
+          claimsRequeued: 2,
+          staleQueuedClaimsRequeued: 1,
+          staleRetryingClaimsRequeued: 1,
+          staleSubmittingClaimsRecovered: 0,
+        }),
+      } as Record<string, unknown>,
+      PROOF_COORDINATOR: {
+        idFromName: () => "coordinator-id" as unknown as DurableObjectId,
+        get: () =>
+          ({
+            runMaintenance: async () => ({
+              alarmsRescheduled: 1,
+              claimsRequeued: 2,
+              staleQueuedClaimsRequeued: 1,
+              staleRetryingClaimsRequeued: 1,
+              staleSubmittingClaimsRecovered: 0,
+            }),
+          }) as DurableObjectStub,
+      } as unknown as DurableObjectNamespace,
+    });
+    const response = await requestWorker(
+      "/api/dev/proofs/maintenance",
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer dev-secret",
+        },
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const payload = (await response.json()) as {
+      success: boolean;
+      result: {
+        alarmsRescheduled: number;
+        claimsRequeued: number;
+        staleQueuedClaimsRequeued: number;
+        staleRetryingClaimsRequeued: number;
+        staleSubmittingClaimsRecovered: number;
+      };
+    };
+    expect(payload.success).toBe(true);
+    expect(payload.result.claimsRequeued).toBe(2);
+    expect(payload.result.staleRetryingClaimsRequeued).toBe(1);
   });
 
   it("falls back to ASSETS fetch for non-api routes", async () => {

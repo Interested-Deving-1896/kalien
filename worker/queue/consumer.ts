@@ -3,6 +3,8 @@ import {
   MAX_QUEUE_RETRIES,
   MAX_VAST_QUEUE_RETRIES,
   VAST_SLOT_BUSY_RETRY_DELAY_SECONDS,
+  CLAIM_ARTIFACT_READ_MAX_ATTEMPTS,
+  CLAIM_ARTIFACT_READ_RETRY_DELAY_MS,
 } from "../constants";
 import { submitClaim } from "../claim/submit";
 import { resolveBoundlessConfig } from "../boundless/config";
@@ -212,6 +214,7 @@ function resolveMaxProofTotalWallTimeMs(env: WorkerEnv): number {
 async function prepareForSubmission(
   message: Message<ProofQueueMessage>,
   env: WorkerEnv,
+  backend: ProverBackend,
   _maxRetries: number,
 ): Promise<PreparedJob | null> {
   const payload = message.body;
@@ -222,9 +225,10 @@ async function prepareForSubmission(
 
   const jobId = payload.jobId;
   const maxWallTimeMs = resolveMaxProofTotalWallTimeMs(env);
+  const deliveryId = `${backend}:${message.id}:${message.attempts}`;
 
   const coordinator = coordinatorStub(env);
-  const startedJob = await coordinator.beginQueueAttempt(jobId, message.attempts);
+  const startedJob = await coordinator.beginQueueAttempt(jobId, message.attempts, backend, deliveryId);
   if (!startedJob || isTerminalProofStatus(startedJob.status)) {
     message.ack();
     return null;
@@ -239,6 +243,12 @@ async function prepareForSubmission(
   // If the prover job already exists (re-delivered message after crash),
   // beginQueueAttempt ensured the alarm is running. Just ack.
   if (startedJob.prover.jobId) {
+    message.ack();
+    return null;
+  }
+
+  const activeDeliveryId = startedJob.queue?.activeDeliveryId ?? deliveryId;
+  if (activeDeliveryId !== deliveryId) {
     message.ack();
     return null;
   }
@@ -355,7 +365,7 @@ async function processBoundlessMessage(
   message: Message<ProofQueueMessage>,
   env: WorkerEnv,
 ): Promise<void> {
-  const prepared = await prepareForSubmission(message, env, MAX_QUEUE_RETRIES);
+  const prepared = await prepareForSubmission(message, env, "boundless", MAX_QUEUE_RETRIES);
   if (!prepared) return;
 
   const { jobId, tapeBytes } = prepared;
@@ -513,7 +523,7 @@ async function processVastMessage(
     return;
   }
 
-  const prepared = await prepareForSubmission(message, env, MAX_VAST_QUEUE_RETRIES);
+  const prepared = await prepareForSubmission(message, env, "vast", MAX_VAST_QUEUE_RETRIES);
   if (!prepared) return;
 
   const { jobId, tapeBytes } = prepared;
@@ -621,10 +631,36 @@ async function processClaimQueueMessage(
     return;
   }
 
-  const artifact = await env.PROOF_ARTIFACTS.get(job.result.artifactKey);
+  // Retry R2 reads — transient consistency delays have caused artifact-not-found
+  // failures in production even though markSucceeded confirmed the put.
+  let artifact: R2ObjectBody | null = null;
+  for (let attempt = 1; attempt <= CLAIM_ARTIFACT_READ_MAX_ATTEMPTS; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    artifact = await env.PROOF_ARTIFACTS.get(job.result.artifactKey);
+    if (artifact) break;
+    if (attempt < CLAIM_ARTIFACT_READ_MAX_ATTEMPTS) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, CLAIM_ARTIFACT_READ_RETRY_DELAY_MS));
+    }
+  }
   if (!artifact) {
-    await coordinator.markClaimFailed(payload.jobId, "missing proof artifact in R2");
-    message.ack();
+    // Treat as retryable — R2 may recover on the next queue delivery.
+    const reason = `missing proof artifact in R2 after ${CLAIM_ARTIFACT_READ_MAX_ATTEMPTS} read attempts`;
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
+      await coordinator.markClaimFailed(
+        payload.jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+    } else {
+      const delaySeconds = retryDelaySeconds(message.attempts);
+      await coordinator.markClaimRetry(
+        payload.jobId,
+        reason,
+        new Date(Date.now() + delaySeconds * 1000).toISOString(),
+      );
+      message.retry({ delaySeconds });
+    }
     return;
   }
 
@@ -632,11 +668,23 @@ async function processClaimQueueMessage(
   try {
     artifactJson = (await artifact.json()) as unknown;
   } catch (error) {
-    await coordinator.markClaimFailed(
-      payload.jobId,
-      `failed parsing proof artifact json: ${safeErrorMessage(error)}`,
-    );
-    message.ack();
+    // Treat R2 body read failures as retryable (transient network/stream errors).
+    const reason = `failed reading proof artifact json: ${safeErrorMessage(error)}`;
+    if (message.attempts >= MAX_QUEUE_RETRIES) {
+      await coordinator.markClaimFailed(
+        payload.jobId,
+        `${reason} (exhausted ${message.attempts} delivery attempts)`,
+      );
+      message.ack();
+    } else {
+      const delaySeconds = retryDelaySeconds(message.attempts);
+      await coordinator.markClaimRetry(
+        payload.jobId,
+        reason,
+        new Date(Date.now() + delaySeconds * 1000).toISOString(),
+      );
+      message.retry({ delaySeconds });
+    }
     return;
   }
 

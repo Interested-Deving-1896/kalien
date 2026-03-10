@@ -69,6 +69,16 @@ app.post("/api/dev/sync", async (c) => {
   return c.json({ success: true, result });
 });
 
+app.post("/api/dev/proofs/maintenance", async (c) => {
+  const key = c.env.DEV_API_KEY;
+  if (!key) return c.json({ success: false, error: "endpoint disabled" }, 404);
+  const auth = c.req.header("authorization");
+  if (auth !== `Bearer ${key}`) return c.json({ success: false, error: "unauthorized" }, 401);
+
+  const result = await coordinatorStub(c.env).runMaintenance();
+  return c.json({ success: true, result });
+});
+
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) {
     return c.json(

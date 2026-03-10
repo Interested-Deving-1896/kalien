@@ -37,6 +37,7 @@ export const MAX_RETRY_DELAY_SECONDS = 60;
 // as permanently failed rather than retried again.
 export const MAX_QUEUE_RETRIES = 10;
 export const MAX_VAST_QUEUE_RETRIES = 30;
+export const DISPATCH_LEASE_TIMEOUT_MS = 60_000;
 
 // When the VastAI slot is occupied, retry the queue message after this delay.
 export const VAST_SLOT_BUSY_RETRY_DELAY_SECONDS = 30;
@@ -62,6 +63,14 @@ export const RETRYABLE_JOB_ERROR_CODES = new Set([
   "proof_error",
   "internal_error",
 ]);
+
+// Claim auto-retry defaults (maintenance-driven recovery for failed claims)
+export const MAX_CLAIM_AUTO_RETRIES = 20; // Total claim attempts (queue + auto) before giving up
+export const CLAIM_AUTO_RETRY_COOLDOWN_MS = 5 * 60_000; // 5 min between auto-retries
+
+// Claim artifact fetch retry (R2 transient consistency)
+export const CLAIM_ARTIFACT_READ_MAX_ATTEMPTS = 3;
+export const CLAIM_ARTIFACT_READ_RETRY_DELAY_MS = 1_000;
 
 // Boundless proving defaults
 export const DEFAULT_BOUNDLESS_POLL_TIMEOUT_MS = 30 * 60_000; // Full lock window: flat (1m) + lockTimeout (29m from rampUpStart)

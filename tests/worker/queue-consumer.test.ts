@@ -224,6 +224,46 @@ describe("handleQueueBatch (Boundless)", () => {
     expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
   });
 
+  it("acks duplicate proof deliveries that do not own the active dispatch lease", async () => {
+    const coordinator = makeCoordinator({
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100, seedId: 1 },
+        },
+        prover: { jobId: null },
+        queue: { activeDeliveryId: "boundless:another-msg:1" },
+        claim: { claimantAddress: "GABC" },
+        createdAt: new Date().toISOString(),
+      }),
+      markProverAccepted: async () => null,
+    });
+    let tapeReads = 0;
+    const msg = makeMessage({ jobId: "job-1" });
+    const env = makeEnv({
+      __coordinator: coordinator,
+      PROOF_ARTIFACTS: {
+        get: async () => {
+          tapeReads += 1;
+          return {
+            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+          };
+        },
+      },
+    });
+
+    await handleQueueBatch(makeBatch([msg]), env);
+
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    expect(tapeReads).toBe(0);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markProverAccepted")).toBe(false);
+  });
+
   it("skips proof submission when a higher score is already claimed for the same seed_id", async () => {
     const claimant = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     const coordinator = makeCoordinator({
@@ -1128,6 +1168,133 @@ describe("handleClaimQueueBatch", () => {
       method: string;
     }>;
     expect(calls.some((c) => c.method === "markClaimSucceeded")).toBe(true);
+    expect(calls.some((c) => c.method === "markClaimFailed")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claim queue — R2 artifact retry tests
+// ---------------------------------------------------------------------------
+
+describe("handleClaimQueueBatch — R2 artifact retry", () => {
+  it("retries (not fails) when R2 artifact is missing on first attempt", async () => {
+    const proofArtifact = await makeTestProofArtifact(TEST_JOURNAL);
+    const coordinator = makeCoordinator({
+      beginClaimAttempt: async () => ({
+        jobId: "job-1",
+        status: "succeeded",
+        tape: { metadata: { seed: 1, finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
+        result: {
+          summary: {
+            journal: {
+              seed_id: 1,
+              seed: 1,
+              frame_count: 10,
+              final_score: 100,
+              claimant: TEST_CLAIMANT,
+            },
+          },
+          artifactKey: "results/job-1.json",
+        },
+      }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    const env = makeEnv({
+      __coordinator: coordinator,
+      PROOF_ARTIFACTS: {
+        get: async () => null, // R2 returns null (transient consistency)
+      },
+    });
+    await handleClaimQueueBatch(makeBatch([msg]), env);
+    // Should retry, NOT permanently fail
+    expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(false);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markClaimRetry")).toBe(true);
+    expect(calls.some((c) => c.method === "markClaimFailed")).toBe(false);
+  });
+
+  it("permanently fails R2 artifact miss only after exhausting queue retries", async () => {
+    const coordinator = makeCoordinator({
+      beginClaimAttempt: async () => ({
+        jobId: "job-1",
+        status: "succeeded",
+        tape: { metadata: { seed: 1, finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
+        result: {
+          summary: {
+            journal: {
+              seed_id: 1,
+              seed: 1,
+              frame_count: 10,
+              final_score: 100,
+              claimant: TEST_CLAIMANT,
+            },
+          },
+          artifactKey: "results/job-1.json",
+        },
+      }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 10); // MAX_QUEUE_RETRIES
+    const env = makeEnv({
+      __coordinator: coordinator,
+      PROOF_ARTIFACTS: {
+        get: async () => null,
+      },
+    });
+    await handleClaimQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markClaimFailed")).toBe(true);
+  });
+
+  it("retries when artifact.json() throws (transient R2 body error)", async () => {
+    const coordinator = makeCoordinator({
+      beginClaimAttempt: async () => ({
+        jobId: "job-1",
+        status: "succeeded",
+        tape: { metadata: { seed: 1, finalScore: 100, seedId: 1 } },
+        claim: { status: "submitting", claimantAddress: TEST_CLAIMANT },
+        result: {
+          summary: {
+            journal: {
+              seed_id: 1,
+              seed: 1,
+              frame_count: 10,
+              final_score: 100,
+              claimant: TEST_CLAIMANT,
+            },
+          },
+          artifactKey: "results/job-1.json",
+        },
+      }),
+      listJobsForClaimant: async () => ({ jobs: [], total: 0 }),
+    });
+    const msg = makeMessage({ jobId: "job-1" }, 1);
+    const env = makeEnv({
+      __coordinator: coordinator,
+      PROOF_ARTIFACTS: {
+        get: async () => ({
+          json: async () => {
+            throw new Error("ReadableStream body error");
+          },
+        }),
+      },
+    });
+    await handleClaimQueueBatch(makeBatch([msg]), env);
+    expect((msg as unknown as { _retried: boolean })._retried).toBe(true);
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(false);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markClaimRetry")).toBe(true);
     expect(calls.some((c) => c.method === "markClaimFailed")).toBe(false);
   });
 });

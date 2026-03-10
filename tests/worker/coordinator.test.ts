@@ -168,5 +168,47 @@ describe("coordinator helpers", () => {
       expect(publicJob.proverAttempts[0].outcome).toBe("in_progress");
       expect(publicJob.proverAttempts[0].endedAt).toBeNull();
     });
+
+    it("strips internal lease and active-attempt bookkeeping fields", () => {
+      const job = makeJob({
+        queue: {
+          attempts: 1,
+          lastAttemptAt: "2026-01-01T00:00:30.000Z",
+          lastError: null,
+          nextRetryAt: null,
+          activeDeliveryId: "boundless:msg-1:1",
+          activeBackend: "boundless",
+          activeDeliveryStartedAt: "2026-01-01T00:00:30.000Z",
+        },
+        prover: {
+          jobId: "prover-job-1",
+          status: "succeeded",
+          statusUrl: "/api/jobs/prover-job-1",
+          segmentLimitPo2: 21,
+          lastPolledAt: "2026-01-01T00:01:00.000Z",
+          pollingErrors: 0,
+          activeAttemptIndex: 0,
+        },
+        claim: {
+          claimantAddress:
+            "GCHPTWXMT3HYF4RLZHWBNRF4MPXLTJ76ISHMSYIWCCDXWUYOQG5MR2AB",
+          status: "succeeded",
+          attempts: 1,
+          lastAttemptAt: "2026-01-01T00:01:30.000Z",
+          lastError: null,
+          nextRetryAt: null,
+          submittedAt: "2026-01-01T00:01:30.000Z",
+          txHash: "tx-hash-1",
+          activeAttemptIndex: 0,
+        },
+      });
+
+      const publicJob = asPublicJob(job);
+
+      expect((publicJob.queue as Record<string, unknown>).activeDeliveryId).toBeUndefined();
+      expect((publicJob.queue as Record<string, unknown>).activeBackend).toBeUndefined();
+      expect((publicJob.prover as Record<string, unknown>).activeAttemptIndex).toBeUndefined();
+      expect((publicJob.claim as Record<string, unknown>).activeAttemptIndex).toBeUndefined();
+    });
   });
 });
