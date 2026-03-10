@@ -1,6 +1,6 @@
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { ProofJobPublic, ProofJobStatus, ClaimStatus, ProverBackend } from "@/proof/api";
-import { getActiveBackend } from "@/proof/helpers";
+import { getActiveBackend, isSupersededProofJob } from "@/proof/helpers";
 
 function backendLabel(backend: ProverBackend): string {
   return backend === "boundless" ? "Boundless" : "Vast";
@@ -10,6 +10,10 @@ export function ProofStatusBadge({ job }: { job: ProofJobPublic }) {
   const status: ProofJobStatus = job.status;
   const claimStatus: ClaimStatus = job.claim.status;
   const backend = getActiveBackend(job);
+
+  if (isSupersededProofJob(job)) {
+    return <StatusBadge variant="purple">Superseded</StatusBadge>;
+  }
 
   switch (status) {
     case "queued":
@@ -24,9 +28,6 @@ export function ProofStatusBadge({ job }: { job: ProofJobPublic }) {
       return <StatusBadge variant="warning">Retrying</StatusBadge>;
     case "succeeded":
       if (claimStatus === "succeeded") {
-        if (job.claim.txHash === "superseded-by-higher-score") {
-          return <StatusBadge variant="purple">Superseded</StatusBadge>;
-        }
         return <StatusBadge variant="success">Claimed</StatusBadge>;
       }
       if (claimStatus === "failed") {

@@ -18,3 +18,10 @@ export function getActiveBackend(job: ProofJobPublic): ProverBackend | null {
   const last = job.proverAttempts[job.proverAttempts.length - 1];
   return last?.backend ?? null;
 }
+
+export function isSupersededProofJob(job: ProofJobPublic): boolean {
+  return (
+    (job.status === "succeeded" && job.claim.txHash === "superseded-by-higher-score") ||
+    (job.status === "failed" && job.errorCode === "superseded_by_higher_score")
+  );
+}

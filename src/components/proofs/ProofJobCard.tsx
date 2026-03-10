@@ -12,7 +12,7 @@ import Zap from "lucide-react/dist/esm/icons/zap";
 import type { ClaimAttempt, ProofJobPublic, ProverAttempt } from "@/proof/api";
 import { downloadProofTape, retryFailedClaim, retryFailedProof, getProofJob } from "@/proof/api";
 import { ErrorDetailDialog } from "./ErrorDetailDialog";
-import { boundlessExplorerUrl, getActiveBackend } from "@/proof/helpers";
+import { boundlessExplorerUrl, getActiveBackend, isSupersededProofJob } from "@/proof/helpers";
 import { formatBytes, formatCycles, formatDuration, formatHex32 } from "@/lib/format";
 import { timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -195,6 +195,7 @@ export function ProofJobCard({
   }, [fastPollingMode, job.jobId]);
 
   const score = job.tape.metadata.finalScore;
+  const isSuperseded = isSupersededProofJob(job);
   const backend = getActiveBackend(job);
   const result = job.result?.summary ?? null;
   const resultStats = result?.stats ?? null;
@@ -340,7 +341,7 @@ export function ProofJobCard({
       : null;
   const isClaimed = job.claim.status === "succeeded";
   const canRetryClaim = !readOnly && job.status === "succeeded" && job.claim.status === "failed";
-  const canRetryProof = !readOnly && job.status === "failed" && !job.result;
+  const canRetryProof = !readOnly && job.status === "failed" && !job.result && !isSuperseded;
   const hasProverAttempts = (job.proverAttempts?.length ?? 0) > 0;
   const showProverAttempts = hasProverAttempts || canRetryProof || proofRetryError != null;
   const claimAttempts = job.claimAttempts;
@@ -580,7 +581,9 @@ export function ProofJobCard({
                 </div>
               ) : (
                 <p className="m-0 text-xs text-muted-foreground">
-                  No prover attempts are recorded for this failed proof yet.
+                  {isSuperseded
+                    ? "No prover attempts are recorded for this superseded proof."
+                    : "No prover attempts are recorded for this failed proof yet."}
                 </p>
               )}
             </div>
