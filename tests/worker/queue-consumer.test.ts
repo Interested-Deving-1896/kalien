@@ -264,6 +264,52 @@ describe("handleQueueBatch (Boundless)", () => {
     expect(calls.some((c) => c.method === "markProverAccepted")).toBe(false);
   });
 
+  it("continues a redelivery that still owns the active dispatch lease", async () => {
+    const coordinator = makeCoordinator({
+      beginQueueAttempt: async () => ({
+        jobId: "job-1",
+        status: "dispatching",
+        tape: {
+          key: "tapes/job-1",
+          metadata: { finalScore: 100, seedId: 1 },
+        },
+        prover: { jobId: null },
+        queue: { activeDeliveryId: "boundless:msg-1" },
+        claim: { claimantAddress: "GABC" },
+        createdAt: new Date().toISOString(),
+      }),
+      markProverAccepted: async () => null,
+    });
+    (globalThis as Record<string, unknown>).__boundlessSubmitResult = {
+      type: "success",
+      jobId: "boundless-job-1",
+      statusUrl: "boundless:0x1234",
+      segmentLimitPo2: 21,
+    };
+    let tapeReads = 0;
+    const msg = makeMessage({ jobId: "job-1" }, 2);
+    const env = makeEnv({
+      __coordinator: coordinator,
+      PROOF_ARTIFACTS: {
+        get: async () => {
+          tapeReads += 1;
+          return {
+            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+          };
+        },
+      },
+    });
+
+    await handleQueueBatch(makeBatch([msg]), env);
+
+    expect((msg as unknown as { _acked: boolean })._acked).toBe(true);
+    expect(tapeReads).toBe(1);
+    const calls = (coordinator as Record<string, unknown>)._calls as Array<{
+      method: string;
+    }>;
+    expect(calls.some((c) => c.method === "markProverAccepted")).toBe(true);
+  });
+
   it("skips proof submission when a higher score is already claimed for the same seed_id", async () => {
     const claimant = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     const coordinator = makeCoordinator({

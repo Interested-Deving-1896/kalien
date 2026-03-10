@@ -364,9 +364,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     attempt.endedAt = nowIso();
     attempt.outcome = outcome;
-    attempt.error = outcome === "failed" ? options?.error ?? null : null;
-    attempt.errorDetail = outcome === "failed" ? options?.errorDetail ?? null : null;
-    attempt.txHash = outcome === "success" ? options?.txHash ?? null : null;
+    attempt.error = outcome === "failed" ? (options?.error ?? null) : null;
+    attempt.errorDetail = outcome === "failed" ? (options?.errorDetail ?? null) : null;
+    attempt.txHash = outcome === "success" ? (options?.txHash ?? null) : null;
     job.claim.activeAttemptIndex = null;
     return true;
   }
@@ -395,7 +395,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     );
     const cutoffMs = Date.now() - retentionMs;
     const rows = this.ctx.storage.sql
-      .exec(`SELECT job_id, status, completed_at, created_at, data FROM jobs WHERE status IN ('succeeded', 'failed')`)
+      .exec(
+        `SELECT job_id, status, completed_at, created_at, data FROM jobs WHERE status IN ('succeeded', 'failed')`,
+      )
       .toArray();
 
     for (const row of rows) {
@@ -675,6 +677,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
    * Lightweight periodic maintenance:
    * - keep the alarm chain alive while active jobs exist
    * - prune completed jobs by time-based retention policy
+   * - auto-recover unfinished claims that got stuck in queued/retrying/submitting/failed states
    * - fully clear storage when the coordinator is empty
    */
   async runMaintenance(): Promise<{
@@ -705,13 +708,13 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       staleSubmittingClaimsRecovered: 0,
     };
 
-    // Auto-retry claims that failed after exhausting queue retries. This
-    // recovers from transient relay/network issues that outlast the ~4 min
-    // queue retry window without requiring manual intervention.
+    // Auto-recover claims that got stuck after queue or relayer failures. This
+    // recovers from transient issues that outlast the queue retry window
+    // without requiring manual intervention.
     try {
-      claimRecovery = await this.autoRetryFailedClaims();
+      claimRecovery = await this.autoRecoverUnfinishedClaims();
     } catch (error) {
-      console.warn(`[maintenance] autoRetryFailedClaims error: ${safeErrorMessage(error)}`);
+      console.warn(`[maintenance] autoRecoverUnfinishedClaims error: ${safeErrorMessage(error)}`);
     }
 
     if (activeJobIds.length === 0) {
@@ -1437,12 +1440,20 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   private shouldSkipAutomaticClaimRetry(job: ProofJobRecord): boolean {
-    const latestAttempt =
-      [...(job.claimAttempts ?? [])]
-        .reverse()
-        .find((attempt) => typeof attempt.error === "string" || typeof attempt.errorDetail === "string") ??
-      null;
-    const combined = `${job.claim.lastError ?? ""} ${latestAttempt?.error ?? ""} ${latestAttempt?.errorDetail ?? ""}`.toLowerCase();
+    const claimAttempts = job.claimAttempts ?? [];
+    let latestAttempt: ClaimAttempt | null = null;
+    for (let index = claimAttempts.length - 1; index >= 0; index -= 1) {
+      const attempt = claimAttempts[index];
+      if (!attempt) {
+        continue;
+      }
+      if (typeof attempt.error === "string" || typeof attempt.errorDetail === "string") {
+        latestAttempt = attempt;
+        break;
+      }
+    }
+    const combined =
+      `${job.claim.lastError ?? ""} ${latestAttempt?.error ?? ""} ${latestAttempt?.errorDetail ?? ""}`.toLowerCase();
     const deterministicMarkers = [
       "invalidjournalformat",
       "zeroscorenotallowed",
@@ -1485,11 +1496,11 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   /**
-   * Automatically re-queue claims that failed after exhausting queue retries.
-   * Called from runMaintenance() every minute. Applies a cooldown between
-   * retries and a total attempt cap to avoid infinite loops.
+   * Automatically recover unfinished claims that got stuck after queue or
+   * relayer failures. Called from runMaintenance() every minute. Applies a
+   * cooldown between retries and a total attempt cap to avoid infinite loops.
    */
-  private async autoRetryFailedClaims(): Promise<{
+  private async autoRecoverUnfinishedClaims(): Promise<{
     claimsRequeued: number;
     staleQueuedClaimsRequeued: number;
     staleRetryingClaimsRequeued: number;

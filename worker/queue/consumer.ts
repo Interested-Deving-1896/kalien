@@ -225,10 +225,18 @@ async function prepareForSubmission(
 
   const jobId = payload.jobId;
   const maxWallTimeMs = resolveMaxProofTotalWallTimeMs(env);
-  const deliveryId = `${backend}:${message.id}:${message.attempts}`;
+  // Cloudflare queue redeliveries reuse the same message id but increment
+  // attempts; the dispatch lease must stay stable across those redeliveries so
+  // a crash between beginQueueAttempt() and submission can recover cleanly.
+  const deliveryId = `${backend}:${message.id}`;
 
   const coordinator = coordinatorStub(env);
-  const startedJob = await coordinator.beginQueueAttempt(jobId, message.attempts, backend, deliveryId);
+  const startedJob = await coordinator.beginQueueAttempt(
+    jobId,
+    message.attempts,
+    backend,
+    deliveryId,
+  );
   if (!startedJob || isTerminalProofStatus(startedJob.status)) {
     message.ack();
     return null;
