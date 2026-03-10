@@ -355,7 +355,7 @@ describe("ProofCoordinatorDO state machine", () => {
     expect(stored?.claim.attempts).toBe(2);
   });
 
-  it("requeues stale queued claims during maintenance", async () => {
+  it("does not duplicate queued claims during maintenance when they have not started yet", async () => {
     const harness = createCoordinatorHarness();
     const jobId = await createSucceededJob(harness);
     harness.claimQueueSends.length = 0;
@@ -373,9 +373,9 @@ describe("ProofCoordinatorDO state machine", () => {
     const summary = await harness.coordinator.runMaintenance();
     const stored = readStoredJob(harness, jobId);
 
-    expect(summary.claimsRequeued).toBe(1);
-    expect(summary.staleQueuedClaimsRequeued).toBe(1);
-    expect(harness.claimQueueSends).toEqual([{ jobId }]);
+    expect(summary.claimsRequeued).toBe(0);
+    expect(summary.staleQueuedClaimsRequeued).toBe(0);
+    expect(harness.claimQueueSends).toHaveLength(0);
     expect(stored?.claim.status).toBe("queued");
   });
 
@@ -440,6 +440,31 @@ describe("ProofCoordinatorDO state machine", () => {
     const jobId = await createSucceededJob(harness);
     await harness.coordinator.beginClaimAttempt(jobId, 1);
     await harness.coordinator.markClaimFailed(jobId, "submission failed", "contract, #1");
+    harness.claimQueueSends.length = 0;
+
+    mutateStoredJob(harness, jobId, (job) => {
+      const staleAt = staleIso();
+      job.updatedAt = staleAt;
+      job.completedAt = staleAt;
+      job.claim.lastAttemptAt = staleAt;
+    });
+
+    const summary = await harness.coordinator.runMaintenance();
+    const stored = readStoredJob(harness, jobId);
+
+    expect(summary.claimsRequeued).toBe(0);
+    expect(harness.claimQueueSends).toHaveLength(0);
+    expect(stored?.claim.status).toBe("failed");
+  });
+
+  it("skips automatic retries for deterministic local artifact validation failures", async () => {
+    const harness = createCoordinatorHarness();
+    const jobId = await createSucceededJob(harness);
+    await harness.coordinator.beginClaimAttempt(jobId, 1);
+    await harness.coordinator.markClaimFailed(
+      jobId,
+      "invalid proof artifact payload: missing journal_digest_hex",
+    );
     harness.claimQueueSends.length = 0;
 
     mutateStoredJob(harness, jobId, (job) => {

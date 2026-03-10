@@ -1443,12 +1443,23 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         .find((attempt) => typeof attempt.error === "string" || typeof attempt.errorDetail === "string") ??
       null;
     const combined = `${job.claim.lastError ?? ""} ${latestAttempt?.error ?? ""} ${latestAttempt?.errorDetail ?? ""}`.toLowerCase();
+    const deterministicMarkers = [
+      "invalidjournalformat",
+      "zeroscorenotallowed",
+      "seednotactive",
+      "contractpaused",
+      "missing proof result for claim submission",
+      "invalid proof artifact payload",
+      "proof artifact journal_raw_hex does not match coordinator summary",
+      "proof artifact journal_digest_hex does not match journal_raw_hex",
+      "seal_hex must encode exactly",
+      "journal_raw_hex must encode exactly",
+      "journal_digest_hex must be a 32-byte lowercase hex string",
+      "journal_digest_hex does not match journal_raw_hex",
+    ];
 
     return (
-      combined.includes("invalidjournalformat") ||
-      combined.includes("zeroscorenotallowed") ||
-      combined.includes("seednotactive") ||
-      combined.includes("contractpaused") ||
+      deterministicMarkers.some((marker) => combined.includes(marker)) ||
       /contract,\s*#(?:1|4|6|7)\b/.test(combined)
     );
   }
@@ -1518,9 +1529,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       if (job.claim.status === "failed") {
         shouldRequeue = true;
         category = "failed";
-      } else if (job.claim.status === "queued") {
-        shouldRequeue = true;
-        category = "queued";
       } else if (job.claim.status === "retrying") {
         const retryAtMs = this.timestampMs(job.claim.nextRetryAt ?? null);
         if (retryAtMs <= 0 || retryAtMs <= now) {
@@ -1553,7 +1561,6 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         await this.saveJob(job);
         await this.enqueueClaimJob(job.jobId);
         result.claimsRequeued += 1;
-        if (category === "queued") result.staleQueuedClaimsRequeued += 1;
         if (category === "retrying") result.staleRetryingClaimsRequeued += 1;
         if (recoveredStaleSubmitting) result.staleSubmittingClaimsRecovered += 1;
       } catch (error) {
