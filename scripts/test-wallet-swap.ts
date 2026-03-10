@@ -7,7 +7,7 @@
  *   bun run scripts/test-wallet-swap.ts
  */
 
-import { chromium, type CDPSession } from "/usr/local/lib/node_modules/agent-browser/node_modules/playwright-core";
+import { chromium, type CDPSession } from "playwright-core";
 
 const BASE_URL = "http://localhost:5173";
 
@@ -102,7 +102,7 @@ async function main() {
     await page.waitForFunction(
       () => {
         // Look for an element showing a balance (e.g. "— KALIEN" or "0 KALIEN")
-        const buttons = document.querySelectorAll("button");
+        const buttons = Array.from(document.querySelectorAll("button"));
         for (const btn of buttons) {
           if (btn.textContent?.includes("KALIEN")) return true;
         }

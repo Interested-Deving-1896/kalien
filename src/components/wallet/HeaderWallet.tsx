@@ -204,6 +204,7 @@ export function HeaderWallet() {
 
           {/* Balance */}
           <button
+            type="button"
             className="w-full cursor-pointer border-b border-border/30 px-3 py-2.5 bg-transparent text-left transition-colors hover:bg-[rgba(255,255,255,0.04)]"
             onClick={() => {
               setOpen(false);

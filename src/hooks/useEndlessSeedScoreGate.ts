@@ -72,6 +72,26 @@ function getStoredSeedScore(storageKey: string | null, seedId: number): number {
   return typeof stored === "number" && Number.isFinite(stored) ? stored >>> 0 : 0;
 }
 
+export function commitFetchedSeedScore(
+  storageKey: string | null,
+  cache: Map<number, number>,
+  readySeedIds: Set<number>,
+  seedId: number,
+  bestScore: number,
+  onChainBest: number | null,
+): number | null {
+  const normalizedSeedId = seedId >>> 0;
+  if (onChainBest === null) {
+    return null;
+  }
+
+  const normalizedBestScore = bestScore >>> 0;
+  cache.set(normalizedSeedId, normalizedBestScore);
+  writeStoredSeedScore(storageKey, normalizedSeedId, normalizedBestScore);
+  readySeedIds.add(normalizedSeedId);
+  return normalizedBestScore;
+}
+
 export interface UseEndlessSeedScoreGateOptions {
   enabled: boolean;
   walletAddress: string;
@@ -195,16 +215,14 @@ export function useEndlessSeedScoreGate({
           return null;
         }
 
-        cacheRef.current.set(normalizedSeedId, bestScore);
-        writeStoredSeedScore(storageKey, normalizedSeedId, bestScore);
-
-        if (onChainBest === null) {
-          readySeedIdsRef.current.delete(normalizedSeedId);
-          return null;
-        }
-
-        readySeedIdsRef.current.add(normalizedSeedId);
-        return bestScore;
+        return commitFetchedSeedScore(
+          storageKey,
+          cacheRef.current,
+          readySeedIdsRef.current,
+          normalizedSeedId,
+          bestScore,
+          onChainBest,
+        );
       })().finally(() => {
         inFlightRef.current.delete(normalizedSeedId);
       });

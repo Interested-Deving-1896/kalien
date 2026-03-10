@@ -4,7 +4,7 @@ import {
   validateAddress,
   type ConnectWalletResult,
 } from "smart-account-kit";
-import type { Keypair, Transaction } from "@stellar/stellar-sdk";
+import type { FeeBumpTransaction, Keypair, Transaction } from "@stellar/stellar-sdk";
 import { parseClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
 import {
   DEFAULT_ACCOUNT_WASM_HASH,
@@ -59,10 +59,34 @@ interface AssembledDeploymentTransaction {
   signed?: Transaction;
 }
 
+type SignableTransaction = Transaction | FeeBumpTransaction;
+
 type SmartAccountKitPatchTarget = {
   deployerKeypair: Keypair;
   signWithDeployer(tx: AssembledDeploymentTransaction): Promise<void>;
 };
+
+function getSmartAccountKitPatchTarget(kit: SmartAccountKit): SmartAccountKitPatchTarget {
+  const candidate = kit as unknown as Partial<SmartAccountKitPatchTarget>;
+  if (
+    !candidate ||
+    typeof candidate !== "object" ||
+    typeof candidate.signWithDeployer !== "function" ||
+    !candidate.deployerKeypair ||
+    typeof candidate.deployerKeypair.sign !== "function"
+  ) {
+    throw new Error("smart-account-kit internals changed; deployer signing patch needs update");
+  }
+
+  return candidate as SmartAccountKitPatchTarget;
+}
+
+export function signPreparedTransaction<T extends SignableTransaction>(tx: T, signer: Keypair): T {
+  // Sign the fully assembled transaction in place. Re-cloning via higher-level
+  // helpers can duplicate Soroban fees and break relayer submission.
+  tx.sign(signer);
+  return tx;
+}
 
 export function signBuiltDeploymentTransaction(
   tx: AssembledDeploymentTransaction,
@@ -72,15 +96,19 @@ export function signBuiltDeploymentTransaction(
     throw new Error("deployment transaction has not been built");
   }
 
-  // The deploy transaction is already fully assembled at this point. Routing it
-  // back through AssembledTransaction.sign() re-clones Soroban fees and breaks
-  // Channels relayer submission with FEE_MISMATCH.
-  tx.built.sign(deployerKeypair);
-  tx.signed = tx.built;
+  tx.signed = signPreparedTransaction(tx.built, deployerKeypair);
+}
+
+export function signTransactionWithDeployer<T extends SignableTransaction>(
+  tx: T,
+  kit: SmartAccountKit,
+): T {
+  const internalKit = getSmartAccountKitPatchTarget(kit);
+  return signPreparedTransaction(tx, internalKit.deployerKeypair);
 }
 
 function patchSmartAccountKitDeployerSigning(kit: SmartAccountKit): void {
-  const internalKit = kit as unknown as SmartAccountKitPatchTarget;
+  const internalKit = getSmartAccountKitPatchTarget(kit);
   internalKit.signWithDeployer = async (tx: AssembledDeploymentTransaction) => {
     signBuiltDeploymentTransaction(tx, internalKit.deployerKeypair);
   };

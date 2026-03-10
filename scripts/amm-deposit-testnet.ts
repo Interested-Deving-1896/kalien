@@ -60,10 +60,6 @@ function loadSecret(name: string): string {
   return execSync(`stellar keys show ${name}`, { encoding: "utf-8" }).trim();
 }
 
-function loadAddress(name: string): string {
-  return execSync(`stellar keys address ${name}`, { encoding: "utf-8" }).trim();
-}
-
 const richKeypair = Keypair.fromSecret(loadSecret("rich"));
 const kalienKeypair = Keypair.fromSecret(loadSecret("kalien"));
 const kaleKeypair = Keypair.fromSecret(loadSecret("testnet"));
@@ -101,15 +97,6 @@ async function friendbot(address: string, label: string): Promise<void> {
     } else {
       throw new Error(`Friendbot failed for ${label}: ${text}`);
     }
-  }
-}
-
-async function accountExists(address: string): Promise<boolean> {
-  try {
-    await horizon.loadAccount(address);
-    return true;
-  } catch {
-    return false;
   }
 }
 

@@ -48,10 +48,7 @@ export function WalletPage() {
   const [copied, setCopied] = useState(false);
 
   // ── Swap config (null when network/token not ready) ──
-  const swapCfg = useMemo(
-    () => getSwapConfig(balance.tokenContractId),
-    [balance.tokenContractId],
-  );
+  const swapCfg = useMemo(() => getSwapConfig(balance.tokenContractId), [balance.tokenContractId]);
 
   // ── KALE balance (only when swap config is available) ──
   const [kaleBalance, setKaleBalance] = useState<bigint | null>(null);
@@ -138,7 +135,7 @@ export function WalletPage() {
     [swapCfg],
   );
 
-  const debounceRef = useRef<number>(undefined);
+  const debounceRef = useRef<number | undefined>(undefined);
   useEffect(() => {
     clearTimeout(debounceRef.current);
     if (!swapAmount.trim()) {
@@ -244,17 +241,18 @@ export function WalletPage() {
     setSwapSuccess(false);
 
     try {
-      const result = await executeSwap(
-        swapCfg!,
+      const activeSwapCfg = swapCfg;
+      if (!activeSwapCfg) {
+        throw new Error("Swap is not configured");
+      }
+
+      await executeSwap(
+        activeSwapCfg,
         quote.amountIn,
         quote.minAmountOut,
         wallet.address,
         wallet.session.credentialId,
       );
-
-      if (!result.hash && result.hash !== "") {
-        throw new Error("Swap failed");
-      }
 
       setSwapSuccess(true);
       setSwapAmount("");
@@ -272,6 +270,7 @@ export function WalletPage() {
     void navigator.clipboard.writeText(wallet.address).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      return undefined;
     });
   }
 
@@ -347,85 +346,83 @@ export function WalletPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Swap form (only when swap config is available) */}
             {swapCfg && (
-            <Card className="animate-rise">
-              <form onSubmit={handleSwap} className="grid gap-4 p-4">
-                <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase text-[rgba(176,219,255,0.95)]">
-                  Swap KALIEN → KALE
-                </h2>
+              <Card className="animate-rise">
+                <form onSubmit={handleSwap} className="grid gap-4 p-4">
+                  <h2 className="m-0 font-display text-sm tracking-[0.08em] uppercase text-[rgba(176,219,255,0.95)]">
+                    Swap KALIEN → KALE
+                  </h2>
 
-                <div className="grid gap-1.5">
-                  <label
-                    htmlFor="swap-amount"
-                    className="font-display text-[0.7rem] uppercase tracking-[0.06em] text-muted-foreground"
-                  >
-                    KALIEN to swap
-                  </label>
-                  <Input
-                    id="swap-amount"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={swapAmount}
-                    onChange={(e) => {
-                      setSwapAmount(e.target.value);
-                      setSwapError(null);
-                      setSwapSuccess(false);
-                    }}
-                    disabled={swapping}
-                  />
-                </div>
-
-                {/* Quote display */}
-                {quoteLoading && (
-                  <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-                    Getting quote…
-                  </p>
-                )}
-
-                {quote && !quoteLoading && (
-                  <div className="rounded-md border border-border/30 bg-[rgba(13,22,40,0.4)] px-3 py-2.5 text-sm">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-muted-foreground">You receive</span>
-                      <span className="font-display tracking-wide text-card-foreground">
-                        ~{formatKaleAmount(quote.amountOut)} KALE
-                      </span>
-                    </div>
-                    <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
-                      <span className="text-muted-foreground">Minimum (3% slippage)</span>
-                      <span className="text-muted-foreground">
-                        {formatKaleAmount(quote.minAmountOut)} KALE
-                      </span>
-                    </div>
+                  <div className="grid gap-1.5">
+                    <label
+                      htmlFor="swap-amount"
+                      className="font-display text-[0.7rem] uppercase tracking-[0.06em] text-muted-foreground"
+                    >
+                      KALIEN to swap
+                    </label>
+                    <Input
+                      id="swap-amount"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={swapAmount}
+                      onChange={(e) => {
+                        setSwapAmount(e.target.value);
+                        setSwapError(null);
+                        setSwapSuccess(false);
+                      }}
+                      disabled={swapping}
+                    />
                   </div>
-                )}
 
-                <ErrorMessage message={quoteError} />
-                <ErrorMessage message={swapError} />
-
-                {swapSuccess && (
-                  <p className="m-0 text-sm text-secondary">Swap successful!</p>
-                )}
-
-                <Button
-                  type="submit"
-                  variant="active"
-                  disabled={swapping || !quote || quoteLoading}
-                >
-                  {swapping ? (
-                    <>
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                      Swapping...
-                    </>
-                  ) : (
-                    <>
-                      <ArrowDownUp className="size-3.5" aria-hidden="true" />
-                      Swap
-                    </>
+                  {/* Quote display */}
+                  {quoteLoading && (
+                    <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                      Getting quote…
+                    </p>
                   )}
-                </Button>
-              </form>
-            </Card>
+
+                  {quote && !quoteLoading && (
+                    <div className="rounded-md border border-border/30 bg-[rgba(13,22,40,0.4)] px-3 py-2.5 text-sm">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-muted-foreground">You receive</span>
+                        <span className="font-display tracking-wide text-card-foreground">
+                          ~{formatKaleAmount(quote.amountOut)} KALE
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">Minimum (3% slippage)</span>
+                        <span className="text-muted-foreground">
+                          {formatKaleAmount(quote.minAmountOut)} KALE
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <ErrorMessage message={quoteError} />
+                  <ErrorMessage message={swapError} />
+
+                  {swapSuccess && <p className="m-0 text-sm text-secondary">Swap successful!</p>}
+
+                  <Button
+                    type="submit"
+                    variant="active"
+                    disabled={swapping || !quote || quoteLoading}
+                  >
+                    {swapping ? (
+                      <>
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                        Swapping...
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDownUp className="size-3.5" aria-hidden="true" />
+                        Swap
+                      </>
+                    )}
+                  </Button>
+                </form>
+              </Card>
             )}
 
             {/* Transfer form */}
@@ -512,7 +509,10 @@ export function WalletPage() {
                 <Button
                   type="submit"
                   variant="active"
-                  disabled={transferring || (transferToken === "KALIEN" ? !balance.tokenContractId : !swapCfg?.kaleSac)}
+                  disabled={
+                    transferring ||
+                    (transferToken === "KALIEN" ? !balance.tokenContractId : !swapCfg?.kaleSac)
+                  }
                 >
                   {transferring ? (
                     <>

@@ -32,9 +32,7 @@ function getEnv(key: string): string | undefined {
  * Resolve swap config from env vars.
  * Returns `null` when required vars are missing (swap UI hidden).
  */
-export function getSwapConfig(
-  kalienSac: string | null,
-): SwapConfig | null {
+export function getSwapConfig(kalienSac: string | null): SwapConfig | null {
   if (!kalienSac) return null;
 
   const soroswapRouter = getEnv("VITE_SOROSWAP_ROUTER");
@@ -50,6 +48,72 @@ export interface SwapQuote {
   amountIn: bigint;
   amountOut: bigint;
   minAmountOut: bigint;
+}
+
+interface SwapRelayResponse {
+  success: boolean;
+  error?: string;
+  data?: { hash?: string };
+}
+
+export function requireSwapSubmissionHash(result: SwapRelayResponse): string {
+  if (!result.success) {
+    throw new Error(result.error ?? "swap submission failed");
+  }
+
+  const hash = result.data?.hash?.trim();
+  if (!hash) {
+    throw new Error("swap submission missing tx hash");
+  }
+
+  return hash;
+}
+
+export function buildSignedSwapSubmissionXdr(
+  assembledXdr: string,
+  signedAuth: xdr.SorobanAuthorizationEntry[],
+  networkPassphrase: string,
+  signWithDeployer: (tx: ReturnType<typeof TransactionBuilder.fromXDR>) => void,
+): string {
+  const envelope = xdr.TransactionEnvelope.fromXDR(assembledXdr, "base64");
+  const v1 = envelope.v1();
+  if (!v1) {
+    throw new Error("swap submission requires a v1 transaction envelope");
+  }
+  const txBody = v1.tx();
+  const firstOp = txBody.operations()[0];
+  const invokeOp = firstOp.body().invokeHostFunctionOp();
+
+  const newInvokeOp = new xdr.InvokeHostFunctionOp({
+    hostFunction: invokeOp.hostFunction(),
+    auth: signedAuth,
+  });
+
+  const newOp = new xdr.Operation({
+    sourceAccount: firstOp.sourceAccount(),
+    body: xdr.OperationBody.invokeHostFunction(newInvokeOp),
+  });
+
+  const newTxBody = new xdr.Transaction({
+    sourceAccount: txBody.sourceAccount(),
+    fee: txBody.fee(),
+    seqNum: txBody.seqNum(),
+    cond: txBody.cond(),
+    memo: txBody.memo(),
+    operations: [newOp],
+    ext: txBody.ext(),
+  });
+
+  const rebuiltEnvelope = xdr.TransactionEnvelope.envelopeTypeTx(
+    new xdr.TransactionV1Envelope({
+      tx: newTxBody,
+      signatures: [],
+    }),
+  );
+
+  const rebuiltTx = TransactionBuilder.fromXDR(rebuiltEnvelope.toXDR("base64"), networkPassphrase);
+  signWithDeployer(rebuiltTx);
+  return rebuiltTx.toXDR();
 }
 
 // ── Quote ────────────────────────────────────────────────────────────────
@@ -79,11 +143,7 @@ export async function getSwapQuote(
     networkPassphrase: config.networkPassphrase,
   })
     .addOperation(
-      router.call(
-        "router_get_amounts_out",
-        nativeToScVal(amountIn, { type: "i128" }),
-        pathScVal,
-      ),
+      router.call("router_get_amounts_out", nativeToScVal(amountIn, { type: "i128" }), pathScVal),
     )
     .setTimeout(30)
     .build();
@@ -167,41 +227,20 @@ export async function executeSwap(
   const invokeOp = firstOp.body().invokeHostFunctionOp();
   const unsignedAuth = invokeOp.auth();
 
-  const signedAuth: xdr.SorobanAuthorizationEntry[] = [];
-  for (const entry of unsignedAuth) {
-    const signed = await kit.signAuthEntry(entry, { credentialId });
-    signedAuth.push(signed);
-  }
-
-  // Rebuild transaction with signed auth entries
-  const newInvokeOp = new xdr.InvokeHostFunctionOp({
-    hostFunction: invokeOp.hostFunction(),
-    auth: signedAuth,
-  });
-
-  const newOp = new xdr.Operation({
-    sourceAccount: firstOp.sourceAccount(),
-    body: xdr.OperationBody.invokeHostFunction(newInvokeOp),
-  });
-
-  const newTxBody = new xdr.Transaction({
-    sourceAccount: txBody.sourceAccount(),
-    fee: txBody.fee(),
-    seqNum: txBody.seqNum(),
-    cond: txBody.cond(),
-    memo: txBody.memo(),
-    operations: [newOp],
-    ext: txBody.ext(),
-  });
-
-  const signedEnvelope = xdr.TransactionEnvelope.envelopeTypeTx(
-    new xdr.TransactionV1Envelope({
-      tx: newTxBody,
-      signatures: v1.signatures(),
-    }),
+  const signedAuth = await Promise.all(
+    Array.from(unsignedAuth, (entry) => kit.signAuthEntry(entry, { credentialId })),
   );
 
-  const signedXdr = signedEnvelope.toXDR("base64");
+  // Rebuild with the signed auth entries, then sign the finished transaction
+  // in place so the relayer receives a fully signed XDR.
+  const signedXdr = buildSignedSwapSubmissionXdr(
+    assembled.toXDR(),
+    signedAuth,
+    config.networkPassphrase,
+    (rebuiltTx) => {
+      walletModule.signTransactionWithDeployer(rebuiltTx, kit);
+    },
+  );
 
   // Submit via relay proxy (Channels relayer fee-bumps and submits)
   const response = await fetch("/api/relay", {
@@ -215,11 +254,6 @@ export async function executeSwap(
     throw new Error(`relay submission failed: ${text}`);
   }
 
-  const result: { success: boolean; error?: string; data?: { hash?: string } } =
-    await response.json();
-  if (!result.success) {
-    throw new Error(result.error ?? "swap submission failed");
-  }
-
-  return { hash: result.data?.hash ?? "" };
+  const result = (await response.json()) as SwapRelayResponse;
+  return { hash: requireSwapSubmissionHash(result) };
 }
