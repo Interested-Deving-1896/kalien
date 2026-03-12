@@ -13,13 +13,12 @@
  * Requirements:
  *   - Local dev server running: bun dev
  *   - .dev.vars configured with BOUNDLESS_PRIVATE_KEY
+ *   - Playwright Chromium installed: bunx playwright-core install chromium
  *
  * Usage: bun scripts/e2e-ui.ts [--headed] [--tape <path>] [--timeout-ms <ms>]
  */
 
-// playwright-core ships with agent-browser (global package)
-// @ts-ignore — no type declarations for the globally-installed mjs bundle
-import { chromium } from "/usr/local/lib/node_modules/agent-browser/node_modules/playwright-core/index.mjs";
+import { chromium } from "playwright-core";
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { AsteroidsGame } from "../src/game/AsteroidsGame";
@@ -38,8 +37,7 @@ const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--headed") headed = true;
   if (args[i] === "--tape" && args[i + 1]) tapePath = resolve(args[++i]);
-  if (args[i] === "--timeout-ms" && args[i + 1])
-    proofTimeoutMs = parseInt(args[++i], 10);
+  if (args[i] === "--timeout-ms" && args[i + 1]) proofTimeoutMs = parseInt(args[++i], 10);
 }
 
 function log(msg: string) {
@@ -48,6 +46,21 @@ function log(msg: string) {
 
 function step(n: number, msg: string) {
   console.log(`\n[e2e-ui] ── Step ${n}: ${msg} ──`);
+}
+
+async function launchChromiumBrowser(headless: boolean) {
+  try {
+    return await chromium.launch({
+      headless,
+      args: ["--no-sandbox"],
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `failed to launch Playwright Chromium; install it with "bunx playwright-core install chromium" and retry (${detail})`,
+      { cause: error },
+    );
+  }
 }
 
 /** Generate a fresh tape with a unique seed so we never hit "already claimed". */
@@ -87,6 +100,7 @@ async function waitForProofJob(
   const deadline = Date.now() + timeoutMs;
   log(`Waiting for job ${jobId} (timeout ${timeoutMs / 1000}s)...`);
 
+  /* eslint-disable no-await-in-loop -- proof polling must remain sequential */
   while (Date.now() < deadline) {
     const res = await fetch(`${BASE_URL}/api/proofs/jobs/${jobId}`);
     if (!res.ok) throw new Error(`Job status check failed: ${res.status}`);
@@ -121,6 +135,7 @@ async function waitForProofJob(
 
     await new Promise((r) => setTimeout(r, 10_000));
   }
+  /* eslint-enable no-await-in-loop */
 
   throw new Error(`Job ${jobId} timed out after ${timeoutMs / 1000}s`);
 }
@@ -150,13 +165,9 @@ async function main() {
       prover?: { status?: string; backend?: string };
     };
     const proverStatus = data.prover?.status ?? "unknown";
-    log(
-      `Worker healthy. Prover: ${proverStatus} (${data.prover?.backend ?? "unknown"})`,
-    );
+    log(`Worker healthy. Prover: ${proverStatus} (${data.prover?.backend ?? "unknown"})`);
     if (proverStatus !== "healthy" && proverStatus !== "compatible") {
-      log(
-        `WARNING: Prover status is "${proverStatus}" — proof submission may fail`,
-      );
+      log(`WARNING: Prover status is "${proverStatus}" — proof submission may fail`);
     }
   } catch (err) {
     console.error(`Dev server not reachable at ${BASE_URL}:`, err);
@@ -166,10 +177,7 @@ async function main() {
 
   // Step 1: Launch browser
   step(1, "Launch browser");
-  const browser = await chromium.launch({
-    headless: !headed,
-    args: ["--no-sandbox"],
-  });
+  const browser = await launchChromiumBrowser(!headed);
 
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
@@ -256,9 +264,7 @@ async function main() {
     log("ScoreCard appeared — game-over triggered!");
     await screenshot("03-score-card");
 
-    const ariaLabel = await page
-      .locator('[data-slot="score-card"]')
-      .getAttribute("aria-label");
+    const ariaLabel = await page.locator('[data-slot="score-card"]').getAttribute("aria-label");
     log(`Score: ${ariaLabel}`);
 
     // Step 7: Create wallet with passkey
@@ -294,9 +300,7 @@ async function main() {
 
     if (await proveBtn.isDisabled()) {
       await screenshot("08-prove-disabled");
-      throw new Error(
-        "Prove My Score is disabled — check wallet connection and score",
-      );
+      throw new Error("Prove My Score is disabled — check wallet connection and score");
     }
 
     // Intercept the submit response to capture job ID and claimant address
@@ -342,9 +346,7 @@ async function main() {
     let jobId = capturedJobId;
     if (!jobId) {
       const content = await page.content();
-      const match = content.match(
-        /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/,
-      );
+      const match = content.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
       if (match) {
         jobId = match[0];
         log(`Found job ID in page: ${jobId}`);
@@ -397,6 +399,7 @@ async function main() {
     // Retry leaderboard checks while scheduled sync catches up.
     let leaderboardOk = false;
     const maxLeaderboardChecks = 8;
+    /* eslint-disable no-await-in-loop -- leaderboard visibility checks are intentionally serialized with backoff */
     for (let attempt = 1; attempt <= maxLeaderboardChecks; attempt++) {
       log(`Leaderboard visibility check ${attempt}/${maxLeaderboardChecks}...`);
 
@@ -407,8 +410,7 @@ async function main() {
         await new Promise((r) => setTimeout(r, 10_000));
       }
       const lbParams = new URLSearchParams({ window: "all", limit: "10" });
-      if (capturedClaimantAddress)
-        lbParams.set("address", capturedClaimantAddress);
+      if (capturedClaimantAddress) lbParams.set("address", capturedClaimantAddress);
       const lbRes = await fetch(`${BASE_URL}/api/leaderboard?${lbParams}`);
       if (!lbRes.ok) {
         log(`  Leaderboard API returned ${lbRes.status}`);
@@ -429,9 +431,7 @@ async function main() {
         `  Leaderboard: ${lbData.pagination.total} players, ${lbData.ingestion.total_events} events`,
       );
       if (lbData.entries.length > 0) {
-        log(
-          `  Top: rank=${lbData.entries[0].rank} score=${lbData.entries[0].score}`,
-        );
+        log(`  Top: rank=${lbData.entries[0].rank} score=${lbData.entries[0].score}`);
       }
 
       if (lbData.me) {
@@ -449,6 +449,7 @@ async function main() {
         break;
       }
     }
+    /* eslint-enable no-await-in-loop */
 
     // Navigate to leaderboard page and screenshot
     await page.goto(`${BASE_URL}/leaderboard`, { waitUntil: "networkidle" });
@@ -469,9 +470,7 @@ async function main() {
     console.log(`  Job ID:      ${jobId}`);
     console.log(`  Claim Tx:    ${proofResult.claimTxHash}`);
     console.log(`  Claimant:    ${capturedClaimantAddress ?? "unknown"}`);
-    console.log(
-      `  Leaderboard: ${leaderboardOk ? "verified" : "skipped (no address)"}`,
-    );
+    console.log(`  Leaderboard: ${leaderboardOk ? "verified" : "skipped (no address)"}`);
     console.log(`  Screenshots: ${SCREENSHOT_DIR}/e2e-*.png`);
     console.log(`${"=".repeat(60)}\n`);
   } catch (err) {
