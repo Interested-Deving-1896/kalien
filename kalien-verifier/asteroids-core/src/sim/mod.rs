@@ -352,10 +352,10 @@ fn validate_transition(
                     return Err(RuleCode::ShipPositionStep);
                 }
             }
-        } else if !respawned_this_frame {
-            if prev.ship_x != next.ship_x || prev.ship_y != next.ship_y {
-                return Err(RuleCode::ShipPositionStep);
-            }
+        } else if !respawned_this_frame
+            && (prev.ship_x != next.ship_x || prev.ship_y != next.ship_y)
+        {
+            return Err(RuleCode::ShipPositionStep);
         }
     }
 

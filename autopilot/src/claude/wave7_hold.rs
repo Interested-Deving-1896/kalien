@@ -64,6 +64,15 @@ struct ShotCorridor {
     first_block_time: Option<f64>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RiskEntity {
+    x: i32,
+    y: i32,
+    vx: i32,
+    vy: i32,
+    radius: i32,
+}
+
 pub struct Wave7HoldBot {
     rush_bot: Box<dyn AutopilotBot>,
     phase: HoldPhase,
@@ -151,8 +160,8 @@ impl Wave7HoldBot {
             asteroid.vy,
             48.0,
         );
-        let speed_px = ((asteroid.vx as f64 / 256.0).powi(2) + (asteroid.vy as f64 / 256.0).powi(2))
-            .sqrt();
+        let speed_px =
+            ((asteroid.vx as f64 / 256.0).powi(2) + (asteroid.vy as f64 / 256.0).powi(2)).sqrt();
 
         let mut continuity = 0.0;
         if let Some(prev) = previous {
@@ -187,18 +196,14 @@ impl Wave7HoldBot {
     fn entity_risk(
         &self,
         pred: PredictedShip,
-        ex: i32,
-        ey: i32,
-        evx: i32,
-        evy: i32,
-        radius: i32,
+        entity: RiskEntity,
         weight: f64,
         lookahead: f64,
     ) -> f64 {
         let approach = torus_relative_approach(
-            pred.x, pred.y, pred.vx, pred.vy, ex, ey, evx, evy, lookahead,
+            pred.x, pred.y, pred.vx, pred.vy, entity.x, entity.y, entity.vx, entity.vy, lookahead,
         );
-        let safe = (pred.radius + radius + 8) as f64;
+        let safe = (pred.radius + entity.radius + 8) as f64;
         let closest = (safe / (approach.closest_px + 1.0)).powf(2.05);
         let immediate = (safe / (approach.immediate_px + 1.0)).powf(1.38);
         let closing = if approach.dot < 0.0 { 1.28 } else { 0.92 };
@@ -227,7 +232,8 @@ impl Wave7HoldBot {
         }
 
         let (start_x, start_y, bullet_vx, bullet_vy) = Self::planned_bullet(pred);
-        let horizon = (target.intercept_frames + 10.0).clamp(1.0, SHIP_BULLET_LIFETIME_FRAMES as f64);
+        let horizon =
+            (target.intercept_frames + 10.0).clamp(1.0, SHIP_BULLET_LIFETIME_FRAMES as f64);
         let (target_closest, target_t) = projectile_wrap_closest_approach(
             start_x,
             start_y,
@@ -465,16 +471,10 @@ impl Wave7HoldBot {
         anchor: AnchorSnapshot,
     ) -> bool {
         let (start_x, start_y, bullet_vx, bullet_vy) = Self::planned_bullet(pred);
-        let horizon = (target.intercept_frames + 14.0).clamp(1.0, SHIP_BULLET_LIFETIME_FRAMES as f64);
+        let horizon =
+            (target.intercept_frames + 14.0).clamp(1.0, SHIP_BULLET_LIFETIME_FRAMES as f64);
         let (closest, t) = projectile_wrap_closest_approach(
-            start_x,
-            start_y,
-            bullet_vx,
-            bullet_vy,
-            anchor.x,
-            anchor.y,
-            anchor.vx,
-            anchor.vy,
+            start_x, start_y, bullet_vx, bullet_vy, anchor.x, anchor.y, anchor.vx, anchor.vy,
             horizon,
         );
         closest <= (anchor.radius + 5) as f64 && t <= horizon
@@ -489,7 +489,11 @@ impl Wave7HoldBot {
         let only_anchor_left = asteroid_count <= 1;
         let near_lurk = world.time_since_last_kill >= 300;
         let in_lurk = world.time_since_last_kill >= LURK_TIME_THRESHOLD_FRAMES;
-        let lookahead = if self.phase == HoldPhase::Farm { 22.0 } else { 19.0 };
+        let lookahead = if self.phase == HoldPhase::Farm {
+            22.0
+        } else {
+            19.0
+        };
 
         let mut risk = 0.0;
         for asteroid in &world.asteroids {
@@ -505,11 +509,13 @@ impl Wave7HoldBot {
             };
             risk += self.entity_risk(
                 pred,
-                asteroid.x,
-                asteroid.y,
-                asteroid.vx,
-                asteroid.vy,
-                asteroid.radius,
+                RiskEntity {
+                    x: asteroid.x,
+                    y: asteroid.y,
+                    vx: asteroid.vx,
+                    vy: asteroid.vy,
+                    radius: asteroid.radius,
+                },
                 weight,
                 lookahead,
             );
@@ -531,11 +537,13 @@ impl Wave7HoldBot {
             };
             risk += self.entity_risk(
                 pred,
-                saucer.x,
-                saucer.y,
-                saucer.vx,
-                saucer.vy,
-                saucer.radius,
+                RiskEntity {
+                    x: saucer.x,
+                    y: saucer.y,
+                    vx: saucer.vx,
+                    vy: saucer.vy,
+                    radius: saucer.radius,
+                },
                 weight,
                 lookahead,
             );
@@ -546,12 +554,18 @@ impl Wave7HoldBot {
             }
             risk += self.entity_risk(
                 pred,
-                bullet.x,
-                bullet.y,
-                bullet.vx,
-                bullet.vy,
-                bullet.radius,
-                if self.phase == HoldPhase::Farm { 3.1 } else { 2.9 },
+                RiskEntity {
+                    x: bullet.x,
+                    y: bullet.y,
+                    vx: bullet.vx,
+                    vy: bullet.vy,
+                    radius: bullet.radius,
+                },
+                if self.phase == HoldPhase::Farm {
+                    3.1
+                } else {
+                    2.9
+                },
                 lookahead,
             );
         }
@@ -599,7 +613,11 @@ impl Wave7HoldBot {
                     target.target_radius,
                 );
                 let min_quality = if target.is_saucer {
-                    if target.is_small_saucer { 0.1 } else { 0.14 }
+                    if target.is_small_saucer {
+                        0.1
+                    } else {
+                        0.14
+                    }
                 } else if asteroid_count <= 2 {
                     0.22
                 } else {
@@ -623,13 +641,15 @@ impl Wave7HoldBot {
                 } else {
                     None
                 };
-                let corridor_safe = corridor.map(|c| {
-                    if only_anchor_left {
-                        !c.blocks_anchor && !c.blocks_other
-                    } else {
-                        !c.blocks_anchor && !(asteroid_count <= 3 && c.blocks_other)
-                    }
-                }).unwrap_or(true);
+                let corridor_safe = corridor
+                    .map(|c| {
+                        if only_anchor_left {
+                            !c.blocks_anchor && !c.blocks_other
+                        } else {
+                            !(c.blocks_anchor || asteroid_count <= 3 && c.blocks_other)
+                        }
+                    })
+                    .unwrap_or(true);
                 let large_saucer_ok =
                     target.is_small_saucer || !only_anchor_left || nearest_threat < 105.0;
                 let emergency_saucer =
@@ -671,10 +691,14 @@ impl Wave7HoldBot {
 
         let cx =
             shortest_delta_q12_4(pred.x, WORLD_WIDTH_Q12_4 / 2, WORLD_WIDTH_Q12_4) as f64 / 16.0;
-        let cy = shortest_delta_q12_4(pred.y, WORLD_HEIGHT_Q12_4 / 2, WORLD_HEIGHT_Q12_4) as f64
-            / 16.0;
+        let cy =
+            shortest_delta_q12_4(pred.y, WORLD_HEIGHT_Q12_4 / 2, WORLD_HEIGHT_Q12_4) as f64 / 16.0;
         let center_dist = (cx * cx + cy * cy).sqrt();
-        let center_weight = if self.phase == HoldPhase::Farm { 0.56 } else { 0.38 };
+        let center_weight = if self.phase == HoldPhase::Farm {
+            0.56
+        } else {
+            0.38
+        };
         let center_term = -(center_dist / 900.0) * center_weight;
 
         let left_edge = pred.x as f64 / 16.0;
@@ -682,11 +706,19 @@ impl Wave7HoldBot {
         let top_edge = pred.y as f64 / 16.0;
         let bottom_edge = (WORLD_HEIGHT_Q12_4 - pred.y) as f64 / 16.0;
         let min_edge = left_edge.min(right_edge).min(top_edge).min(bottom_edge);
-        let edge_penalty = if self.phase == HoldPhase::Farm { 0.38 } else { 0.28 };
+        let edge_penalty = if self.phase == HoldPhase::Farm {
+            0.38
+        } else {
+            0.28
+        };
         let edge_term = -((135.0 - min_edge).max(0.0) / 135.0) * edge_penalty;
 
         let speed_px = pred.speed_px();
-        let speed_soft_cap = if self.phase == HoldPhase::Farm { 4.15 } else { 4.65 };
+        let speed_soft_cap = if self.phase == HoldPhase::Farm {
+            4.15
+        } else {
+            4.65
+        };
         let speed_term = if speed_px > speed_soft_cap {
             -((speed_px - speed_soft_cap) / speed_soft_cap) * 0.34
         } else {
@@ -730,7 +762,11 @@ impl Wave7HoldBot {
             control_term -= 1.5;
         }
 
-        let survival_weight = if self.phase == HoldPhase::Farm { 2.2 } else { 1.92 };
+        let survival_weight = if self.phase == HoldPhase::Farm {
+            2.2
+        } else {
+            1.92
+        };
         -risk * survival_weight
             + attack_term
             + fire_term

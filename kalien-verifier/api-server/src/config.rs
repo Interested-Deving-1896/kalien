@@ -58,7 +58,7 @@ impl ServerPolicy {
 
     /// Returns `(error_message, error_code)` on failure.
     pub(crate) fn to_options(
-        &self,
+        self,
         query: &ProveTapeQuery,
     ) -> Result<ProveOptions, (String, &'static str)> {
         let max_frames = query.max_frames.unwrap_or(self.max_frames);

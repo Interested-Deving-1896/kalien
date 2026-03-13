@@ -1,4 +1,5 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
+import * as actualViem from "viem";
 
 // ── usdToWei tests (pure math, no mocking needed) ──────────────────────────
 
@@ -85,21 +86,17 @@ function getMockReadContract(): ReturnType<typeof mock> {
 mock.module("viem", () => {
   mockReadContract = mock();
   return {
+    ...actualViem,
     createPublicClient: () => ({
       readContract: mockReadContract,
     }),
-    defineChain: (config: unknown) => config,
-    http: (url: string) => url,
   };
 });
 
 // Import after mock is set up
 const { fetchEthPriceUsd, resetEthPriceCache, resolveUsdOfferToWei, usdToWei } =
   await import("../../worker/boundless/pricing");
-
-afterAll(() => {
-  mock.restore();
-});
+mock.restore();
 
 describe("fetchEthPriceUsd", () => {
   beforeEach(() => {

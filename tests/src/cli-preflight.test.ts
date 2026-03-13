@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
+import * as actualStellarSdk from "@stellar/stellar-sdk";
 
 const SAMPLE_G = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGWF";
 const SAMPLE_C = "CDPAHIOTDASW6WULHAJ5UL4H6YH7OJ2T72LKVT75SCFDZ4YZTOVDFEQX";
@@ -50,31 +51,9 @@ let tokenIdImpl: TokenIdFn = async () => ({ result: TESTNET_TOKEN_CONTRACT });
 let fetchSeedByIdImpl: FetchSeedByIdFn = async () => 1234;
 
 mock.module("@stellar/stellar-sdk", () => ({
-  Asset: class MockAsset {
-    code: string;
-    issuer: string;
-
-    constructor(code: string, issuer: string) {
-      this.code = code;
-      this.issuer = issuer;
-    }
-
-    static native(): { getCode(): string; getIssuer(): string } {
-      return {
-        getCode: () => "XLM",
-        getIssuer: () => "",
-      };
-    }
-
-    getCode(): string {
-      return this.code;
-    }
-
-    getIssuer(): string {
-      return this.issuer;
-    }
-  },
+  ...actualStellarSdk,
   rpc: {
+    ...actualStellarSdk.rpc,
     Server: class MockRpcServer {
       getAccount(address: string): Promise<unknown> {
         return getAccountImpl(address);
@@ -93,9 +72,16 @@ mock.module("@stellar/stellar-sdk", () => ({
       }
     },
   },
-  scValToNative: (value: { __native: unknown }): unknown => value.__native,
+  scValToNative: (value: unknown): unknown => {
+    if (value && typeof value === "object" && "__native" in value) {
+      return (value as { __native: unknown }).__native;
+    }
+    return actualStellarSdk.scValToNative(value as Parameters<typeof actualStellarSdk.scValToNative>[0]);
+  },
   xdr: {
+    ...actualStellarSdk.xdr,
     ScVal: {
+      ...actualStellarSdk.xdr.ScVal,
       scvLedgerKeyContractInstance: (): { __ledger_key_contract_instance: true } => ({
         __ledger_key_contract_instance: true,
       }),
@@ -137,6 +123,7 @@ mock.module("@/chain/seed", () => ({
 }));
 
 const { runCliPreflight } = await import("../../cli/src/preflight.ts?test=preflight");
+mock.restore();
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {

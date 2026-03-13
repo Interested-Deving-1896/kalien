@@ -398,7 +398,8 @@ pub(super) fn record_locked_bot_configs() -> &'static [ReplayConfig] {
         },
         ReplayConfig {
             id: "record-mainnet-911260-single-mutation",
-            description: "Verified 911260 improvement over the public 911140 tape on seed 0x5f41772e.",
+            description:
+                "Verified 911260 improvement over the public 911140 tape on seed 0x5f41772e.",
             expected_seed: 0x5f41_772e,
             tape_rel_path: "fixtures/public/kalien-911260-seed1598125870-single-mutation.tape",
             max_frames_hint: 36_000,
