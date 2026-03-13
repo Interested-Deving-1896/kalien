@@ -2,17 +2,16 @@ import { describe, expect, it } from "bun:test";
 import {
   Account,
   Contract,
-  Keypair,
   Networks,
+  Operation,
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { buildSignedSwapSubmissionXdr, requireSwapSubmissionHash } from "../../src/chain/swap";
+import { buildSwapRelayPayload, requireSwapSubmissionHash } from "../../src/chain/swap";
 
-describe("buildSignedSwapSubmissionXdr", () => {
-  it("re-signs the rebuilt transaction before relay submission", () => {
-    const deployer = Keypair.random();
-    const sourceAccount = new Account(deployer.publicKey(), "1");
+describe("buildSwapRelayPayload", () => {
+  it("extracts func/auth payload for the relayer soroban path", () => {
+    const sourceAccount = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "1");
     const router = new Contract("CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4");
 
     const assembled = new TransactionBuilder(sourceAccount, {
@@ -23,23 +22,27 @@ describe("buildSignedSwapSubmissionXdr", () => {
       .setTimeout(300)
       .build();
 
-    expect(assembled.signatures).toHaveLength(0);
+    const relayPayload = buildSwapRelayPayload(assembled.toXDR(), []);
+    expect(relayPayload.auth).toEqual([]);
 
-    const signedXdr = buildSignedSwapSubmissionXdr(
-      assembled.toXDR(),
-      [],
-      Networks.TESTNET,
-      (rebuiltTx) => {
-        rebuiltTx.sign(deployer);
-      },
+    const func = xdr.HostFunction.fromXDR(relayPayload.func, "base64");
+    expect(func.switch().name).toBe("hostFunctionTypeInvokeContract");
+  });
+
+  it("fails clearly when the transaction does not contain the expected swap op", () => {
+    const sourceAccount = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "1");
+
+    const assembled = new TransactionBuilder(sourceAccount, {
+      fee: "1000000",
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.restoreFootprint({}))
+      .setTimeout(300)
+      .build();
+
+    expect(() => buildSwapRelayPayload(assembled.toXDR(), [])).toThrow(
+      "swap submission requires an invokeHostFunction operation",
     );
-
-    const signed = TransactionBuilder.fromXDR(signedXdr, Networks.TESTNET);
-    expect(signed.signatures).toHaveLength(1);
-
-    const envelope = xdr.TransactionEnvelope.fromXDR(signedXdr, "base64");
-    const auth = envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth();
-    expect(auth).toHaveLength(0);
   });
 
   it("rejects relay responses that omit the transaction hash", () => {
