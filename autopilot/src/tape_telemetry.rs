@@ -96,7 +96,11 @@ pub fn analyze_tape_inputs(
         let score_delta = snapshot.score.saturating_sub(before.score);
         let asteroid_count = snapshot.asteroids.iter().filter(|a| a.alive).count();
         let saucer_count = snapshot.saucers.iter().filter(|s| s.alive).count();
-        let small_saucer_count = snapshot.saucers.iter().filter(|s| s.alive && s.small).count();
+        let small_saucer_count = snapshot
+            .saucers
+            .iter()
+            .filter(|s| s.alive && s.small)
+            .count();
         let bullet_count = snapshot.bullets.iter().filter(|b| b.alive).count();
         let saucer_bullet_count = snapshot.saucer_bullets.iter().filter(|b| b.alive).count();
 
@@ -180,7 +184,7 @@ pub fn analyze_tape_inputs(
             first_zero_asteroid_on_wave7_score = Some(snapshot.score);
         }
 
-        if frame % sample_every == 0 || frame == inputs.len() as u32 {
+        if frame.is_multiple_of(sample_every) || frame == inputs.len() as u32 {
             frames.push(FrameTelemetry {
                 frame,
                 score: snapshot.score,

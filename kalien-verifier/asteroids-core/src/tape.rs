@@ -59,7 +59,7 @@ pub fn decode_input_byte(byte: u8) -> FrameInput {
 /// Returns the number of packed body bytes for a given frame count.
 #[inline]
 pub fn body_bytes(frame_count: usize) -> usize {
-    (frame_count + 1) / 2
+    frame_count.div_ceil(2)
 }
 
 pub fn parse_tape(bytes: &[u8], max_frames: u32) -> Result<TapeView, VerifyError> {

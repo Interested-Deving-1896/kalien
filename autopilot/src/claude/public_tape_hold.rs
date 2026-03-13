@@ -88,7 +88,9 @@ impl PublicTapeHoldBot {
 
     pub fn try_create_dynamic(id: &str) -> Option<Box<dyn AutopilotBot>> {
         let raw = id.strip_prefix(PUBLIC_PREFIX_ID_PREFIX)?;
-        let (frames_raw, fallback_raw) = raw.split_once('-').map_or((raw, None), |(a, b)| (a, Some(b)));
+        let (frames_raw, fallback_raw) = raw
+            .split_once('-')
+            .map_or((raw, None), |(a, b)| (a, Some(b)));
         let prefix_frames = frames_raw.parse::<usize>().ok()?;
         if prefix_frames == 0 || prefix_frames > PUBLIC_911K_MAX_FRAMES as usize {
             return None;
@@ -153,7 +155,8 @@ impl PublicTapeHoldBot {
         }
 
         let prefix_len = self.prefix_frames.min(view.inputs.len());
-        self.prefix_inputs.extend_from_slice(&view.inputs[..prefix_len]);
+        self.prefix_inputs
+            .extend_from_slice(&view.inputs[..prefix_len]);
         self.prefix_ready = true;
     }
 }
