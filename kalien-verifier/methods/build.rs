@@ -1,8 +1,12 @@
 use std::{env, path::Path};
 
 fn running_under_clippy() -> bool {
+    if env::var_os("CLIPPY_ARGS").is_some() {
+        return true;
+    }
+
     env::var_os("RUSTC_WORKSPACE_WRAPPER")
-        .and_then(|wrapper| Path::new(&wrapper).file_name().map(|name| name.to_owned()))
+        .and_then(|wrapper| Path::new(&wrapper).file_stem().map(|name| name.to_owned()))
         .is_some_and(|name| name == "clippy-driver")
 }
 
