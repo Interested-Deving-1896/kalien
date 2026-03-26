@@ -24,6 +24,8 @@ export const DEFAULT_MAX_PROOF_TOTAL_WALL_TIME_MS = 180 * 60_000; // 3 hours
 // Keep slightly above the prover API timeout so status propagation can finish.
 export const DEFAULT_MAX_PROVER_RUN_TIME_MS = 11 * 60_000; // 11 minutes
 export const DEFAULT_COMPLETED_JOB_RETENTION_MS = 7 * 24 * 60 * 60_000; // 7 days
+export const REPLAY_DEDUPE_WINDOW_MS = 24 * 60 * 60_000; // 24 hours
+export const REPLAY_HASH_DOMAIN = "kalien:asteroids:replay:v1";
 export const MAX_TOTAL_PROVER_ATTEMPTS = 4; // 2 Boundless + 2 Vast.ai interleaved
 
 export const DEFAULT_SEGMENT_LIMIT_PO2 = 21;

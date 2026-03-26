@@ -75,6 +75,18 @@ mock.module("../../worker/claim/submit", () => ({
 }));
 
 mock.module("../../worker/leaderboard-store", () => ({
+  createLeaderboardProfileAuthChallenge: async () => undefined,
+  getLeaderboardIngestionState: async () => null,
+  getLeaderboardPage: async () => null,
+  getLeaderboardPlayer: async () => null,
+  getLeaderboardProfileAuthChallenge: async () => null,
+  getLeaderboardProfileCredential: async () => null,
+  getProofClaimIndexEntriesByTxHashes: async () => [],
+  markLeaderboardProfileAuthChallengeUsed: async () => false,
+  purgeExpiredLeaderboardProfileAuthChallenges: async () => undefined,
+  updateLeaderboardProfileCredentialCounter: async () => undefined,
+  upsertLeaderboardProfile: async () => null,
+  upsertLeaderboardProfileCredential: async () => null,
   writeProofClaimIndexEntry: async (
     _env: WorkerEnv,
     entry: {
@@ -157,6 +169,7 @@ function makeCoordinator(overrides: Record<string, unknown> = {}): Record<string
 
   const defaults: Record<string, (...args: unknown[]) => Promise<unknown>> = {
     beginQueueAttempt: async () => null,
+    beginExternalDispatch: async () => null,
     getJob: async () => null,
     markFailed: async () => null,
     markDispatchFailedAndTryNextBackend: async () => null,

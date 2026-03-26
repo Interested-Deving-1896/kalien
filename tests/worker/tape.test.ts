@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { parseAndValidateTape } from "../../worker/tape";
+import { computeReplayIdentity } from "../../worker/replay-hash";
 import {
   TAPE_MAGIC,
   TAPE_VERSION,
@@ -163,5 +164,26 @@ describe("parseAndValidateTape", () => {
     expect(result.frameCount).toBeGreaterThan(0);
     expect(typeof result.seed).toBe("number");
     expect(typeof result.checksum).toBe("number");
+  });
+
+  it("computes the same replay hash for the same semantic replay", async () => {
+    const frames = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
+    const a = buildTape({ seed: 0xabcd, frames, score: 1337 });
+    const b = buildTape({ seed: 0xabcd, frames, score: 9999 });
+
+    const hashA = await computeReplayIdentity(a);
+    const hashB = await computeReplayIdentity(b);
+
+    expect(hashA.replayHash).toBe(hashB.replayHash);
+  });
+
+  it("computes different replay hashes for different inputs", async () => {
+    const a = buildTape({ seed: 0xabcd, frames: new Uint8Array([0x01, 0x02]), score: 10 });
+    const b = buildTape({ seed: 0xabcd, frames: new Uint8Array([0x01, 0x03]), score: 10 });
+
+    const hashA = await computeReplayIdentity(a);
+    const hashB = await computeReplayIdentity(b);
+
+    expect(hashA.replayHash).not.toBe(hashB.replayHash);
   });
 });

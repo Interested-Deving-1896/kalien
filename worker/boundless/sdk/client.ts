@@ -102,6 +102,7 @@ export class BoundlessClient {
   async submitRequest(
     tapeBytes: Uint8Array,
     metadata: { seedId: number; claimantAddress: string },
+    options: { beforeDispatch?: () => Promise<void> } = {},
   ): Promise<ProverSubmitResult> {
     const config = this.config;
     const account = privateKeyToAccount(config.privateKey);
@@ -385,6 +386,7 @@ export class BoundlessClient {
     // Only on-chain submission is treated as authoritative success.
     let lastError: string | undefined;
     let sawRetryableError = false;
+    let dispatchStarted = false;
     for (const fundingPlan of fundingPlans) {
       const strategies = [
         {
@@ -404,6 +406,17 @@ export class BoundlessClient {
       for (const strategy of strategies) {
         for (let attempt = 1; attempt <= strategy.maxAttempts; attempt++) {
           try {
+            if (!dispatchStarted) {
+              try {
+                await options.beforeDispatch?.();
+              } catch (error) {
+                return {
+                  type: "fatal",
+                  message: `failed beginning external boundless dispatch: ${safeErrorMessage(error)}`,
+                };
+              }
+              dispatchStarted = true;
+            }
             await strategy.fn();
             if (strategy.name === "order-stream") {
               console.log(

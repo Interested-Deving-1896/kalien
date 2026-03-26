@@ -72,6 +72,10 @@ interface ProverCreateOptions {
   claimantAddress: string;
 }
 
+interface ProverDispatchOptions {
+  beforeDispatch?: () => Promise<void>;
+}
+
 function buildProverCreateUrlWithOptions(env: WorkerEnv, options: ProverCreateOptions): URL {
   const url = buildProverUrl(env, "/api/jobs/prove-tape/raw");
 
@@ -286,6 +290,7 @@ export async function submitToProver(
   env: WorkerEnv,
   tapeBytes: Uint8Array,
   options: ProverCreateOptions,
+  dispatchOptions: ProverDispatchOptions = {},
 ): Promise<ProverSubmitResult> {
   try {
     await getValidatedProverHealth(env);
@@ -305,6 +310,15 @@ export async function submitToProver(
     DEFAULT_SEGMENT_LIMIT_PO2,
     1,
   );
+
+  try {
+    await dispatchOptions.beforeDispatch?.();
+  } catch (error) {
+    return {
+      type: "fatal",
+      message: `failed beginning external prover dispatch: ${safeErrorMessage(error)}`,
+    };
+  }
 
   let response: Response;
   try {

@@ -10,6 +10,7 @@ import {
   MAX_TOTAL_PROVER_ATTEMPTS,
   MAX_CLAIM_AUTO_RETRIES,
   CLAIM_AUTO_RETRY_COOLDOWN_MS,
+  REPLAY_DEDUPE_WINDOW_MS,
 } from "../constants";
 import { resolveBoundlessConfig } from "../boundless/config";
 import { BoundlessClient, fetchBoundlessCycles } from "../boundless/sdk/client";
@@ -40,6 +41,20 @@ import {
 } from "../utils";
 
 const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
+type ReplayRegistryState = "reserved" | "dispatching" | "dispatched";
+
+interface ReplayRegistryRow {
+  replay_hash: string;
+  proof_job_id: string;
+  claimant_address: string;
+  seed: number;
+  frame_count: number;
+  state: ReplayRegistryState;
+  locked_backend: ProverBackend | null;
+  first_seen_at: string;
+  expires_at: string;
+  dispatch_started_at: string | null;
+}
 
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
@@ -69,6 +84,9 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     completedAt: job.completedAt,
+    replayHash: job.replayHash ?? null,
+    replayLockState: job.replayLockState ?? null,
+    replayLockedBackend: job.replayLockedBackend ?? null,
     tape: {
       sizeBytes: job.tape.sizeBytes,
       metadata: job.tape.metadata,
@@ -242,6 +260,19 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   private normalizeLoadedJob(job: ProofJobRecord): boolean {
     let changed = false;
+
+    if (job.replayHash === undefined) {
+      job.replayHash = null;
+      changed = true;
+    }
+    if (job.replayLockState === undefined) {
+      job.replayLockState = null;
+      changed = true;
+    }
+    if (job.replayLockedBackend === undefined) {
+      job.replayLockedBackend = null;
+      changed = true;
+    }
 
     if (job.queue.waitStartedAt == null) {
       job.queue.waitStartedAt = job.createdAt;
@@ -438,6 +469,20 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         ON jobs (claimant_address, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_jobs_status_completed
         ON jobs (status, completed_at ASC);
+      CREATE TABLE IF NOT EXISTS replay_registry (
+        replay_hash        TEXT PRIMARY KEY,
+        proof_job_id       TEXT NOT NULL,
+        claimant_address   TEXT NOT NULL,
+        seed               INTEGER NOT NULL,
+        frame_count        INTEGER NOT NULL,
+        state              TEXT NOT NULL,
+        locked_backend     TEXT,
+        first_seen_at      TEXT NOT NULL,
+        expires_at         TEXT NOT NULL,
+        dispatch_started_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_replay_registry_expires
+        ON replay_registry (expires_at ASC);
     `);
     this.tableReady = true;
   }
@@ -484,6 +529,123 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     );
   }
 
+  private replayExpiryIso(fromMs = Date.now()): string {
+    return new Date(fromMs + REPLAY_DEDUPE_WINDOW_MS).toISOString();
+  }
+
+  private purgeExpiredReplayRegistry(): void {
+    this.ensureTable();
+    this.ctx.storage.sql.exec(
+      `DELETE FROM replay_registry WHERE expires_at <= ?`,
+      new Date().toISOString(),
+    );
+  }
+
+  private loadReplayRegistryRow(replayHash: string): ReplayRegistryRow | null {
+    this.ensureTable();
+    this.purgeExpiredReplayRegistry();
+    const rows = this.ctx.storage.sql
+      .exec(
+        `SELECT replay_hash, proof_job_id, claimant_address, seed, frame_count, state,
+                locked_backend, first_seen_at, expires_at, dispatch_started_at
+         FROM replay_registry WHERE replay_hash = ?`,
+        replayHash,
+      )
+      .toArray();
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      replay_hash: row.replay_hash as string,
+      proof_job_id: row.proof_job_id as string,
+      claimant_address: row.claimant_address as string,
+      seed: Number(row.seed),
+      frame_count: Number(row.frame_count),
+      state: row.state as ReplayRegistryState,
+      locked_backend:
+        row.locked_backend === "boundless" || row.locked_backend === "vast"
+          ? (row.locked_backend as ProverBackend)
+          : null,
+      first_seen_at: row.first_seen_at as string,
+      expires_at: row.expires_at as string,
+      dispatch_started_at: (row.dispatch_started_at as string | null) ?? null,
+    };
+  }
+
+  private upsertReplayRegistry(row: ReplayRegistryRow): void {
+    this.ensureTable();
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO replay_registry (
+         replay_hash, proof_job_id, claimant_address, seed, frame_count, state,
+         locked_backend, first_seen_at, expires_at, dispatch_started_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      row.replay_hash,
+      row.proof_job_id,
+      row.claimant_address,
+      row.seed,
+      row.frame_count,
+      row.state,
+      row.locked_backend,
+      row.first_seen_at,
+      row.expires_at,
+      row.dispatch_started_at,
+    );
+  }
+
+  private deleteReplayRegistry(replayHash: string): void {
+    this.ensureTable();
+    this.ctx.storage.sql.exec(`DELETE FROM replay_registry WHERE replay_hash = ?`, replayHash);
+  }
+
+  private async releaseReplayReservation(job: ProofJobRecord): Promise<boolean> {
+    if (
+      !job.replayHash ||
+      job.replayLockState === "dispatching" ||
+      job.replayLockState === "dispatched"
+    ) {
+      return false;
+    }
+
+    this.deleteReplayRegistry(job.replayHash);
+    job.replayLockState = "released";
+    job.replayLockedBackend = null;
+    await this.saveJob(job);
+    return true;
+  }
+
+  private async reserveReplayForJob(job: ProofJobRecord): Promise<void> {
+    if (!job.replayHash) {
+      return;
+    }
+
+    const existing = this.loadReplayRegistryRow(job.replayHash);
+    if (existing && existing.proof_job_id !== job.jobId) {
+      throw new Error("replay hash is already reserved by a different job");
+    }
+
+    this.upsertReplayRegistry({
+      replay_hash: job.replayHash,
+      proof_job_id: job.jobId,
+      claimant_address: job.claim.claimantAddress,
+      seed: job.tape.metadata.seed >>> 0,
+      frame_count: job.tape.metadata.frameCount >>> 0,
+      state: "reserved",
+      locked_backend: null,
+      first_seen_at: existing?.first_seen_at ?? job.createdAt,
+      expires_at: this.replayExpiryIso(),
+      dispatch_started_at: null,
+    });
+    job.replayLockState = "reserved";
+    job.replayLockedBackend = null;
+    await this.saveJob(job);
+  }
+
+  private replayDispatchLocked(job: ProofJobRecord): boolean {
+    return job.replayLockState === "dispatching" || job.replayLockState === "dispatched";
+  }
+
   private async scheduleAlarm(delayMs: number): Promise<void> {
     await this.ctx.storage.setAlarm(Date.now() + delayMs);
   }
@@ -499,8 +661,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     this.ensureTable();
+    this.purgeExpiredReplayRegistry();
     const remaining = this.ctx.storage.sql.exec(`SELECT 1 FROM jobs LIMIT 1`).toArray();
-    if (remaining.length > 0) {
+    const replayRemaining = this.ctx.storage.sql
+      .exec(`SELECT 1 FROM replay_registry LIMIT 1`)
+      .toArray();
+    if (remaining.length > 0 || replayRemaining.length > 0) {
       return false;
     }
 
@@ -603,9 +769,22 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async createJob(
-    tapeInfo: Omit<ProofTapeInfo, "key"> & { claimantAddress: string },
+    tapeInfo: Omit<ProofTapeInfo, "key"> & { claimantAddress: string; replayHash: string },
   ): Promise<CreateJobAccepted> {
-    const { claimantAddress, ...proofTape } = tapeInfo;
+    const { claimantAddress, replayHash, ...proofTape } = tapeInfo;
+    const existing = this.loadReplayRegistryRow(replayHash);
+    if (existing) {
+      const existingJob = await this.loadJob(existing.proof_job_id);
+      if (existingJob) {
+        return {
+          accepted: true,
+          duplicate: true,
+          replayHash,
+          job: existingJob,
+        };
+      }
+      this.deleteReplayRegistry(replayHash);
+    }
 
     const jobId = crypto.randomUUID();
     const now = nowIso();
@@ -616,6 +795,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       createdAt: now,
       updatedAt: now,
       completedAt: null,
+      replayHash,
+      replayLockState: "reserved",
+      replayLockedBackend: null,
       tape: {
         ...proofTape,
         key: tapeKey(jobId),
@@ -662,9 +844,23 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     };
 
     await this.saveJob(job);
+    this.upsertReplayRegistry({
+      replay_hash: replayHash,
+      proof_job_id: jobId,
+      claimant_address: claimantAddress,
+      seed: proofTape.metadata.seed >>> 0,
+      frame_count: proofTape.metadata.frameCount >>> 0,
+      state: "reserved",
+      locked_backend: null,
+      first_seen_at: now,
+      expires_at: this.replayExpiryIso(),
+      dispatch_started_at: null,
+    });
 
     return {
       accepted: true,
+      duplicate: false,
+      replayHash,
       job,
     };
   }
@@ -994,6 +1190,53 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return job;
   }
 
+  async beginExternalDispatch(
+    jobId: string,
+    backend: ProverBackend,
+  ): Promise<ProofJobRecord | null> {
+    const job = await this.loadJob(jobId);
+    if (!job || isTerminalProofStatus(job.status)) {
+      return job;
+    }
+    if (!job.replayHash) {
+      return job;
+    }
+    if (job.replayLockState === "dispatched") {
+      throw new Error("replay is already locked after external dispatch");
+    }
+    if (job.replayLockState === "dispatching" && job.replayLockedBackend !== backend) {
+      throw new Error("replay is already dispatching to a different backend");
+    }
+
+    const existing = this.loadReplayRegistryRow(job.replayHash);
+    if (existing && existing.proof_job_id !== job.jobId) {
+      throw new Error("replay hash is already reserved by a different job");
+    }
+    if (!existing) {
+      await this.reserveReplayForJob(job);
+    }
+
+    const now = nowIso();
+    job.replayLockState = "dispatching";
+    job.replayLockedBackend = backend;
+    job.updatedAt = now;
+    await this.saveJob(job);
+    this.upsertReplayRegistry({
+      replay_hash: job.replayHash,
+      proof_job_id: job.jobId,
+      claimant_address: job.claim.claimantAddress,
+      seed: job.tape.metadata.seed >>> 0,
+      frame_count: job.tape.metadata.frameCount >>> 0,
+      state: "dispatching",
+      locked_backend: backend,
+      first_seen_at: existing?.first_seen_at ?? job.createdAt,
+      expires_at: this.replayExpiryIso(),
+      dispatch_started_at: now,
+    });
+
+    return job;
+  }
+
   async markRetry(
     jobId: string,
     reason: string,
@@ -1059,10 +1302,29 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.prover.runElapsedMs = 0;
     job.errorCode = null;
     job.timeoutPhase = null;
+    if (job.replayHash) {
+      job.replayLockState = "dispatched";
+    }
     if (ipfsCid) {
       job.prover.ipfsCid = ipfsCid;
     }
     await this.saveJob(job);
+    if (job.replayHash) {
+      const existing = this.loadReplayRegistryRow(job.replayHash);
+      this.upsertReplayRegistry({
+        replay_hash: job.replayHash,
+        proof_job_id: job.jobId,
+        claimant_address: job.claim.claimantAddress,
+        seed: job.tape.metadata.seed >>> 0,
+        frame_count: job.tape.metadata.frameCount >>> 0,
+        state: "dispatched",
+        locked_backend:
+          job.replayLockedBackend ?? (statusUrl.startsWith("boundless:") ? "boundless" : "vast"),
+        first_seen_at: existing?.first_seen_at ?? job.createdAt,
+        expires_at: this.replayExpiryIso(),
+        dispatch_started_at: existing?.dispatch_started_at ?? nowIso(),
+      });
+    }
 
     const currentAttempt = this.getActiveProverAttempt(job);
     if (
@@ -1235,6 +1497,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     }
 
     await this.saveJob(job);
+    await this.releaseReplayReservation(job);
     await this.unpinIpfsInput(job);
     try {
       this.pruneCompletedJobs();
@@ -1609,6 +1872,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     if (job.result?.summary) {
       throw new Error("cannot retry proof: proof result already exists");
     }
+    if (this.replayDispatchLocked(job)) {
+      throw new Error("cannot retry proof: replay is locked after external dispatch");
+    }
 
     const hasBoundless = resolveBoundlessConfig(this.env) !== null;
     const hasVast = Boolean(this.env.PROVER_BASE_URL?.trim());
@@ -1654,6 +1920,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job.claim.lastError = null;
     job.claim.nextRetryAt = null;
     job.claim.activeAttemptIndex = null;
+    if (job.replayHash) {
+      await this.reserveReplayForJob(job);
+    }
     await this.saveJob(job);
 
     const queue = nextBackend === "boundless" ? this.env.PROOF_QUEUE : this.env.VAST_QUEUE;
@@ -1688,6 +1957,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     const job = await this.loadJob(jobId);
     if (!job || isTerminalProofStatus(job.status)) {
       return job;
+    }
+    if (this.replayDispatchLocked(job)) {
+      return this.markFailed(jobId, `${reason} (replay locked after external dispatch)`, {
+        errorCode: enrichment?.errorCode ?? "replay_locked_after_dispatch",
+        errorDetail: enrichment?.errorDetail ?? null,
+      });
     }
 
     this.clearDispatchLease(job);
@@ -1781,6 +2056,13 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     job: ProofJobRecord,
     reason: string,
   ): Promise<void> {
+    if (this.replayDispatchLocked(job)) {
+      await this.markFailed(jobId, `${reason} (replay locked after external dispatch)`, {
+        errorCode: "replay_locked_after_dispatch",
+      });
+      return;
+    }
+
     const totalAttempts = job.proverAttempts.filter((a) => a.outcome !== "in_progress").length;
     if (totalAttempts >= MAX_TOTAL_PROVER_ATTEMPTS) {
       await this.markFailed(

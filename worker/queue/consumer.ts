@@ -394,10 +394,18 @@ async function processBoundlessMessage(
 
   let submitResult: Awaited<ReturnType<BoundlessClient["submitRequest"]>>;
   try {
-    submitResult = await new BoundlessClient(boundlessConfig).submitRequest(tapeBytes, {
-      seedId: prepared.job.tape.metadata.seedId >>> 0,
-      claimantAddress: prepared.job.claim.claimantAddress,
-    });
+    submitResult = await new BoundlessClient(boundlessConfig).submitRequest(
+      tapeBytes,
+      {
+        seedId: prepared.job.tape.metadata.seedId >>> 0,
+        claimantAddress: prepared.job.claim.claimantAddress,
+      },
+      {
+        beforeDispatch: async () => {
+          await coordinator.beginExternalDispatch(jobId, "boundless");
+        },
+      },
+    );
   } catch (error) {
     const reason = `boundless submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_QUEUE_RETRIES) {
@@ -538,10 +546,19 @@ async function processVastMessage(
 
   let submitResult: Awaited<ReturnType<typeof submitToProver>>;
   try {
-    submitResult = await submitToProver(env, tapeBytes, {
-      seedId: prepared.job.tape.metadata.seedId >>> 0,
-      claimantAddress: prepared.job.claim.claimantAddress,
-    });
+    submitResult = await submitToProver(
+      env,
+      tapeBytes,
+      {
+        seedId: prepared.job.tape.metadata.seedId >>> 0,
+        claimantAddress: prepared.job.claim.claimantAddress,
+      },
+      {
+        beforeDispatch: async () => {
+          await coordinator.beginExternalDispatch(jobId, "vast");
+        },
+      },
+    );
   } catch (error) {
     const reason = `vast submit error: ${safeErrorMessage(error)}`;
     if (message.attempts >= MAX_VAST_QUEUE_RETRIES) {

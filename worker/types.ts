@@ -1,6 +1,7 @@
 export type ProverBackend = "boundless" | "vast";
 export type BoundlessFundingModeUsed = "market_balance" | "attached_value_fallback";
 export type ProofTimeoutPhase = "vast_wait" | "prover_run" | "total_wall";
+export type ReplayLockState = "reserved" | "dispatching" | "dispatched" | "released";
 
 export interface ProverAttempt {
   index: number; // 0-based attempt index
@@ -154,6 +155,9 @@ export interface ProofJobRecord {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  replayHash?: string | null;
+  replayLockState?: ReplayLockState | null;
+  replayLockedBackend?: ProverBackend | null;
   tape: ProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
@@ -250,6 +254,9 @@ export interface PublicProofJob {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  replayHash?: string | null;
+  replayLockState?: ReplayLockState | null;
+  replayLockedBackend?: ProverBackend | null;
   tape: PublicProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
@@ -264,6 +271,8 @@ export interface PublicProofJob {
 
 export interface CreateJobAccepted {
   accepted: true;
+  duplicate: boolean;
+  replayHash: string;
   job: ProofJobRecord;
 }
 

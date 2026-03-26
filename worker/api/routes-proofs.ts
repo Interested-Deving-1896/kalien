@@ -17,6 +17,7 @@ import {
   TAPE_CACHE_CONTROL,
 } from "../cache-control";
 import { validateClaimantStrKeyFromUserInput } from "../../shared/stellar/strkey";
+import { computeReplayIdentity } from "../replay-hash";
 import {
   hasCapacity,
   recordSubmission,
@@ -297,6 +298,7 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
     } catch (error) {
       return jsonError(c, 400, safeErrorMessage(error));
     }
+    const replayIdentity = await computeReplayIdentity(tapeBytes, maxTapeBytes, metadata);
 
     const rawClaimant = c.req.query("claimant") ?? "";
     let claimantAddress: string;
@@ -337,9 +339,23 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
       sizeBytes: tapeBytes.byteLength,
       metadata,
       claimantAddress,
+      replayHash: replayIdentity.replayHash,
     });
 
     const { job } = createResult;
+
+    if (createResult.duplicate) {
+      return c.json(
+        {
+          success: true,
+          duplicate: true,
+          replay_hash: replayIdentity.replayHash,
+          status_url: `/api/proofs/jobs/${job.jobId}`,
+          job: asPublicJob(job),
+        },
+        202,
+      );
+    }
 
     // Store the tape in R2 and verify it is durably readable before
     // proceeding.  A silent R2 inconsistency here caused tape loss in
@@ -431,6 +447,8 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
     return c.json(
       {
         success: true,
+        duplicate: false,
+        replay_hash: replayIdentity.replayHash,
         status_url: `/api/proofs/jobs/${job.jobId}`,
         job: asPublicJob(refreshed),
       },

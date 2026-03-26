@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { serializeTape } from "../../src/game/tape";
-import { fetchProofTape, ProofApiError } from "../../src/proof/api";
+import { fetchProofTape, ProofApiError, submitProofJob } from "../../src/proof/api";
 
 const originalFetch = globalThis.fetch;
 
@@ -42,5 +42,78 @@ describe("fetchProofTape", () => {
       expect(error).toBeInstanceOf(ProofApiError);
       expect((error as Error).message).toBe("expected tape bytes but received HTML");
     }
+  });
+});
+
+describe("submitProofJob", () => {
+  it("parses duplicate replay responses", async () => {
+    const tapeBytes = serializeTape(0x1234abcd, new Uint8Array([1, 2, 3, 4]), 9001);
+
+    globalThis.fetch = (async () =>
+      Response.json({
+        success: true,
+        duplicate: true,
+        replay_hash: "deadbeef",
+        status_url: "/api/proofs/jobs/job-123",
+        job: {
+          jobId: "job-123",
+          status: "queued",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          completedAt: null,
+          replayHash: "deadbeef",
+          replayLockState: "reserved",
+          replayLockedBackend: null,
+          tape: {
+            sizeBytes: tapeBytes.byteLength,
+            metadata: {
+              seed: 0x1234abcd,
+              seedId: 7,
+              frameCount: 4,
+              finalScore: 9001,
+              checksum: 123,
+            },
+          },
+          queue: {
+            attempts: 0,
+            lastAttemptAt: null,
+            lastError: null,
+            nextRetryAt: null,
+          },
+          prover: {
+            jobId: null,
+            status: null,
+            statusUrl: null,
+            lastPolledAt: null,
+            pollingErrors: 0,
+            ipfsCid: null,
+          },
+          proverAttempts: [],
+          claimAttempts: [],
+          result: null,
+          claim: {
+            claimantAddress: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            status: "queued",
+            attempts: 0,
+            lastAttemptAt: null,
+            lastError: null,
+            nextRetryAt: null,
+            submittedAt: null,
+            txHash: null,
+          },
+          error: null,
+        },
+      })) as typeof fetch;
+
+    const result = await submitProofJob(
+      tapeBytes,
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      7,
+    );
+
+    expect(result.duplicate).toBe(true);
+    expect(result.replay_hash).toBe("deadbeef");
+    expect(result.job.replayHash).toBe("deadbeef");
+    expect(result.job.jobId).toBe("job-123");
   });
 });

@@ -52,6 +52,19 @@ type StoredJobRow = {
   data: string;
 };
 
+type ReplayRegistryRow = {
+  replay_hash: string;
+  proof_job_id: string;
+  claimant_address: string;
+  seed: number;
+  frame_count: number;
+  state: string;
+  locked_backend: string | null;
+  first_seen_at: string;
+  expires_at: string;
+  dispatch_started_at: string | null;
+};
+
 class MockSqlResult {
   constructor(private readonly rows: Array<Record<string, unknown>>) {}
 
@@ -62,6 +75,7 @@ class MockSqlResult {
 
 class MockSql {
   readonly rows = new Map<string, StoredJobRow>();
+  readonly replayRows = new Map<string, ReplayRegistryRow>();
 
   exec(query: string, ...params: unknown[]): MockSqlResult {
     const normalized = query.replaceAll(/\s+/g, " ").trim();
@@ -147,6 +161,77 @@ class MockSql {
       return new MockSqlResult(firstRow ? [{ 1: 1 }] : []);
     }
 
+    if (normalized === "DELETE FROM replay_registry WHERE expires_at <= ?") {
+      const cutoff = String(params[0] ?? "");
+      for (const [key, row] of this.replayRows.entries()) {
+        if (row.expires_at <= cutoff) {
+          this.replayRows.delete(key);
+        }
+      }
+      return new MockSqlResult([]);
+    }
+
+    if (
+      normalized ===
+      "SELECT replay_hash, proof_job_id, claimant_address, seed, frame_count, state, locked_backend, first_seen_at, expires_at, dispatch_started_at FROM replay_registry WHERE replay_hash = ?"
+    ) {
+      const replayHash = params[0] as string;
+      const row = this.replayRows.get(replayHash);
+      return new MockSqlResult(row ? [row] : []);
+    }
+
+    if (
+      normalized ===
+      "INSERT OR REPLACE INTO replay_registry ( replay_hash, proof_job_id, claimant_address, seed, frame_count, state, locked_backend, first_seen_at, expires_at, dispatch_started_at ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ) {
+      const [
+        replayHash,
+        proofJobId,
+        claimantAddress,
+        seed,
+        frameCount,
+        state,
+        lockedBackend,
+        firstSeenAt,
+        expiresAt,
+        dispatchStartedAt,
+      ] = params as [
+        string,
+        string,
+        string,
+        number,
+        number,
+        string,
+        string | null,
+        string,
+        string,
+        string | null,
+      ];
+      this.replayRows.set(replayHash, {
+        replay_hash: replayHash,
+        proof_job_id: proofJobId,
+        claimant_address: claimantAddress,
+        seed,
+        frame_count: frameCount,
+        state,
+        locked_backend: lockedBackend,
+        first_seen_at: firstSeenAt,
+        expires_at: expiresAt,
+        dispatch_started_at: dispatchStartedAt,
+      });
+      return new MockSqlResult([]);
+    }
+
+    if (normalized === "DELETE FROM replay_registry WHERE replay_hash = ?") {
+      this.replayRows.delete(params[0] as string);
+      return new MockSqlResult([]);
+    }
+
+    if (normalized === "SELECT 1 FROM replay_registry LIMIT 1") {
+      const [firstRow] = this.replayRows.values();
+      return new MockSqlResult(firstRow ? [{ 1: 1 }] : []);
+    }
+
     if (normalized === "SELECT COUNT(*) as cnt FROM jobs WHERE claimant_address = ?") {
       const claimantAddress = params[0] as string;
       const count = [...this.rows.values()].filter(
@@ -186,6 +271,7 @@ class MockStorage {
 
   async deleteAll(): Promise<void> {
     this.sql.rows.clear();
+    this.sql.replayRows.clear();
     this.alarmAt = null;
   }
 }
@@ -281,6 +367,7 @@ function staleIso(offsetMs = CLAIM_AUTO_RETRY_COOLDOWN_MS + 5_000): string {
 async function createSucceededJob(harness: CoordinatorHarness): Promise<string> {
   const accepted = await harness.coordinator.createJob({
     claimantAddress: TEST_CLAIMANT,
+    replayHash: `replay-${crypto.randomUUID()}`,
     sizeBytes: 1_024,
     metadata: {
       seed: 42,
@@ -297,10 +384,98 @@ async function createSucceededJob(harness: CoordinatorHarness): Promise<string> 
 }
 
 describe("ProofCoordinatorDO state machine", () => {
+  it("returns the original job for duplicate replay hashes", async () => {
+    const harness = createCoordinatorHarness();
+    const first = await harness.coordinator.createJob({
+      claimantAddress: TEST_CLAIMANT,
+      replayHash: "replay-dup",
+      sizeBytes: 512,
+      metadata: {
+        seed: 7,
+        seedId: 77,
+        frameCount: 30,
+        finalScore: 500,
+        checksum: 42,
+      },
+    });
+
+    const second = await harness.coordinator.createJob({
+      claimantAddress: `${TEST_CLAIMANT}-other`,
+      replayHash: "replay-dup",
+      sizeBytes: 999,
+      metadata: {
+        seed: 123,
+        seedId: 88,
+        frameCount: 99,
+        finalScore: 999,
+        checksum: 99,
+      },
+    });
+
+    expect(first.duplicate).toBe(false);
+    expect(second.duplicate).toBe(true);
+    expect(second.job.jobId).toBe(first.job.jobId);
+  });
+
+  it("releases a reserved replay hash on pre-dispatch failure", async () => {
+    const harness = createCoordinatorHarness();
+    const accepted = await harness.coordinator.createJob({
+      claimantAddress: TEST_CLAIMANT,
+      replayHash: "replay-release",
+      sizeBytes: 512,
+      metadata: {
+        seed: 7,
+        seedId: 77,
+        frameCount: 30,
+        finalScore: 500,
+        checksum: 42,
+      },
+    });
+    const jobId = accepted.job.jobId;
+
+    await harness.coordinator.markFailed(jobId, "tape storage verification failed");
+    const stored = readStoredJob(harness, jobId);
+
+    expect(stored?.replayLockState).toBe("released");
+    expect(harness.storage.sql.replayRows.get("replay-release")).toBeUndefined();
+  });
+
+  it("locks replay after external dispatch and rejects proof retry", async () => {
+    const harness = createCoordinatorHarness();
+    const accepted = await harness.coordinator.createJob({
+      claimantAddress: TEST_CLAIMANT,
+      replayHash: "replay-lock",
+      sizeBytes: 512,
+      metadata: {
+        seed: 7,
+        seedId: 77,
+        frameCount: 30,
+        finalScore: 500,
+        checksum: 42,
+      },
+    });
+    const jobId = accepted.job.jobId;
+
+    await harness.coordinator.beginExternalDispatch(jobId, "boundless");
+    const stored = readStoredJob(harness, jobId);
+
+    expect(stored?.replayLockState).toBe("dispatching");
+    expect(stored?.replayLockedBackend).toBe("boundless");
+    await expect(harness.coordinator.retryFailedProof(jobId)).rejects.toThrow(
+      "proof is not in failed state",
+    );
+
+    await harness.coordinator.markFailed(jobId, "dispatch uncertain");
+    await expect(harness.coordinator.retryFailedProof(jobId)).rejects.toThrow(
+      "replay is locked after external dispatch",
+    );
+  });
+
   it("leases proof dispatch to a single delivery before prover acceptance", async () => {
     const harness = createCoordinatorHarness();
     const accepted = await harness.coordinator.createJob({
       claimantAddress: TEST_CLAIMANT,
+      replayHash: "replay-lease-test",
       sizeBytes: 512,
       metadata: {
         seed: 7,
@@ -492,6 +667,7 @@ describe("ProofCoordinatorDO state machine", () => {
 
     const failedAccepted = await harness.coordinator.createJob({
       claimantAddress: TEST_CLAIMANT,
+      replayHash: "replay-failed-job",
       sizeBytes: 256,
       metadata: {
         seed: 8,

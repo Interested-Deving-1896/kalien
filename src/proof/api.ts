@@ -126,6 +126,9 @@ export interface ProofJobPublic {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  replayHash?: string | null;
+  replayLockState?: "reserved" | "dispatching" | "dispatched" | "released" | null;
+  replayLockedBackend?: "boundless" | "vast" | null;
   tape: ProofTapeInfo;
   queue: QueueTracking;
   prover: ProverTracking;
@@ -140,6 +143,8 @@ export interface ProofJobPublic {
 
 export interface SubmitProofJobResponse {
   success: true;
+  duplicate: boolean;
+  replay_hash: string;
   status_url: string;
   job: ProofJobPublic;
 }
