@@ -17,6 +17,7 @@ ZK/Stellar integration.
 | `08-SOURCES.md` | Curated source list used to derive this spec |
 | `09-SCORE-TOKEN-CONTRACT.md` | Soroban score-submission and KALIEN token minting contract spec |
 | `10-PROOF-GATEWAY-SPEC.md` | Cloudflare Worker + prover gateway behavior and API contract |
+| `11-TAPE-REUSE-AND-REPLAY-POLICY.md` | Current tape/journal uniqueness model and replay-protection options |
 | `12-GUEST-OPTIMIZATION.md` | RISC0 guest and proving optimization notes |
 | `15-DOCS-PARITY-CHECKLIST.md` | Latest docs parity checklist (dated; refresh when implementation changes) |
 
