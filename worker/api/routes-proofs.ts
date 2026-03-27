@@ -335,12 +335,17 @@ export function createProofsRouter(): Hono<{ Bindings: WorkerEnv }> {
     recordSubmission(addrKey, SUBMISSION_WINDOW_MS);
 
     const coordinator = coordinatorStub(c.env);
-    const createResult = await coordinator.createJob({
-      sizeBytes: tapeBytes.byteLength,
-      metadata,
-      claimantAddress,
-      replayHash: replayIdentity.replayHash,
-    });
+    let createResult: Awaited<ReturnType<typeof coordinator.createJob>>;
+    try {
+      createResult = await coordinator.createJob({
+        sizeBytes: tapeBytes.byteLength,
+        metadata,
+        claimantAddress,
+        replayHash: replayIdentity.replayHash,
+      });
+    } catch (error) {
+      return jsonError(c, 409, safeErrorMessage(error));
+    }
 
     const { job } = createResult;
 

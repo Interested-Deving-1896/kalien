@@ -41,6 +41,7 @@ import {
 } from "../utils";
 
 const DEFAULT_BOUNDLESS_CHAIN_ID = "8453"; // Base mainnet
+const PERMANENT_REPLAY_LOCK_EXPIRES_AT = "9999-12-31T23:59:59.999Z";
 type ReplayRegistryState = "reserved" | "dispatching" | "dispatched";
 
 interface ReplayRegistryRow {
@@ -56,12 +57,41 @@ interface ReplayRegistryRow {
   dispatch_started_at: string | null;
 }
 
+function replayRowIsPermanentlyLocked(row: ReplayRegistryRow): boolean {
+  return row.state === "dispatching" || row.state === "dispatched";
+}
+
+function isSupersededProofJob(job: ProofJobRecord): boolean {
+  return (
+    (job.status === "succeeded" && job.claim.txHash === "superseded-by-higher-score") ||
+    (job.status === "failed" && job.errorCode === "superseded_by_higher_score")
+  );
+}
+
+function getProofRetryBlockedReason(job: ProofJobRecord): PublicProofJob["proofRetryBlockedReason"] {
+  if (job.status !== "failed") return "not_failed";
+  if (job.result?.summary) return "has_result";
+  if (isSupersededProofJob(job)) return "superseded";
+  if (job.replayLockState === "dispatching" || job.replayLockState === "dispatched") {
+    return "replay_locked";
+  }
+  return null;
+}
+
+function withProofRetryEligibility(job: ProofJobRecord): ProofJobRecord {
+  const blockedReason = getProofRetryBlockedReason(job);
+  job.proofRetryBlockedReason = blockedReason;
+  job.canRetryProof = blockedReason === null;
+  return job;
+}
+
 export function coordinatorStub(env: WorkerEnv): DurableObjectStub<ProofCoordinatorDO> {
   const id = env.PROOF_COORDINATOR.idFromName(COORDINATOR_OBJECT_NAME);
   return env.PROOF_COORDINATOR.get(id);
 }
 
 export function asPublicJob(job: ProofJobRecord): PublicProofJob {
+  const publicJob = withProofRetryEligibility({ ...job });
   const proverAttempts = (job.proverAttempts ?? []).map((a) => ({
     ...a,
     errorDetail: a.errorDetail ?? null,
@@ -79,53 +109,55 @@ export function asPublicJob(job: ProofJobRecord): PublicProofJob {
   }));
 
   return {
-    jobId: job.jobId,
-    status: job.status,
-    createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
-    completedAt: job.completedAt,
-    replayHash: job.replayHash ?? null,
-    replayLockState: job.replayLockState ?? null,
-    replayLockedBackend: job.replayLockedBackend ?? null,
+    jobId: publicJob.jobId,
+    status: publicJob.status,
+    createdAt: publicJob.createdAt,
+    updatedAt: publicJob.updatedAt,
+    completedAt: publicJob.completedAt,
+    replayHash: publicJob.replayHash ?? null,
+    replayLockState: publicJob.replayLockState ?? null,
+    replayLockedBackend: publicJob.replayLockedBackend ?? null,
     tape: {
       sizeBytes: job.tape.sizeBytes,
       metadata: job.tape.metadata,
     },
     queue: {
-      attempts: job.queue.attempts,
-      lastAttemptAt: job.queue.lastAttemptAt,
-      lastError: job.queue.lastError,
-      nextRetryAt: job.queue.nextRetryAt,
-      waitStartedAt: job.queue.waitStartedAt ?? null,
-      waitElapsedMs: job.queue.waitElapsedMs ?? null,
+      attempts: publicJob.queue.attempts,
+      lastAttemptAt: publicJob.queue.lastAttemptAt,
+      lastError: publicJob.queue.lastError,
+      nextRetryAt: publicJob.queue.nextRetryAt,
+      waitStartedAt: publicJob.queue.waitStartedAt ?? null,
+      waitElapsedMs: publicJob.queue.waitElapsedMs ?? null,
     },
     prover: {
-      jobId: job.prover.jobId,
-      status: job.prover.status,
-      statusUrl: job.prover.statusUrl,
-      segmentLimitPo2: job.prover.segmentLimitPo2,
-      lastPolledAt: job.prover.lastPolledAt,
-      pollingErrors: job.prover.pollingErrors,
-      ipfsCid: job.prover.ipfsCid ?? null,
-      runStartedAt: job.prover.runStartedAt ?? null,
-      runElapsedMs: job.prover.runElapsedMs ?? null,
+      jobId: publicJob.prover.jobId,
+      status: publicJob.prover.status,
+      statusUrl: publicJob.prover.statusUrl,
+      segmentLimitPo2: publicJob.prover.segmentLimitPo2,
+      lastPolledAt: publicJob.prover.lastPolledAt,
+      pollingErrors: publicJob.prover.pollingErrors,
+      ipfsCid: publicJob.prover.ipfsCid ?? null,
+      runStartedAt: publicJob.prover.runStartedAt ?? null,
+      runElapsedMs: publicJob.prover.runElapsedMs ?? null,
     },
     proverAttempts,
-    claimAttempts: job.claimAttempts ?? [],
-    result: job.result,
+    claimAttempts: publicJob.claimAttempts ?? [],
+    result: publicJob.result,
     claim: {
-      claimantAddress: job.claim.claimantAddress,
-      status: job.claim.status,
-      attempts: job.claim.attempts,
-      lastAttemptAt: job.claim.lastAttemptAt,
-      lastError: job.claim.lastError,
-      nextRetryAt: job.claim.nextRetryAt,
-      submittedAt: job.claim.submittedAt,
-      txHash: job.claim.txHash,
+      claimantAddress: publicJob.claim.claimantAddress,
+      status: publicJob.claim.status,
+      attempts: publicJob.claim.attempts,
+      lastAttemptAt: publicJob.claim.lastAttemptAt,
+      lastError: publicJob.claim.lastError,
+      nextRetryAt: publicJob.claim.nextRetryAt,
+      submittedAt: publicJob.claim.submittedAt,
+      txHash: publicJob.claim.txHash,
     },
-    error: job.error,
-    errorCode: job.errorCode ?? null,
-    timeoutPhase: job.timeoutPhase ?? null,
+    error: publicJob.error,
+    errorCode: publicJob.errorCode ?? null,
+    timeoutPhase: publicJob.timeoutPhase ?? null,
+    canRetryProof: publicJob.canRetryProof ?? false,
+    proofRetryBlockedReason: publicJob.proofRetryBlockedReason ?? null,
   };
 }
 
@@ -273,6 +305,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       job.replayLockedBackend = null;
       changed = true;
     }
+    if (job.canRetryProof === undefined) {
+      job.canRetryProof = false;
+      changed = true;
+    }
+    if (job.proofRetryBlockedReason === undefined) {
+      job.proofRetryBlockedReason = null;
+      changed = true;
+    }
 
     if (job.queue.waitStartedAt == null) {
       job.queue.waitStartedAt = job.createdAt;
@@ -335,6 +375,16 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       changed = true;
     }
     if (this.normalizeOpenClaimAttempts(job)) {
+      changed = true;
+    }
+    const nextBlockedReason = getProofRetryBlockedReason(job);
+    const nextCanRetry = nextBlockedReason === null;
+    if (job.proofRetryBlockedReason !== nextBlockedReason) {
+      job.proofRetryBlockedReason = nextBlockedReason;
+      changed = true;
+    }
+    if (job.canRetryProof !== nextCanRetry) {
+      job.canRetryProof = nextCanRetry;
       changed = true;
     }
 
@@ -515,6 +565,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
   private async saveJob(job: ProofJobRecord): Promise<void> {
     this.ensureTable();
+    withProofRetryEligibility(job);
     const completedAt =
       job.completedAt ??
       (isTerminalProofStatus(job.status) ? (job.updatedAt ?? job.createdAt) : null);
@@ -782,6 +833,9 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
           replayHash,
           job: existingJob,
         };
+      }
+      if (replayRowIsPermanentlyLocked(existing)) {
+        throw new Error("replay has already entered external dispatch and cannot be submitted again");
       }
       this.deleteReplayRegistry(replayHash);
     }
@@ -1230,7 +1284,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       state: "dispatching",
       locked_backend: backend,
       first_seen_at: existing?.first_seen_at ?? job.createdAt,
-      expires_at: this.replayExpiryIso(),
+      expires_at: PERMANENT_REPLAY_LOCK_EXPIRES_AT,
       dispatch_started_at: now,
     });
 
@@ -1321,7 +1375,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
         locked_backend:
           job.replayLockedBackend ?? (statusUrl.startsWith("boundless:") ? "boundless" : "vast"),
         first_seen_at: existing?.first_seen_at ?? job.createdAt,
-        expires_at: this.replayExpiryIso(),
+        expires_at: PERMANENT_REPLAY_LOCK_EXPIRES_AT,
         dispatch_started_at: existing?.dispatch_started_at ?? nowIso(),
       });
     }
@@ -1863,16 +1917,20 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     if (!job) {
       return null;
     }
-    if (job.status === "succeeded") {
-      throw new Error("cannot retry proof: proof already succeeded");
-    }
-    if (job.status !== "failed") {
+    const blockedReason = getProofRetryBlockedReason(job);
+    if (blockedReason === "not_failed") {
+      if (job.status === "succeeded") {
+        throw new Error("cannot retry proof: proof already succeeded");
+      }
       throw new Error(`proof is not in failed state (current: ${job.status})`);
     }
-    if (job.result?.summary) {
+    if (blockedReason === "has_result") {
       throw new Error("cannot retry proof: proof result already exists");
     }
-    if (this.replayDispatchLocked(job)) {
+    if (blockedReason === "superseded") {
+      throw new Error("cannot retry proof: proof was superseded by a higher on-chain score");
+    }
+    if (blockedReason === "replay_locked") {
       throw new Error("cannot retry proof: replay is locked after external dispatch");
     }
 

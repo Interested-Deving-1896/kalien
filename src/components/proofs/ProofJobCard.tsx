@@ -126,6 +126,19 @@ function claimStatusColor(status: string, txHash?: string | null): string {
   }
 }
 
+function proofRetryBlockedMessage(reason: ProofJobPublic["proofRetryBlockedReason"]): string | null {
+  switch (reason) {
+    case "replay_locked":
+      return "Retry unavailable. This tape already entered external dispatch and cannot be resubmitted.";
+    case "superseded":
+      return "Retry unavailable. A higher score for this seed already superseded this proof.";
+    case "has_result":
+      return "Retry unavailable. This proof already has a stored result.";
+    default:
+      return null;
+  }
+}
+
 export function ProofJobCard({
   job: initialJob,
   onJobUpdate,
@@ -341,9 +354,12 @@ export function ProofJobCard({
       : null;
   const isClaimed = job.claim.status === "succeeded";
   const canRetryClaim = !readOnly && job.status === "succeeded" && job.claim.status === "failed";
-  const canRetryProof = !readOnly && job.status === "failed" && !job.result && !isSuperseded;
+  const canRetryProof = !readOnly && job.canRetryProof === true;
+  const proofRetryBlockedHint =
+    !readOnly && !proofRetryError ? proofRetryBlockedMessage(job.proofRetryBlockedReason ?? null) : null;
   const hasProverAttempts = (job.proverAttempts?.length ?? 0) > 0;
-  const showProverAttempts = hasProverAttempts || canRetryProof || proofRetryError != null;
+  const showProverAttempts =
+    hasProverAttempts || canRetryProof || proofRetryError != null || proofRetryBlockedHint != null;
   const claimAttempts = job.claimAttempts;
 
   const showClaimInfo = job.status === "succeeded";
@@ -511,6 +527,9 @@ export function ProofJobCard({
                 <p className="m-0 mb-2 text-xs text-destructive/80">
                   Retry failed. Refresh and try again: {proofRetryError}
                 </p>
+              )}
+              {!proofRetryError && proofRetryBlockedHint && (
+                <p className="m-0 mb-2 text-xs text-muted-foreground">{proofRetryBlockedHint}</p>
               )}
               {hasProverAttempts ? (
                 <div className="grid gap-1.5">

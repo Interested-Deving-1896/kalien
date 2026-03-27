@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { serializeTape } from "../../src/game/tape";
 import type { WorkerEnv } from "../../worker/env";
 
 const VALID_CLAIMANT_CONTRACT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4";
@@ -1101,6 +1102,32 @@ describe("API routes", () => {
       makeEnv(),
     );
     expect(response.status).toBe(413);
+  });
+
+  it("POST /proofs/jobs returns 409 for permanently locked replay submissions", async () => {
+    const tapeBytes = serializeTape(0x1234abcd, new Uint8Array([1, 2, 3, 4]), 9001);
+    const response = await requestApi(
+      `/proofs/jobs?claimant=${VALID_CLAIMANT_CONTRACT}&seed_id=7`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+        },
+        body: tapeBytes,
+      },
+      makeEnv({
+        __coordinator: makeCoordinatorStub({
+          createJob: async () => {
+            throw new Error("replay has already entered external dispatch and cannot be submitted again");
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const payload = (await response.json()) as { success: boolean; error: string };
+    expect(payload.success).toBe(false);
+    expect(payload.error).toContain("cannot be submitted again");
   });
 
   it("GET /proofs/jobs/:jobId returns 404 when job does not exist", async () => {

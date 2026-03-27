@@ -437,6 +437,8 @@ describe("ProofCoordinatorDO state machine", () => {
     const stored = readStoredJob(harness, jobId);
 
     expect(stored?.replayLockState).toBe("released");
+    expect(stored?.canRetryProof).toBe(true);
+    expect(stored?.proofRetryBlockedReason).toBeNull();
     expect(harness.storage.sql.replayRows.get("replay-release")).toBeUndefined();
   });
 
@@ -461,14 +463,55 @@ describe("ProofCoordinatorDO state machine", () => {
 
     expect(stored?.replayLockState).toBe("dispatching");
     expect(stored?.replayLockedBackend).toBe("boundless");
+    expect(harness.storage.sql.replayRows.get("replay-lock")?.expires_at).toBe(
+      "9999-12-31T23:59:59.999Z",
+    );
     await expect(harness.coordinator.retryFailedProof(jobId)).rejects.toThrow(
       "proof is not in failed state",
     );
 
     await harness.coordinator.markFailed(jobId, "dispatch uncertain");
+    const failed = readStoredJob(harness, jobId);
+    expect(failed?.canRetryProof).toBe(false);
+    expect(failed?.proofRetryBlockedReason).toBe("replay_locked");
     await expect(harness.coordinator.retryFailedProof(jobId)).rejects.toThrow(
       "replay is locked after external dispatch",
     );
+  });
+
+  it("keeps permanently locked replay rows after the original job is gone", async () => {
+    const harness = createCoordinatorHarness();
+    const accepted = await harness.coordinator.createJob({
+      claimantAddress: TEST_CLAIMANT,
+      replayHash: "replay-permalock",
+      sizeBytes: 512,
+      metadata: {
+        seed: 7,
+        seedId: 77,
+        frameCount: 30,
+        finalScore: 500,
+        checksum: 42,
+      },
+    });
+    const jobId = accepted.job.jobId;
+
+    await harness.coordinator.beginExternalDispatch(jobId, "boundless");
+    harness.storage.sql.rows.delete(jobId);
+
+    await expect(
+      harness.coordinator.createJob({
+        claimantAddress: `${TEST_CLAIMANT}-other`,
+        replayHash: "replay-permalock",
+        sizeBytes: 512,
+        metadata: {
+          seed: 7,
+          seedId: 77,
+          frameCount: 30,
+          finalScore: 500,
+          checksum: 42,
+        },
+      }),
+    ).rejects.toThrow("replay has already entered external dispatch and cannot be submitted again");
   });
 
   it("leases proof dispatch to a single delivery before prover acceptance", async () => {

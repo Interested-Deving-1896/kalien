@@ -137,6 +137,8 @@ export interface ProofJobPublic {
   error: string | null;
   errorCode?: string | null;
   timeoutPhase?: "vast_wait" | "prover_run" | "total_wall" | null;
+  canRetryProof?: boolean;
+  proofRetryBlockedReason?: "not_failed" | "has_result" | "replay_locked" | "superseded" | null;
   proverAttempts: ProverAttempt[];
   claimAttempts: ClaimAttempt[];
 }

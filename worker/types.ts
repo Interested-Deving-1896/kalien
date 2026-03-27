@@ -2,6 +2,12 @@ export type ProverBackend = "boundless" | "vast";
 export type BoundlessFundingModeUsed = "market_balance" | "attached_value_fallback";
 export type ProofTimeoutPhase = "vast_wait" | "prover_run" | "total_wall";
 export type ReplayLockState = "reserved" | "dispatching" | "dispatched" | "released";
+export type ProofRetryBlockedReason =
+  | "not_failed"
+  | "has_result"
+  | "replay_locked"
+  | "superseded"
+  | null;
 
 export interface ProverAttempt {
   index: number; // 0-based attempt index
@@ -168,6 +174,8 @@ export interface ProofJobRecord {
   error: string | null;
   errorCode?: string | null;
   timeoutPhase?: ProofTimeoutPhase | null;
+  canRetryProof?: boolean;
+  proofRetryBlockedReason?: ProofRetryBlockedReason;
 }
 
 export type LeaderboardWindow = "10m" | "day" | "all";
@@ -267,6 +275,8 @@ export interface PublicProofJob {
   error: string | null;
   errorCode?: string | null;
   timeoutPhase?: ProofTimeoutPhase | null;
+  canRetryProof?: boolean;
+  proofRetryBlockedReason?: ProofRetryBlockedReason;
 }
 
 export interface CreateJobAccepted {
