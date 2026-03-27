@@ -187,6 +187,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return DEFAULT_POLL_INTERVAL_MS;
   }
 
+  private resolveCompletedJobRetentionMs(): number {
+    return parseInteger(
+      this.env.COMPLETED_JOB_RETENTION_MS,
+      DEFAULT_COMPLETED_JOB_RETENTION_MS,
+      60_000,
+    );
+  }
+
   private updateQueueWaitElapsed(job: ProofJobRecord): void {
     const startedAt = this.timestampMs(job.queue.waitStartedAt ?? job.createdAt);
     if (startedAt <= 0) {
@@ -759,6 +767,120 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return null;
   }
 
+  private isRecoverableTimedOutBoundlessJob(job: ProofJobRecord): boolean {
+    return (
+      job.status === "failed" &&
+      job.errorCode === "job_total_wall_timeout" &&
+      job.timeoutPhase === "total_wall" &&
+      !job.result &&
+      job.claim.status !== "succeeded" &&
+      this.isBoundlessJob(job) &&
+      job.prover.jobId != null &&
+      (job.replayLockState === "dispatching" || job.replayLockState === "dispatched")
+    );
+  }
+
+  private async repairRecoveredBoundlessAttempt(
+    jobId: string,
+    enrichment?: {
+      actualCostUsd?: number | null;
+      proverAddress?: string | null;
+      fulfillmentTxHash?: string | null;
+      programCycles?: number | null;
+      totalCycles?: number | null;
+    },
+  ): Promise<void> {
+    const job = await this.loadJob(jobId);
+    if (!job) {
+      return;
+    }
+
+    const latestAttempt = [...job.proverAttempts]
+      .reverse()
+      .find(
+        (attempt) =>
+          attempt.backend === "boundless" &&
+          attempt.proverJobId === job.prover.jobId &&
+          attempt.outcome === "failed",
+      );
+    if (!latestAttempt) {
+      return;
+    }
+
+    latestAttempt.outcome = "success";
+    latestAttempt.error = null;
+    latestAttempt.errorDetail = null;
+    latestAttempt.errorCode = null;
+    if (enrichment) {
+      if (enrichment.actualCostUsd !== undefined) latestAttempt.actualCostUsd = enrichment.actualCostUsd;
+      if (enrichment.proverAddress !== undefined) latestAttempt.proverAddress = enrichment.proverAddress;
+      if (enrichment.fulfillmentTxHash !== undefined)
+        latestAttempt.fulfillmentTxHash = enrichment.fulfillmentTxHash;
+      if (enrichment.programCycles !== undefined) latestAttempt.programCycles = enrichment.programCycles;
+      if (enrichment.totalCycles !== undefined) latestAttempt.totalCycles = enrichment.totalCycles;
+    }
+
+    await this.saveJob(job);
+  }
+
+  private async recoverBoundlessFulfillment(
+    jobId: string,
+    job: ProofJobRecord,
+  ): Promise<ProofJobRecord | null> {
+    if (!this.isRecoverableTimedOutBoundlessJob(job)) {
+      return job;
+    }
+
+    const boundlessConfig = resolveBoundlessConfig(this.env);
+    if (!boundlessConfig || !job.prover.jobId) {
+      return job;
+    }
+
+    let pollResult: ProverPollResult;
+    try {
+      pollResult = await new BoundlessClient(boundlessConfig).pollOnce(job.prover.jobId);
+    } catch {
+      return job;
+    }
+
+    if (pollResult.type !== "success") {
+      return job;
+    }
+
+    await this.repairRecoveredBoundlessAttempt(jobId, pollResult.metadata);
+
+    const artifactStorageKey = resultKey(jobId);
+    try {
+      await this.env.PROOF_ARTIFACTS.put(
+        artifactStorageKey,
+        JSON.stringify(pollResult.artifact, null, 2),
+        {
+          httpMetadata: { contentType: "application/json" },
+          customMetadata: { jobId },
+        },
+      );
+    } catch (error) {
+      console.warn(
+        `[coordinator] failed writing recovered boundless artifact for ${jobId}: ${safeErrorMessage(error)}`,
+      );
+      return await this.loadJob(jobId);
+    }
+
+    await this.markSucceeded(jobId, pollResult.summary, artifactStorageKey, pollResult.metadata);
+    return await this.loadJob(jobId);
+  }
+
+  private async maybeRecoverTimedOutBoundlessJob(
+    jobId: string,
+    job: ProofJobRecord,
+  ): Promise<ProofJobRecord | null> {
+    if (!this.isRecoverableTimedOutBoundlessJob(job)) {
+      return job;
+    }
+
+    return this.recoverBoundlessFulfillment(jobId, job);
+  }
+
   private getBoundlessRequestId(job: ProofJobRecord, attempt: ProverAttempt): string | null {
     const candidates = [
       attempt.proverJobId,
@@ -920,7 +1042,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
   }
 
   async getJob(jobId: string): Promise<ProofJobRecord | null> {
-    return this.loadJob(jobId);
+    const job = await this.loadJob(jobId);
+    if (!job) {
+      return null;
+    }
+
+    return (await this.maybeRecoverTimedOutBoundlessJob(jobId, job)) ?? job;
   }
 
   /**
@@ -936,6 +1063,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     staleQueuedClaimsRequeued: number;
     staleRetryingClaimsRequeued: number;
     staleSubmittingClaimsRecovered: number;
+    boundlessFulfillmentRecoveries: number;
   }> {
     const activeJobIds = this.getActiveJobIds();
     let alarmsRescheduled = 0;
@@ -957,6 +1085,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       staleRetryingClaimsRequeued: 0,
       staleSubmittingClaimsRecovered: 0,
     };
+    let boundlessFulfillmentRecoveries = 0;
 
     // Auto-recover claims that got stuck after queue or relayer failures. This
     // recovers from transient issues that outlast the queue retry window
@@ -967,6 +1096,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       console.warn(`[maintenance] autoRecoverUnfinishedClaims error: ${safeErrorMessage(error)}`);
     }
 
+    try {
+      boundlessFulfillmentRecoveries = await this.autoRecoverTimedOutBoundlessJobs();
+    } catch (error) {
+      console.warn(
+        `[maintenance] autoRecoverTimedOutBoundlessJobs error: ${safeErrorMessage(error)}`,
+      );
+    }
+
     if (activeJobIds.length === 0) {
       await this.pruneCompletedJobs();
       await this.flushStorageIfEmpty();
@@ -975,6 +1112,7 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
     return {
       alarmsRescheduled,
       ...claimRecovery,
+      boundlessFulfillmentRecoveries,
     };
   }
 
@@ -1630,6 +1768,35 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
     await this.saveJob(job);
     return job;
+  }
+
+  private async autoRecoverTimedOutBoundlessJobs(): Promise<number> {
+    this.ensureTable();
+    const retentionCutoff = new Date(
+      Date.now() - this.resolveCompletedJobRetentionMs(),
+    ).toISOString();
+    const rows = this.ctx.storage.sql
+      .exec(
+        `SELECT job_id, data
+         FROM jobs
+         WHERE status = 'failed' AND completed_at >= ?
+         ORDER BY completed_at DESC
+         LIMIT 25`,
+        retentionCutoff,
+      )
+      .toArray();
+
+    let recovered = 0;
+    for (const row of rows) {
+      const jobId = row.job_id as string;
+      const job = JSON.parse(row.data as string) as ProofJobRecord;
+      const repaired = await this.maybeRecoverTimedOutBoundlessJob(jobId, job);
+      if (repaired && repaired.status === "succeeded") {
+        recovered += 1;
+      }
+    }
+
+    return recovered;
   }
 
   async markClaimRetry(
@@ -2357,6 +2524,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
 
       const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
       if (jobAgeMs > maxWallTimeMs) {
+        const recovered = await this.maybeRecoverTimedOutBoundlessJob(jobId, job);
+        if (recovered && !isTerminalProofStatus(recovered.status)) {
+          anyStillActive = true;
+          continue;
+        }
+        if (recovered?.status === "succeeded") {
+          continue;
+        }
         const ageMin = Math.round(jobAgeMs / 60_000);
         await this.markFailed(jobId, `proof job timed out after ${ageMin} minutes`, {
           errorCode: "job_total_wall_timeout",
@@ -2530,6 +2705,14 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       // because the alarm chain may be dead after a server restart.
       const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
       if (jobAgeMs > maxWallTimeMs) {
+        const recovered = await this.maybeRecoverTimedOutBoundlessJob(activeJobId, job);
+        if (recovered && !isTerminalProofStatus(recovered.status)) {
+          await this.scheduleAlarm(MIN_PROVER_POLL_INTERVAL_MS);
+          continue;
+        }
+        if (recovered?.status === "succeeded") {
+          continue;
+        }
         const ageMin = Math.round(jobAgeMs / 60_000);
         await this.markFailed(activeJobId, `proof job timed out after ${ageMin} minutes`, {
           errorCode: "job_total_wall_timeout",
@@ -2647,7 +2830,12 @@ export class ProofCoordinatorDO extends DurableObject<WorkerEnv> {
       )
       .toArray();
 
-    const jobs = rows.map((r) => JSON.parse(r.data as string) as ProofJobRecord);
+    const jobs: ProofJobRecord[] = [];
+    for (const row of rows) {
+      const job = JSON.parse(row.data as string) as ProofJobRecord;
+      const recovered = await this.maybeRecoverTimedOutBoundlessJob(job.jobId, job);
+      jobs.push(recovered ?? job);
+    }
     return { jobs, total };
   }
 }

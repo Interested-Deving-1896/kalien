@@ -96,6 +96,100 @@ type LogRequestClient = {
   }) => Promise<unknown>;
 };
 
+type ReceiptRequestClient = {
+  request: (args: {
+    method: "eth_getTransactionReceipt";
+    params: [`0x${string}`];
+  }) => Promise<unknown>;
+};
+
+type BoundlessOrderLookup = {
+  fulfillTxHash: `0x${string}` | null;
+  programCycles: number | null;
+  totalCycles: number | null;
+};
+
+function proofDeliveredTopics(requestId: bigint): {
+  proofDeliveredTopic: `0x${string}`;
+  requestIdTopic: `0x${string}`;
+} {
+  return {
+    proofDeliveredTopic:
+      "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const,
+    requestIdTopic: `0x${requestId.toString(16).padStart(64, "0")}` as `0x${string}`,
+  };
+}
+
+function isProofDeliveredLog(
+  log: EthLogRecord,
+  proofDeliveredTopic: `0x${string}`,
+  requestIdTopic: `0x${string}`,
+): boolean {
+  const topic0 = log.topics?.[0]?.toLowerCase();
+  const topic1 = log.topics?.[1]?.toLowerCase();
+  return (
+    topic0 === proofDeliveredTopic.toLowerCase() && topic1 === requestIdTopic.toLowerCase()
+  );
+}
+
+async function fetchBoundlessOrderLookup(
+  chainId: string,
+  requestIdHex: string,
+): Promise<BoundlessOrderLookup | null> {
+  const primaryIndexerUrl = BOUNDLESS_INDEXER_URLS[chainId];
+  const candidateUrls = [
+    ...(primaryIndexerUrl ? [`${primaryIndexerUrl}/v1/market/requests/${requestIdHex}`] : []),
+    `https://explorer.boundless.network/api/orders/${requestIdHex}`,
+  ];
+
+  for (const url of candidateUrls) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) {
+        continue;
+      }
+
+      const payload = (await response.json()) as
+        | {
+            fulfill_tx_hash?: string | null;
+            program_cycles?: string | number | null;
+            total_program_cycles?: string | number | null;
+            total_cycles?: string | number | null;
+          }
+        | null;
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        continue;
+      }
+
+      const fulfillTxHash =
+        typeof payload.fulfill_tx_hash === "string" &&
+        /^0x[0-9a-f]+$/i.test(payload.fulfill_tx_hash)
+          ? (payload.fulfill_tx_hash as `0x${string}`)
+          : null;
+      const programCycles = parsePositiveNumber(
+        payload.program_cycles ?? payload.total_program_cycles,
+      );
+      const totalCycles = parsePositiveNumber(payload.total_cycles);
+
+      if (!fulfillTxHash && programCycles == null && totalCycles == null) {
+        continue;
+      }
+
+      return {
+        fulfillTxHash,
+        programCycles,
+        totalCycles,
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 export async function fetchProofDeliveredLog(
   publicClient: LogRequestClient,
   marketAddress: `0x${string}`,
@@ -103,21 +197,8 @@ export async function fetchProofDeliveredLog(
   fromBlock: bigint,
   toBlock: bigint,
 ): Promise<EthLogRecord> {
-  // ProofDelivered event topic0 (keccak256 of signature)
-  const PROOF_DELIVERED_TOPIC =
-    "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const;
-
-  // Topic1: requestId padded to 32 bytes (uint256, big-endian)
-  const requestIdTopic = `0x${requestId.toString(16).padStart(64, "0")}` as `0x${string}`;
-
+  const { proofDeliveredTopic, requestIdTopic } = proofDeliveredTopics(requestId);
   const MAX_LOG_BLOCK_RANGE = 10n;
-  const matchesTopics = (log: EthLogRecord): boolean => {
-    const topic0 = log.topics?.[0]?.toLowerCase();
-    const topic1 = log.topics?.[1]?.toLowerCase();
-    return (
-      topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() && topic1 === requestIdTopic.toLowerCase()
-    );
-  };
 
   let searchTo = toBlock;
   let ourLog: EthLogRecord | undefined;
@@ -133,14 +214,16 @@ export async function fetchProofDeliveredLog(
       params: [
         {
           address: marketAddress,
-          topics: [PROOF_DELIVERED_TOPIC, requestIdTopic],
+          topics: [proofDeliveredTopic, requestIdTopic],
           fromBlock: `0x${searchFrom.toString(16)}` as Hex,
           toBlock: `0x${searchTo.toString(16)}` as Hex,
         },
       ],
     });
 
-    ourLog = (logs as EthLogRecord[]).find(matchesTopics);
+    ourLog = (logs as EthLogRecord[]).find((log) =>
+      isProofDeliveredLog(log, proofDeliveredTopic, requestIdTopic),
+    );
     if (ourLog?.data) {
       return ourLog;
     }
@@ -154,6 +237,32 @@ export async function fetchProofDeliveredLog(
   throw new FulfillmentNotFoundError(
     "request reported as fulfilled but no ProofDelivered event found in recent block windows",
   );
+}
+
+export async function fetchProofDeliveredLogFromTxReceipt(
+  publicClient: ReceiptRequestClient,
+  requestId: bigint,
+  txHash: `0x${string}`,
+): Promise<EthLogRecord> {
+  const { proofDeliveredTopic, requestIdTopic } = proofDeliveredTopics(requestId);
+  const receipt = (await publicClient.request({
+    method: "eth_getTransactionReceipt",
+    params: [txHash],
+  })) as { logs?: EthLogRecord[] } | null;
+
+  const log = receipt?.logs?.find((entry) =>
+    isProofDeliveredLog(entry, proofDeliveredTopic, requestIdTopic),
+  );
+  if (!log?.data) {
+    throw new FulfillmentNotFoundError(
+      "request reported as fulfilled but no ProofDelivered event found in fulfillment receipt",
+    );
+  }
+
+  return {
+    ...log,
+    transactionHash: log.transactionHash ?? txHash,
+  };
 }
 
 export class BoundlessClient {
@@ -616,6 +725,10 @@ export class BoundlessClient {
       };
     }
 
+    const orderLookup = await fetchBoundlessOrderLookup(config.chainId.toString(), requestIdHex).catch(
+      () => null,
+    );
+
     if (!fulfilled) {
       // Check if a prover has locked the order
       let locked: boolean | undefined;
@@ -657,20 +770,28 @@ export class BoundlessClient {
     // 2. Fetch the ProofDelivered event logs (contains seal + journal)
     let fulfillmentData: BoundlessFulfillmentData;
     try {
-      const currentBlock = await publicClient.getBlockNumber();
-      // Search a recent horizon, but page it into small RPC-compliant ranges.
-      const LOG_SEARCH_WINDOW = 9_900n;
-      const fromBlock =
-        config.deploymentBlock > currentBlock - LOG_SEARCH_WINDOW
-          ? config.deploymentBlock
-          : currentBlock - LOG_SEARCH_WINDOW;
+      if (orderLookup?.fulfillTxHash) {
+        fulfillmentData = await this.fetchFulfillmentFromReceipt(
+          publicClient,
+          requestId,
+          orderLookup.fulfillTxHash,
+        );
+      } else {
+        const currentBlock = await publicClient.getBlockNumber();
+        // Search a recent horizon, but page it into small RPC-compliant ranges.
+        const LOG_SEARCH_WINDOW = 9_900n;
+        const fromBlock =
+          config.deploymentBlock > currentBlock - LOG_SEARCH_WINDOW
+            ? config.deploymentBlock
+            : currentBlock - LOG_SEARCH_WINDOW;
 
-      fulfillmentData = await this.fetchFulfillmentFromLogs(
-        publicClient,
-        requestId,
-        fromBlock,
-        currentBlock,
-      );
+        fulfillmentData = await this.fetchFulfillmentFromLogs(
+          publicClient,
+          requestId,
+          fromBlock,
+          currentBlock,
+        );
+      }
     } catch (error) {
       if (error instanceof FulfillmentNotFoundError) {
         return {
@@ -697,7 +818,12 @@ export class BoundlessClient {
         const ethPrice = await fetchEthPriceUsd(config.rpcUrl, Number(config.chainId));
         return weiToUsd(lockPrice, ethPrice);
       })(),
-      this.fetchCyclesFromIndexer(requestId),
+      orderLookup && (orderLookup.programCycles != null || orderLookup.totalCycles != null)
+        ? Promise.resolve({
+            programCycles: orderLookup.programCycles,
+            totalCycles: orderLookup.totalCycles,
+          })
+        : this.fetchCyclesFromIndexer(requestId),
     ]);
 
     const actualCostUsd = costResult.status === "fulfilled" ? costResult.value : null;
@@ -909,6 +1035,20 @@ export class BoundlessClient {
     // Extract prover address from topics[2] (indexed address, left-padded to 32 bytes)
     const proverAddress = ourLog.topics?.[2] ? `0x${ourLog.topics[2].slice(-40)}` : null;
     const fulfillmentTxHash = ourLog.transactionHash ?? null;
+
+    const result = this.parseFulfillmentFromEventData(ourLog.data);
+    return { ...result, proverAddress, fulfillmentTxHash };
+  }
+
+  private async fetchFulfillmentFromReceipt(
+    publicClient: ReturnType<typeof createPublicClient>,
+    requestId: bigint,
+    txHash: `0x${string}`,
+  ): Promise<BoundlessFulfillmentData> {
+    const ourLog = await fetchProofDeliveredLogFromTxReceipt(publicClient, requestId, txHash);
+
+    const proverAddress = ourLog.topics?.[2] ? `0x${ourLog.topics[2].slice(-40)}` : null;
+    const fulfillmentTxHash = ourLog.transactionHash ?? txHash;
 
     const result = this.parseFulfillmentFromEventData(ourLog.data);
     return { ...result, proverAddress, fulfillmentTxHash };

@@ -16,6 +16,7 @@ mock.module("cloudflare:workers", () => ({
 }));
 
 const { ProofCoordinatorDO } = await import("../../worker/durable/coordinator");
+const { BoundlessClient } = await import("../../worker/boundless/sdk/client");
 
 afterAll(() => {
   mock.restore();
@@ -253,6 +254,19 @@ class MockSql {
       return new MockSqlResult(rows);
     }
 
+    if (
+      normalized ===
+      "SELECT job_id, data FROM jobs WHERE status = 'failed' AND completed_at >= ? ORDER BY completed_at DESC LIMIT 25"
+    ) {
+      const cutoff = params[0] as string;
+      const rows = [...this.rows.values()]
+        .filter((row) => row.status === "failed" && (row.completed_at ?? "") >= cutoff)
+        .toSorted((left, right) => (right.completed_at ?? "").localeCompare(left.completed_at ?? ""))
+        .slice(0, 25)
+        .map((row) => ({ job_id: row.job_id, data: row.data }));
+      return new MockSqlResult(rows);
+    }
+
     throw new Error(`Unhandled SQL in test harness: ${normalized}`);
   }
 }
@@ -477,6 +491,164 @@ describe("ProofCoordinatorDO state machine", () => {
     await expect(harness.coordinator.retryFailedProof(jobId)).rejects.toThrow(
       "replay is locked after external dispatch",
     );
+  });
+
+  it("recovers a timed-out boundless fulfillment on getJob", async () => {
+    const artifactPuts: Array<{ key: string; body: string }> = [];
+    const harness = createCoordinatorHarness({
+      PROOF_ARTIFACTS: {
+        put: async (key: string, body: string) => {
+          artifactPuts.push({ key, body });
+        },
+      } as WorkerEnv["PROOF_ARTIFACTS"],
+      BOUNDLESS_RPC_URL: "https://base.example",
+      BOUNDLESS_PRIVATE_KEY:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      BOUNDLESS_IMAGE_URL: "https://example.com/image",
+      BOUNDLESS_IMAGE_ID:
+        "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
+      BOUNDLESS_MAX_PRICE_USD: "0.10",
+      BOUNDLESS_MIN_PRICE_USD: "0",
+      BOUNDLESS_LOCK_COLLATERAL_ZKC: "5",
+      BOUNDLESS_TOP_UP_BUFFER_BPS: "1500",
+      BOUNDLESS_FLAT_PERIOD_SEC: "60",
+      BOUNDLESS_RAMP_PERIOD_SEC: "660",
+      BOUNDLESS_LOCK_TIMEOUT_SEC: "1740",
+      BOUNDLESS_TIMEOUT_SEC: "3540",
+      BOUNDLESS_POLL_TIMEOUT_MS: "600000",
+      BOUNDLESS_CHAIN_ID: "8453",
+    });
+
+    const originalPollOnce = BoundlessClient.prototype.pollOnce;
+    BoundlessClient.prototype.pollOnce = async function mockPollOnce() {
+      return {
+        type: "success" as const,
+        summary: BASE_SUMMARY,
+        artifact: { version: 4, prover: "boundless" },
+        metadata: {
+          actualCostUsd: 0.01,
+          proverAddress: "0xb73e301b81f2e3178ab3846b028fd0bc8e0f0ba0",
+          fulfillmentTxHash:
+            "0x621dde06f0b9c10a0d1421a6c864292c1265e7934b0d7ca75927522261a02332",
+          programCycles: 11869606,
+          totalCycles: 12582912,
+        },
+      };
+    };
+
+    try {
+      const accepted = await harness.coordinator.createJob({
+        claimantAddress: TEST_CLAIMANT,
+        replayHash: "replay-heal-read",
+        sizeBytes: 512,
+        metadata: {
+          seed: 7,
+          seedId: 77,
+          frameCount: 120,
+          finalScore: 777,
+          checksum: 42,
+        },
+      });
+      const jobId = accepted.job.jobId;
+
+      await harness.coordinator.beginQueueAttempt(jobId, 1, "boundless", "boundless:msg-1:1");
+      await harness.coordinator.beginExternalDispatch(jobId, "boundless");
+      await harness.coordinator.markProverAccepted(jobId, "0xboundless", "boundless:0xboundless", 21);
+      await harness.coordinator.markFailed(jobId, "proof job timed out after 65 minutes", {
+        errorCode: "job_total_wall_timeout",
+        timeoutPhase: "total_wall",
+      });
+
+      const recovered = await harness.coordinator.getJob(jobId);
+
+      expect(recovered?.status).toBe("succeeded");
+      expect(recovered?.claim.status).toBe("queued");
+      expect(recovered?.error).toBeNull();
+      expect(recovered?.result?.summary.journal.final_score).toBe(BASE_SUMMARY.journal.final_score);
+      expect(recovered?.proverAttempts.at(-1)?.outcome).toBe("success");
+      expect(recovered?.proverAttempts.at(-1)?.fulfillmentTxHash).toBe(
+        "0x621dde06f0b9c10a0d1421a6c864292c1265e7934b0d7ca75927522261a02332",
+      );
+      expect(harness.claimQueueSends).toEqual([{ jobId }]);
+      expect(artifactPuts).toHaveLength(1);
+    } finally {
+      BoundlessClient.prototype.pollOnce = originalPollOnce;
+    }
+  });
+
+  it("recovers timed-out boundless fulfillments during maintenance", async () => {
+    const harness = createCoordinatorHarness({
+      PROOF_ARTIFACTS: {
+        put: async () => undefined,
+      } as WorkerEnv["PROOF_ARTIFACTS"],
+      BOUNDLESS_RPC_URL: "https://base.example",
+      BOUNDLESS_PRIVATE_KEY:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      BOUNDLESS_IMAGE_URL: "https://example.com/image",
+      BOUNDLESS_IMAGE_ID:
+        "0x37dfd7b9ca6490f5db1e9cd4dfa5ceadae573e44c6fd351e9cdc2cb7138b8111",
+      BOUNDLESS_MAX_PRICE_USD: "0.10",
+      BOUNDLESS_MIN_PRICE_USD: "0",
+      BOUNDLESS_LOCK_COLLATERAL_ZKC: "5",
+      BOUNDLESS_TOP_UP_BUFFER_BPS: "1500",
+      BOUNDLESS_FLAT_PERIOD_SEC: "60",
+      BOUNDLESS_RAMP_PERIOD_SEC: "660",
+      BOUNDLESS_LOCK_TIMEOUT_SEC: "1740",
+      BOUNDLESS_TIMEOUT_SEC: "3540",
+      BOUNDLESS_POLL_TIMEOUT_MS: "600000",
+      BOUNDLESS_CHAIN_ID: "8453",
+    });
+
+    const originalPollOnce = BoundlessClient.prototype.pollOnce;
+    BoundlessClient.prototype.pollOnce = async function mockPollOnce() {
+      return {
+        type: "success" as const,
+        summary: BASE_SUMMARY,
+        artifact: { version: 4, prover: "boundless" },
+        metadata: {
+          actualCostUsd: 0.01,
+          proverAddress: "0xb73e301b81f2e3178ab3846b028fd0bc8e0f0ba0",
+          fulfillmentTxHash:
+            "0x513d99c0c8813d3e5c8c0d69858b7979345339b8aecda2bd43431bff412a67c4",
+          programCycles: 8107720,
+          totalCycles: 8519680,
+        },
+      };
+    };
+
+    try {
+      const accepted = await harness.coordinator.createJob({
+        claimantAddress: TEST_CLAIMANT,
+        replayHash: "replay-heal-maintenance",
+        sizeBytes: 512,
+        metadata: {
+          seed: 7,
+          seedId: 77,
+          frameCount: 120,
+          finalScore: 777,
+          checksum: 42,
+        },
+      });
+      const jobId = accepted.job.jobId;
+
+      await harness.coordinator.beginQueueAttempt(jobId, 1, "boundless", "boundless:msg-1:1");
+      await harness.coordinator.beginExternalDispatch(jobId, "boundless");
+      await harness.coordinator.markProverAccepted(jobId, "0xboundless-2", "boundless:0xboundless-2", 21);
+      await harness.coordinator.markFailed(jobId, "proof job timed out after 65 minutes", {
+        errorCode: "job_total_wall_timeout",
+        timeoutPhase: "total_wall",
+      });
+
+      const summary = await harness.coordinator.runMaintenance();
+      const recovered = readStoredJob(harness, jobId);
+
+      expect(summary.boundlessFulfillmentRecoveries).toBe(1);
+      expect(recovered?.status).toBe("succeeded");
+      expect(recovered?.claim.status).toBe("queued");
+      expect(harness.claimQueueSends).toEqual([{ jobId }]);
+    } finally {
+      BoundlessClient.prototype.pollOnce = originalPollOnce;
+    }
   });
 
   it("keeps permanently locked replay rows after the original job is gone", async () => {

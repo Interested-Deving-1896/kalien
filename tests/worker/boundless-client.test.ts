@@ -43,7 +43,9 @@ mock.module("viem/accounts", () => ({
   }),
 }));
 
-const { fetchProofDeliveredLog } = await import("../../worker/boundless/sdk/client");
+const { fetchProofDeliveredLog, fetchProofDeliveredLogFromTxReceipt } = await import(
+  "../../worker/boundless/sdk/client"
+);
 const { fetchBoundlessCycles } = await import("../../worker/boundless/sdk/client.ts?suite=real");
 
 afterAll(() => {
@@ -154,6 +156,45 @@ describe("Boundless fulfillment log paging", () => {
       const to = BigInt(range?.toBlock ?? "0x0");
       expect(to - from + 1n).toBeLessThanOrEqual(10n);
     }
+  });
+});
+
+describe("Boundless fulfillment receipt lookup", () => {
+  it("extracts the proof log from a fulfillment transaction receipt", async () => {
+    const requestId = 12345n;
+    const requestIdTopic = `0x${requestId.toString(16).padStart(64, "0")}`;
+    const proofDeliveredTopic =
+      "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca";
+    const proverAddress = "0x2222222222222222222222222222222222222222";
+    const proverTopic = `0x${proverAddress.slice(2).padStart(64, "0")}`;
+    const txHash = "0x3333333333333333333333333333333333333333333333333333333333333333" as const;
+
+    const result = await fetchProofDeliveredLogFromTxReceipt(
+      {
+        request: async () => ({
+          logs: [
+            {
+              topics: ["0xdeadbeef", requestIdTopic],
+              data: "0x",
+              transactionHash: txHash,
+            },
+            {
+              topics: [proofDeliveredTopic, requestIdTopic, proverTopic],
+              data: "0x1234",
+              transactionHash: txHash,
+            },
+          ],
+        }),
+      },
+      requestId,
+      txHash,
+    );
+
+    expect(result).toMatchObject({
+      topics: [proofDeliveredTopic, requestIdTopic, proverTopic],
+      data: "0x1234",
+      transactionHash: txHash,
+    });
   });
 });
 
