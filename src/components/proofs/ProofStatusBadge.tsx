@@ -25,6 +25,10 @@ export function ProofStatusBadge({ job }: { job: ProofJobPublic }) {
       return <StatusBadge variant="info">{label}</StatusBadge>;
     }
     case "retrying":
+      if (job.prover.jobId) {
+        const label = backend ? `Polling · ${backendLabel(backend)}` : "Polling";
+        return <StatusBadge variant="info">{label}</StatusBadge>;
+      }
       return <StatusBadge variant="warning">Retrying</StatusBadge>;
     case "succeeded":
       if (claimStatus === "succeeded") {

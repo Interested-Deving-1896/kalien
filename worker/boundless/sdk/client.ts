@@ -78,6 +78,84 @@ function isRetryableSubmitError(msg: string): boolean {
   );
 }
 
+type EthLogRecord = {
+  topics?: string[];
+  data?: string;
+  transactionHash?: string;
+};
+
+type LogRequestClient = {
+  request: (args: {
+    method: "eth_getLogs";
+    params: Array<{
+      address: `0x${string}`;
+      topics: [`0x${string}`, `0x${string}`];
+      fromBlock: Hex;
+      toBlock: Hex;
+    }>;
+  }) => Promise<unknown>;
+};
+
+export async function fetchProofDeliveredLog(
+  publicClient: LogRequestClient,
+  marketAddress: `0x${string}`,
+  requestId: bigint,
+  fromBlock: bigint,
+  toBlock: bigint,
+): Promise<EthLogRecord> {
+  // ProofDelivered event topic0 (keccak256 of signature)
+  const PROOF_DELIVERED_TOPIC =
+    "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const;
+
+  // Topic1: requestId padded to 32 bytes (uint256, big-endian)
+  const requestIdTopic = `0x${requestId.toString(16).padStart(64, "0")}` as `0x${string}`;
+
+  const MAX_LOG_BLOCK_RANGE = 10n;
+  const matchesTopics = (log: EthLogRecord): boolean => {
+    const topic0 = log.topics?.[0]?.toLowerCase();
+    const topic1 = log.topics?.[1]?.toLowerCase();
+    return (
+      topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() && topic1 === requestIdTopic.toLowerCase()
+    );
+  };
+
+  let searchTo = toBlock;
+  let ourLog: EthLogRecord | undefined;
+
+  while (searchTo >= fromBlock) {
+    const searchFromCandidate = searchTo - (MAX_LOG_BLOCK_RANGE - 1n);
+    const searchFrom = searchFromCandidate > fromBlock ? searchFromCandidate : fromBlock;
+
+    // Some RPCs enforce very small eth_getLogs ranges. Search newest→oldest
+    // in compliant windows so fulfilled jobs can still recover after lag.
+    const logs = await publicClient.request({
+      method: "eth_getLogs",
+      params: [
+        {
+          address: marketAddress,
+          topics: [PROOF_DELIVERED_TOPIC, requestIdTopic],
+          fromBlock: `0x${searchFrom.toString(16)}` as Hex,
+          toBlock: `0x${searchTo.toString(16)}` as Hex,
+        },
+      ],
+    });
+
+    ourLog = (logs as EthLogRecord[]).find(matchesTopics);
+    if (ourLog?.data) {
+      return ourLog;
+    }
+
+    if (searchFrom === fromBlock) {
+      break;
+    }
+    searchTo = searchFrom - 1n;
+  }
+
+  throw new FulfillmentNotFoundError(
+    "request reported as fulfilled but no ProofDelivered event found in recent block windows",
+  );
+}
+
 export class BoundlessClient {
   private readonly config: BoundlessClientConfig;
 
@@ -580,7 +658,7 @@ export class BoundlessClient {
     let fulfillmentData: BoundlessFulfillmentData;
     try {
       const currentBlock = await publicClient.getBlockNumber();
-      // Base public RPC limits eth_getLogs to 10,000 blocks; use 9,900 (~5.5h on Base)
+      // Search a recent horizon, but page it into small RPC-compliant ranges.
       const LOG_SEARCH_WINDOW = 9_900n;
       const fromBlock =
         config.deploymentBlock > currentBlock - LOG_SEARCH_WINDOW
@@ -820,49 +898,13 @@ export class BoundlessClient {
     fromBlock: bigint,
     toBlock: bigint,
   ): Promise<BoundlessFulfillmentData> {
-    // ProofDelivered event topic0 (keccak256 of signature)
-    const PROOF_DELIVERED_TOPIC =
-      "0xaf1db8f86d3f32029a484ff54c7ac1d7ef8f038ab050fc065af9e82eb9b850ca" as const;
-
-    // Topic1: requestId padded to 32 bytes (uint256, big-endian)
-    const requestIdTopic = `0x${requestId.toString(16).padStart(64, "0")}` as `0x${string}`;
-
-    const config = this.config;
-
-    // Use raw eth_getLogs with topic filtering for correctness across RPCs.
-    // Some RPCs (e.g. BlastAPI) ignore topic filters and return all contract
-    // events — we filter manually by both topic0 and topic1 below.
-    const logs = await publicClient.request({
-      method: "eth_getLogs",
-      params: [
-        {
-          address: config.marketAddress,
-          topics: [PROOF_DELIVERED_TOPIC, requestIdTopic],
-          fromBlock: `0x${fromBlock.toString(16)}` as Hex,
-          toBlock: `0x${toBlock.toString(16)}` as Hex,
-        },
-      ],
-    });
-
-    const ourLog = (
-      logs as Array<{
-        topics?: string[];
-        data?: string;
-        transactionHash?: string;
-      }>
-    ).find((log) => {
-      const topic0 = log.topics?.[0]?.toLowerCase();
-      const topic1 = log.topics?.[1]?.toLowerCase();
-      return (
-        topic0 === PROOF_DELIVERED_TOPIC.toLowerCase() && topic1 === requestIdTopic.toLowerCase()
-      );
-    });
-
-    if (!ourLog?.data) {
-      throw new FulfillmentNotFoundError(
-        "request reported as fulfilled but no ProofDelivered event found in block range",
-      );
-    }
+    const ourLog = await fetchProofDeliveredLog(
+      publicClient,
+      this.config.marketAddress,
+      requestId,
+      fromBlock,
+      toBlock,
+    );
 
     // Extract prover address from topics[2] (indexed address, left-padded to 32 bytes)
     const proverAddress = ourLog.topics?.[2] ? `0x${ourLog.topics[2].slice(-40)}` : null;
